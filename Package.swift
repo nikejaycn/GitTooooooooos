@@ -160,6 +160,10 @@ let package = Package(
       dependencies: ["GraphKit", "CurrentDomain"]
     ),
     .testTarget(
+      name: "CurrentDomainTests",
+      dependencies: ["CurrentDomain"]
+    ),
+    .testTarget(
       name: "CurrentUITests",
       dependencies: ["CurrentUI"]
     ),

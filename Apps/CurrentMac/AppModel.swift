@@ -446,6 +446,54 @@ final class AppModel {
     )
   }
 
+  func makeDiagnosticPreview(
+    selectedSystemReportURLs: [URL]
+  ) -> DiagnosticBundlePreview {
+    let systemReports = selectedSystemReportURLs.enumerated().map { index, url in
+      let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+      let fileExtension = Self.safeDiagnosticFileExtension(url.pathExtension)
+      let archiveName =
+        "system-report-\(index + 1)"
+        + (fileExtension.isEmpty ? "" : ".\(fileExtension)")
+      return DiagnosticSystemReportMetadata(
+        archiveName: archiveName,
+        byteCount: Int64(values?.fileSize ?? 0)
+      )
+    }
+    return DiagnosticBundleFactory.make(
+      appVersion:
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+        as? String ?? "Development",
+      appBuild:
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion")
+        as? String ?? "Development",
+      operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+      architecture: Self.currentArchitecture,
+      gitVersion: gitVersion,
+      gitLFSVersion: gitLFSVersion,
+      gitSource: gitVersion == nil ? "unavailable" : (useCustomGit ? "custom" : "bundled"),
+      hasOpenRepository: repositoryStatus != nil,
+      loadedCommitCount: commits.count,
+      workingCopyChangeCount: repositoryStatus?.changes.count ?? 0,
+      activities: activities,
+      selectedSystemReports: systemReports
+    )
+  }
+
+  func exportDiagnosticBundle(
+    selectedSystemReportURLs: [URL],
+    to destinationURL: URL
+  ) async throws {
+    let preview = makeDiagnosticPreview(
+      selectedSystemReportURLs: selectedSystemReportURLs
+    )
+    try await DiagnosticBundleExporter.export(
+      preview: preview,
+      selectedSystemReportURLs: selectedSystemReportURLs,
+      to: destinationURL
+    )
+  }
+
   func applyGitToolchain(useCustom: Bool, path: String) {
     guard repositoryOperationTask == nil, !isLoading else {
       errorMessage = "Wait for the current repository operation before changing Git."
@@ -1465,6 +1513,25 @@ final class AppModel {
   private func persistRecentRepositories() {
     guard let data = try? JSONEncoder().encode(recentRepositories) else { return }
     UserDefaults.standard.set(data, forKey: Self.recentRepositoriesKey)
+  }
+
+  private static var currentArchitecture: String {
+    #if arch(arm64)
+      "arm64"
+    #elseif arch(x86_64)
+      "x86_64"
+    #else
+      "unknown"
+    #endif
+  }
+
+  private static func safeDiagnosticFileExtension(_ value: String) -> String {
+    String(
+      value
+        .lowercased()
+        .filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        .prefix(10)
+    )
   }
 
   private static func loadRecentRepositories() -> [RecentRepository] {

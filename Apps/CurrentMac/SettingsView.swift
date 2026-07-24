@@ -33,6 +33,7 @@ struct CurrentSettingsView: View {
   @State private var draftCustomGitPath = ""
   @State private var draftCustomDiffToolPath = ""
   @State private var draftCustomMergeToolPath = ""
+  @State private var isShowingDiagnosticPreview = false
 
   var body: some View {
     Form {
@@ -234,8 +235,11 @@ struct CurrentSettingsView: View {
       Section("Privacy") {
         LabeledContent("Analytics", value: "Not collected")
         LabeledContent("Crash reports", value: "Not uploaded")
+        Button("Preview Diagnostic Bundle…") {
+          isShowingDiagnosticPreview = true
+        }
         Text(
-          "Core Git workflows stay local. Network access occurs only for explicit remote actions."
+          "Core Git workflows stay local. Current never collects or uploads diagnostics automatically. Export is always manual."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -248,6 +252,9 @@ struct CurrentSettingsView: View {
       draftCustomGitPath = model.customGitPath
       draftCustomDiffToolPath = model.customDiffToolPath
       draftCustomMergeToolPath = model.customMergeToolPath
+    }
+    .sheet(isPresented: $isShowingDiagnosticPreview) {
+      DiagnosticBundlePreviewView(model: model)
     }
   }
 
@@ -295,5 +302,163 @@ struct CurrentSettingsView: View {
       != model.customDiffToolPath
       || draftCustomMergeToolPath.trimmingCharacters(in: .whitespacesAndNewlines)
         != model.customMergeToolPath
+  }
+}
+
+private struct DiagnosticBundlePreviewView: View {
+  let model: AppModel
+  @Environment(\.dismiss) private var dismiss
+  @State private var selectedSystemReports: [URL] = []
+  @State private var isExporting = false
+  @State private var statusMessage: String?
+  @State private var errorMessage: String?
+
+  private var preview: DiagnosticBundlePreview {
+    model.makeDiagnosticPreview(
+      selectedSystemReportURLs: selectedSystemReports
+    )
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      Form {
+        Section("Privacy Boundary") {
+          LabeledContent("Automatic collection", value: "Off")
+          LabeledContent("Automatic upload", value: "Off")
+          Text(
+            "The generated JSON contains no repository path or name, refs, remote URLs, file names or contents, diffs, environment variables, credentials, or raw error details. Operations are reduced to category, state, and timing."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+
+        Section("Selected System Reports") {
+          if selectedSystemReports.isEmpty {
+            Text("None. System reports are never added automatically.")
+              .foregroundStyle(.secondary)
+          } else {
+            ForEach(Array(selectedSystemReports.enumerated()), id: \.element) { entry in
+              HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                  Text(entry.element.lastPathComponent)
+                    .lineLimit(1)
+                  Text(
+                    ByteCountFormatter.string(
+                      fromByteCount:
+                        preview.manifest.selectedSystemReports[entry.offset].byteCount,
+                      countStyle: .file
+                    )
+                  )
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Open") {
+                  NSWorkspace.shared.open(entry.element)
+                }
+                Button("Remove") {
+                  selectedSystemReports.remove(at: entry.offset)
+                }
+              }
+            }
+          }
+          HStack {
+            Button("Choose System Reports…", action: chooseSystemReports)
+              .disabled(selectedSystemReports.count >= 5)
+            Spacer()
+            Text("\(selectedSystemReports.count) of 5")
+              .foregroundStyle(.secondary)
+          }
+          Text(
+            "Selected reports are copied unchanged under neutral archive names. Open each report above to inspect its exact contents before export."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+
+        Section("Exact JSON Preview") {
+          ScrollView([.horizontal, .vertical]) {
+            Text(preview.renderedPreview())
+              .font(.system(.caption, design: .monospaced))
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(8)
+          }
+          .frame(minHeight: 220)
+          .background(
+            Color(nsColor: .textBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 6)
+          )
+        }
+      }
+      .formStyle(.grouped)
+
+      Divider()
+      HStack {
+        if let errorMessage {
+          Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(.red)
+            .lineLimit(2)
+        } else if let statusMessage {
+          Label(statusMessage, systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+            .lineLimit(2)
+        }
+        Spacer()
+        Button("Cancel", role: .cancel) {
+          dismiss()
+        }
+        Button(isExporting ? "Exporting…" : "Export ZIP…") {
+          chooseExportDestination()
+        }
+        .keyboardShortcut(.defaultAction)
+        .disabled(isExporting)
+      }
+      .padding()
+    }
+    .frame(width: 720, height: 680)
+  }
+
+  private func chooseSystemReports() {
+    let panel = NSOpenPanel()
+    panel.title = "Choose System Reports"
+    panel.prompt = "Add"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = true
+    if panel.runModal() == .OK {
+      let existing = Set(selectedSystemReports.map(\.standardizedFileURL))
+      selectedSystemReports += panel.urls
+        .map(\.standardizedFileURL)
+        .filter { !existing.contains($0) }
+        .prefix(max(0, 5 - selectedSystemReports.count))
+      statusMessage = nil
+      errorMessage = nil
+    }
+  }
+
+  private func chooseExportDestination() {
+    let panel = NSSavePanel()
+    panel.title = "Export Diagnostic Bundle"
+    panel.prompt = "Export"
+    panel.nameFieldStringValue = "Current-Diagnostics.zip"
+    panel.canCreateDirectories = true
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+
+    isExporting = true
+    statusMessage = nil
+    errorMessage = nil
+    Task {
+      do {
+        try await model.exportDiagnosticBundle(
+          selectedSystemReportURLs: selectedSystemReports,
+          to: url
+        )
+        statusMessage = "Exported \(url.lastPathComponent)"
+      } catch {
+        errorMessage = error.localizedDescription
+      }
+      isExporting = false
+    }
   }
 }
