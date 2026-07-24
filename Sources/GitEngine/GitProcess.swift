@@ -104,9 +104,32 @@ public protocol GitProcessRunning: Sendable {
 
 public struct SwiftSubprocessRunner: GitProcessRunning {
   public let executableURL: URL
+  private let runtimeEnvironment: [String: String?]
 
   public init(executableURL: URL) {
     self.executableURL = executableURL
+    let binDirectory = executableURL.deletingLastPathComponent()
+    let bundleRoot = binDirectory.deletingLastPathComponent()
+    let execPath = bundleRoot
+      .appendingPathComponent("libexec", isDirectory: true)
+      .appendingPathComponent("git-core", isDirectory: true)
+    let templatePath = bundleRoot
+      .appendingPathComponent("share", isDirectory: true)
+      .appendingPathComponent("git-core", isDirectory: true)
+      .appendingPathComponent("templates", isDirectory: true)
+
+    if FileManager.default.fileExists(atPath: execPath.path) {
+      let inheritedPath =
+        ProcessInfo.processInfo.environment["PATH"]
+        ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+      self.runtimeEnvironment = [
+        "PATH": "\(binDirectory.path):\(inheritedPath)",
+        "GIT_EXEC_PATH": execPath.path,
+        "GIT_TEMPLATE_DIR": templatePath.path,
+      ]
+    } else {
+      self.runtimeEnvironment = [:]
+    }
   }
 
   public func run(_ command: GitCommand) async throws -> GitProcessResult {
@@ -136,6 +159,7 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
               "LANG": "C",
               "GIT_TERMINAL_PROMPT": "0",
             ] as [String: String?])
+            .merging(self.runtimeEnvironment) { _, runtimeValue in runtimeValue }
             .merging(command.environmentOverrides) { _, commandValue in commandValue }
             .map { (Environment.Key(rawValue: $0.key)!, $0.value) }
           )

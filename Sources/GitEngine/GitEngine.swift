@@ -33,10 +33,12 @@ public struct GitExecutable: Hashable, Sendable {
 
   public let url: URL
   public let source: Source
+  public let fallbackReason: String?
 
-  public init(url: URL, source: Source) {
+  public init(url: URL, source: Source, fallbackReason: String? = nil) {
     self.url = url
     self.source = source
+    self.fallbackReason = fallbackReason
   }
 }
 
@@ -47,28 +49,46 @@ public struct GitExecutableResolver: Sendable {
     bundle: Bundle = .main,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> GitExecutable {
+    try resolve(resourceURL: bundle.resourceURL, environment: environment)
+  }
+
+  public func resolve(
+    resourceURL: URL?,
+    environment: [String: String]
+  ) throws -> GitExecutable {
+    var fallbackReason: String?
     if let override = environment["CURRENT_GIT_EXECUTABLE"], !override.isEmpty {
-      return GitExecutable(
-        url: URL(fileURLWithPath: override),
-        source: .custom
-      )
+      let customURL = URL(fileURLWithPath: override)
+      if FileManager.default.isExecutableFile(atPath: customURL.path) {
+        return GitExecutable(url: customURL, source: .custom)
+      }
+      fallbackReason =
+        "Custom Git at \(override) is not executable; using the default toolchain."
     }
 
-    if let resources = bundle.resourceURL {
+    if let resources = resourceURL {
       let bundled =
         resources
         .appendingPathComponent("Git", isDirectory: true)
         .appendingPathComponent("bin", isDirectory: true)
         .appendingPathComponent("git")
       if FileManager.default.isExecutableFile(atPath: bundled.path) {
-        return GitExecutable(url: bundled, source: .bundled)
+        return GitExecutable(
+          url: bundled,
+          source: .bundled,
+          fallbackReason: fallbackReason
+        )
       }
     }
 
     #if DEBUG
       let systemGit = URL(fileURLWithPath: "/usr/bin/git")
       if FileManager.default.isExecutableFile(atPath: systemGit.path) {
-        return GitExecutable(url: systemGit, source: .developmentSystemFallback)
+        return GitExecutable(
+          url: systemGit,
+          source: .developmentSystemFallback,
+          fallbackReason: fallbackReason ?? "The bundled Git is unavailable in this Debug build."
+        )
       }
     #endif
 
@@ -78,6 +98,7 @@ public struct GitExecutableResolver: Sendable {
 
 public protocol GitEngineProtocol: Sendable {
   func version() async throws -> String
+  func lfsVersion() async throws -> String
   func locateRepository(at url: URL) async throws -> RepositoryLocation
   func status(
     at location: RepositoryLocation,
@@ -135,6 +156,10 @@ public protocol GitEngineProtocol: Sendable {
 }
 
 extension GitEngineProtocol {
+  public func lfsVersion() async throws -> String {
+    throw GitEngineError.invalidOutput("Git LFS capability checking is not implemented.")
+  }
+
   public func conflictFile(
     at location: RepositoryLocation,
     path: GitPath
@@ -154,6 +179,12 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
 
   public func version() async throws -> String {
     let result = try await execute(GitCommand(arguments: ["--version"]))
+    return String(decoding: result.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  public func lfsVersion() async throws -> String {
+    let result = try await execute(GitCommand(arguments: ["lfs", "version"]))
     return String(decoding: result.standardOutput, as: UTF8.self)
       .trimmingCharacters(in: .whitespacesAndNewlines)
   }

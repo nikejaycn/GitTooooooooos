@@ -66,9 +66,13 @@ struct CurrentMacApp: App {
     Settings {
       Form {
         LabeledContent("Git", value: model.gitVersion ?? "Checking…")
-        Text("Development builds use /usr/bin/git until the bundled arm64 Git artifact is added.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        LabeledContent("Git LFS", value: model.gitLFSVersion ?? "Unavailable")
+        LabeledContent("Source", value: model.gitSourceDescription ?? "Unavailable")
+        if let reason = model.gitFallbackReason {
+          Text(reason)
+            .font(.caption)
+            .foregroundStyle(.orange)
+        }
       }
       .padding(24)
       .frame(width: 480)

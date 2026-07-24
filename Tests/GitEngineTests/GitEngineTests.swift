@@ -26,6 +26,45 @@ struct GitEngineTests {
     #expect(commands[0].redactedDescription == "--version")
   }
 
+  @Test("Reads the Git LFS version through the bundled helper path")
+  func lfsVersion() async throws {
+    let runner = StubRunner(
+      results: [
+        .success("git-lfs/3.7.1 (GitHub; darwin arm64)\n")
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+
+    #expect(try await engine.lfsVersion() == "git-lfs/3.7.1 (GitHub; darwin arm64)")
+    #expect(await runner.commands().first?.redactedDescription == "lfs version")
+  }
+
+  @Test("Invalid custom Git falls back to the bundled executable with a reason")
+  func resolverFallsBackToBundle() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-resolver-\(UUID().uuidString)", isDirectory: true)
+    let git = root.appendingPathComponent("Git/bin/git")
+    try FileManager.default.createDirectory(
+      at: git.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: git)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: git.path
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let executable = try GitExecutableResolver().resolve(
+      resourceURL: root,
+      environment: ["CURRENT_GIT_EXECUTABLE": root.appendingPathComponent("missing").path]
+    )
+
+    #expect(executable.source == .bundled)
+    #expect(executable.url == git)
+    #expect(executable.fallbackReason?.contains("not executable") == true)
+  }
+
   @Test("Maps porcelain status into domain state")
   func status() async throws {
     let output =

@@ -27,4 +27,7 @@ xcodebuild build \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-Debug 构建在捆绑 Git 尚未加入前使用 `/usr/bin/git`。生产版本不会依赖系统 Git。
+先运行 `Scripts/build-git-bundle.sh` 可从锁定并校验 SHA-256 的官方发行包构建
+arm64 Git 2.55.0，并加入 Git LFS 3.7.1。Xcode 会把生成物嵌入
+`Current.app/Contents/Resources/Git`。Debug 在生成物尚未就绪时可回退
+`/usr/bin/git`；Release 缺少 Bundle 会直接构建失败，生产版本不依赖系统 Git。

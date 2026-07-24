@@ -1,0 +1,96 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "Current Git Bundle",
+      "version": "1"
+    },
+    "properties": [
+      {
+        "name": "current:target",
+        "value": "arm64-apple-macos14"
+      },
+      {
+        "name": "current:git-build-options",
+        "value": "RUNTIME_PREFIX=YesPlease,NO_GETTEXT=YesPlease,NO_TCLTK=YesPlease,NO_PERL=YesPlease,NO_PYTHON=YesPlease,NO_RUST=YesPlease"
+      },
+      {
+        "name": "current:system-libraries",
+        "value": "CoreServices,CoreFoundation,libSystem,libcurl,libexpat,libiconv,libz"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "application",
+      "bom-ref": "pkg:generic/git@2.55.0",
+      "name": "Git",
+      "version": "2.55.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-2.0-only"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "457fdb04dc8728e007d4688695e6912e6f680727920f2a40bf11eacc17505357"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz"
+        },
+        {
+          "type": "website",
+          "url": "https://git-scm.com/"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:github/git-lfs/git-lfs@v3.7.1",
+      "name": "Git LFS",
+      "version": "3.7.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "76260fb34f4ee622ff0a66b857e5954aa49c7e343a92e57a1ec4a760618c94b2"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/git-lfs/git-lfs/releases/download/v3.7.1/git-lfs-darwin-arm64-v3.7.1.zip"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/git-lfs/git-lfs/tree/v3.7.1"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:generic/git@2.55.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:github/git-lfs/git-lfs@v3.7.1",
+      "dependsOn": []
+    }
+  ]
+}

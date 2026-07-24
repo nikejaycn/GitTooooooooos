@@ -88,6 +88,7 @@
 			buildPhases = (
 				604C2B9709DA1A1DCBA1E2CE /* Sources */,
 				CB29A3724FA769656F820024 /* Frameworks */,
+				7D5A2B190B6D4F6A98C38120 /* Embed Bundled Git */,
 			);
 			buildRules = (
 			);
@@ -148,6 +149,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		7D5A2B190B6D4F6A98C38120 /* Embed Bundled Git */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Bundled Git";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nbundle_source=\"${SRCROOT}/.build/GitBundle/Git\"\nresources=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\ndestination=\"${resources}/Git\"\nif [ -x \"${bundle_source}/bin/git\" ]; then\n  mkdir -p \"${resources}\"\n  rm -rf \"${destination}\"\n  /usr/bin/ditto \"${bundle_source}\" \"${destination}\"\nelif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  echo \"error: Release builds require .build/GitBundle/Git; run Scripts/build-git-bundle.sh first.\" >&2\n  exit 1\nelse\n  echo \"warning: Bundled Git is absent; Debug will use the development system fallback.\" >&2\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
 		433B76B8C7331D6B54D838A6 /* Release */ = {

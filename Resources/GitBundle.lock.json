@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "platform": "macOS",
+    "architecture": "arm64",
+    "minimumVersion": "14.0"
+  },
+  "components": [
+    {
+      "name": "Git",
+      "version": "2.55.0",
+      "license": "GPL-2.0-only",
+      "sourceURL": "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz",
+      "sha256": "457fdb04dc8728e007d4688695e6912e6f680727920f2a40bf11eacc17505357"
+    },
+    {
+      "name": "Git LFS",
+      "version": "3.7.1",
+      "license": "MIT",
+      "sourceURL": "https://github.com/git-lfs/git-lfs/releases/download/v3.7.1/git-lfs-darwin-arm64-v3.7.1.zip",
+      "sourceArchiveURL": "https://github.com/git-lfs/git-lfs/releases/download/v3.7.1/git-lfs-v3.7.1.tar.gz",
+      "sha256": "76260fb34f4ee622ff0a66b857e5954aa49c7e343a92e57a1ec4a760618c94b2",
+      "sourceArchiveSHA256": "8f56058622edfea1d111e50e9844ef2f5ce670b2dbe4d55d48e765c943af4351"
+    }
+  ]
+}

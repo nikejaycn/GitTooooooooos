@@ -11,6 +11,9 @@ import RepositoryModel
 final class AppModel {
   private(set) var repositoryName: String?
   private(set) var gitVersion: String?
+  private(set) var gitLFSVersion: String?
+  private(set) var gitSourceDescription: String?
+  private(set) var gitFallbackReason: String?
   private(set) var repositoryStatus: RepositoryStatus?
   private(set) var commits: [CommitSummary] = []
   private(set) var references: [GitReference] = []
@@ -34,9 +37,18 @@ final class AppModel {
         runner: SwiftSubprocessRunner(executableURL: executable.url)
       )
       engine = liveEngine
+      gitFallbackReason = executable.fallbackReason
+      switch executable.source {
+      case .bundled:
+        gitSourceDescription = "Bundled"
+      case .custom:
+        gitSourceDescription = "Custom"
+      case .developmentSystemFallback:
+        gitSourceDescription = "Development system fallback"
+      }
 
       Task {
-        await loadGitVersion()
+        await loadGitToolchainVersions()
       }
       if let path = CommandLine.arguments.dropFirst().first, !path.isEmpty {
         Task {
@@ -241,10 +253,11 @@ final class AppModel {
     }
   }
 
-  private func loadGitVersion() async {
+  private func loadGitToolchainVersions() async {
     guard let engine else { return }
     do {
       gitVersion = try await engine.version()
+      gitLFSVersion = try? await engine.lfsVersion()
     } catch {
       errorMessage = error.localizedDescription
     }
