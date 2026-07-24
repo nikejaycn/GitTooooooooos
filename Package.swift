@@ -159,5 +159,9 @@ let package = Package(
       name: "GraphKitTests",
       dependencies: ["GraphKit", "CurrentDomain"]
     ),
+    .testTarget(
+      name: "CurrentUITests",
+      dependencies: ["CurrentUI"]
+    ),
   ]
 )

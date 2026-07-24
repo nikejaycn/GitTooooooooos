@@ -153,6 +153,7 @@ public struct CurrentRootView: View {
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
   @State private var cloneURL = ""
+  @State private var isShowingCommandPalette = false
 
   public init(
     repositoryName: String?,
@@ -560,6 +561,12 @@ public struct CurrentRootView: View {
               Label("New Branch", systemImage: "plus")
             }
             .disabled(status == nil || isLoading)
+            Button {
+              isShowingCommandPalette = true
+            } label: {
+              Label("Command Palette", systemImage: "command")
+            }
+            .keyboardShortcut("k", modifiers: [.command])
             Menu {
               Button("Fetch All", action: fetch)
               Button("Pull (Fast-forward Only)", action: pull)
@@ -781,6 +788,12 @@ public struct CurrentRootView: View {
           dismiss: { conflictEditorPath = nil }
         )
       }
+    }
+    .sheet(isPresented: $isShowingCommandPalette) {
+      CommandPaletteView(
+        actions: commandPaletteActions,
+        dismiss: { isShowingCommandPalette = false }
+      )
     }
   }
 
@@ -2119,6 +2132,140 @@ public struct CurrentRootView: View {
       details.append("Date: \(taggedAt.formatted())")
     }
     return details.joined(separator: "\n")
+  }
+
+  private var commandPaletteActions: [CommandPaletteAction] {
+    var actions = [
+      CommandPaletteAction(
+        id: "repository.open",
+        title: "Open Repository…",
+        systemImage: "folder",
+        keywords: "local git",
+        perform: openRepository
+      ),
+      CommandPaletteAction(
+        id: "repository.refresh",
+        title: "Refresh Repository",
+        systemImage: "arrow.clockwise",
+        isEnabled: status != nil && !isLoading,
+        perform: refresh
+      ),
+      CommandPaletteAction(
+        id: "repository.fetch",
+        title: "Fetch All Remotes",
+        systemImage: "arrow.down.circle",
+        keywords: "network prune",
+        isEnabled: status != nil && !isLoading,
+        perform: fetch
+      ),
+      CommandPaletteAction(
+        id: "repository.pull",
+        title: "Pull (Fast-forward Only)",
+        systemImage: "arrow.down.to.line",
+        keywords: "network update",
+        isEnabled: status != nil && !isLoading,
+        perform: pull
+      ),
+      CommandPaletteAction(
+        id: "repository.push",
+        title: "Push Current Branch",
+        systemImage: "arrow.up.to.line",
+        keywords: "network remote",
+        isEnabled: status != nil && !remotes.isEmpty && !isLoading,
+        perform: push
+      ),
+      CommandPaletteAction(
+        id: "repository.new-branch",
+        title: "Create Branch…",
+        systemImage: "arrow.triangle.branch",
+        keywords: "new checkout",
+        isEnabled: status != nil && !isLoading
+      ) {
+        newBranchName = ""
+        isCreatingBranch = true
+      },
+      CommandPaletteAction(
+        id: "workspace.changes",
+        title: "Show Changes",
+        detail: status.map { "\($0.changes.count) working-copy files" },
+        systemImage: "square.stack.3d.up",
+        keywords: "workspace stage",
+        isEnabled: status != nil
+      ) {
+        workspace = .changes
+      },
+      CommandPaletteAction(
+        id: "workspace.history",
+        title: "Show History",
+        detail: "\(commits.count) loaded commits",
+        systemImage: "point.3.connected.trianglepath.dotted",
+        keywords: "graph log"
+      ) {
+        workspace = .history
+      },
+      CommandPaletteAction(
+        id: "workspace.stashes",
+        title: "Show Stashes",
+        detail: "\(stashes.count) stashes",
+        systemImage: "archivebox",
+        keywords: "saved changes"
+      ) {
+        workspace = .stashes
+      },
+      CommandPaletteAction(
+        id: "workspace.operations",
+        title: "Show Operations",
+        detail: "\(activities.count) activities",
+        systemImage: "list.bullet.rectangle",
+        keywords: "log console"
+      ) {
+        workspace = .operations
+      },
+    ]
+
+    actions +=
+      references
+      .filter { $0.kind == .localBranch }
+      .map { reference in
+        CommandPaletteAction(
+          id: "branch.\(reference.fullName)",
+          title: reference.isHEAD
+            ? "Current Branch: \(reference.shortName)"
+            : "Check Out \(reference.shortName)",
+          detail: reference.upstream,
+          systemImage: reference.isHEAD ? "location.fill" : "arrow.triangle.branch",
+          keywords: "branch switch checkout \(reference.fullName)",
+          isEnabled: !reference.isHEAD && !isLoading
+        ) {
+          checkoutBranch(reference.shortName)
+        }
+      }
+
+    actions += (status?.changes ?? []).map { change in
+      CommandPaletteAction(
+        id: "file.\(change.path.displayString)",
+        title: change.path.displayString,
+        detail: "Open \(change.kind.rawValue) diff",
+        systemImage: "doc.text.magnifyingglass",
+        keywords: "file diff change"
+      ) {
+        workspace = .changes
+        loadDiff(change)
+      }
+    }
+
+    actions += recentRepositories.map { repository in
+      CommandPaletteAction(
+        id: "recent.\(repository.id)",
+        title: "Open \(repository.displayName)",
+        detail: repository.path,
+        systemImage: repository.isFavorite ? "star.fill" : "clock",
+        keywords: "recent repository favorite"
+      ) {
+        openRecentRepository(repository)
+      }
+    }
+    return actions
   }
 
   private func worktreeHelp(_ worktree: GitWorktree) -> String {
