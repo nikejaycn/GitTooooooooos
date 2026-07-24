@@ -1,0 +1,137 @@
+id,module,capability,gitkraken_scope,our_priority,target_release,dependency,evidence
+APP-01,应用与仓库,打开本地仓库,路径选择与最近仓库,P0,MVP,文件访问授权,GitKraken Docs
+APP-02,应用与仓库,克隆仓库,HTTPS/SSH URL 与托管平台列表,P0,MVP,Git 进程与凭据,GitKraken Docs
+APP-03,应用与仓库,初始化仓库,创建新本地仓库,P0,MVP,Git 进程,GitKraken Docs
+APP-04,应用与仓库,仓库管理中心,分组浏览全部仓库,P1,v1.0,本地元数据存储,GitKraken Docs
+APP-05,应用与仓库,多标签页,仓库与工作树独立标签,P0,MVP,窗口状态恢复,GitKraken client
+APP-06,应用与仓库,最近仓库与收藏,快速打开 1-9 收藏仓库,P0,MVP,本地元数据存储,GitKraken client
+APP-07,应用与仓库,多配置 Profile,隔离身份集成与 UI 配置,P2,v2.0,账户系统,GitKraken Docs
+APP-08,应用与仓库,主题与外观,深浅主题图谱字段日期头像缩放,P1,v1.0,设计系统,GitKraken Docs
+APP-09,应用与仓库,外部编辑器与 Finder,在 Xcode/VS Code/Finder 中打开,P0,MVP,NSWorkspace,GitKraken client
+APP-10,应用与仓库,Deep Link,gitkraken:// 打开仓库提交补丁,P2,v2.0,URL scheme,GitKraken Docs
+APP-11,应用与仓库,活动日志,显示实际 Git 命令输出与错误,P0,MVP,操作日志,GitKraken Docs
+APP-12,应用与仓库,自动更新,检查下载重启安装,P1,v1.0,Sparkle/签名,GitKraken client
+APP-13,应用与仓库,Apple Silicon 单架构分发,macOS 14+ arm64 only,P0,MVP,arm64 发布与测试矩阵,产品决策
+APP-14,应用与仓库,捆绑 Git,固定 arm64 Git 下载即用且可选自定义 Git,P0,MVP,签名/SBOM/GPL 合规/安全更新,产品决策
+GRAPH-01,提交图谱,DAG 提交图,分支车道合并线提交节点,P0,MVP,增量图算法,GitKraken Docs
+GRAPH-02,提交图谱,WIP 节点,工作区改动显示在图顶端,P0,MVP,状态监听,GitKraken Docs
+GRAPH-03,提交图谱,图谱字段定制,作者头像日期 SHA 信息列,P1,v1.0,表格列配置,GitKraken Docs
+GRAPH-04,提交图谱,图谱缩放与列宽,缩放比例和可拖拽分栏,P1,v1.0,布局持久化,GitKraken Docs
+GRAPH-05,提交图谱,隐藏引用,隐藏分支标签远端,P1,v1.0,过滤状态,GitKraken Docs
+GRAPH-06,提交图谱,Solo 引用,仅显示选中引用相关历史,P1,v1.0,可达性查询,GitKraken Docs
+GRAPH-07,提交图谱,Ghost branch,显示提交最近所属分支,P2,v2.0,包含关系索引,GitKraken Docs
+GRAPH-08,提交图谱,固定分支,固定车道并快速跳转,P1,v1.0,图布局状态,GitKraken 12.3.1
+GRAPH-09,提交图谱,提交多选,连续与非连续选择并合并 diff,P0,MVP,选择模型,GitKraken Docs
+GRAPH-10,提交图谱,提交搜索,按消息作者 SHA 文件日期搜索,P0,MVP,SQLite FTS5/流式 Git,GitKraken Docs
+GRAPH-11,提交图谱,最大提交数,按需加载与渲染上限,P0,MVP,分页和虚拟化,GitKraken performance docs
+FILE-01,文件与差异,工作区文件状态,新增修改删除重命名冲突,P0,MVP,porcelain v2 解析,GitKraken Docs
+FILE-02,文件与差异,文件过滤,按路径与状态过滤,P0,MVP,状态索引,GitKraken Docs
+FILE-03,文件与差异,文件级暂存/取消暂存,含批量操作,P0,MVP,Git index,GitKraken Docs
+FILE-04,文件与差异,Hunk 暂存/取消暂存,局部构建提交,P0,MVP,补丁应用,GitKraken Docs
+FILE-05,文件与差异,行级暂存/取消暂存,精确选择改动行,P0,v1.0,补丁生成器,GitKraken/Tower
+FILE-06,文件与差异,丢弃文件/Hunk/行改动,危险操作二次确认,P0,MVP,安全快照与 restore,GitKraken Docs
+FILE-07,文件与差异,Ignore,写入 .gitignore 与 exclude,P0,MVP,ignore 规则,GitKraken Docs
+FILE-08,文件与差异,Inline diff,单栏增删展示,P0,MVP,虚拟化 diff,GitKraken Docs
+FILE-09,文件与差异,Split diff,双栏对照,P0,v1.0,同步滚动,GitKraken Docs
+FILE-10,文件与差异,Hunk diff,块级上下文与恢复,P0,MVP,diff 解析,GitKraken Docs
+FILE-11,文件与差异,语法高亮,多语言差异高亮,P1,v1.0,Tree-sitter,GitKraken/Sublime Merge
+FILE-12,文件与差异,忽略空白与换行配置,差异显示选项,P1,v1.0,Git diff 参数,GitKraken release notes
+FILE-13,文件与差异,文件历史,单文件提交时间线,P0,v1.0,路径历史查询,GitKraken Docs
+FILE-14,文件与差异,Blame,逐行作者提交归因,P0,v1.0,增量 blame,GitKraken Docs
+FILE-15,文件与差异,提交/分支比较,选择两提交或引用比较,P0,MVP,range diff,GitKraken Docs
+FILE-16,文件与差异,图片与 Markdown 预览,二进制图像和 Markdown 查看,P2,v2.0,QuickLook/WebKit,GitKraken release notes
+FILE-17,文件与差异,内置文件编辑,编辑并保存文本文件,P2,v2.0,TextKit 2,GitKraken Docs
+FILE-18,文件与差异,外部 Diff 工具,FileMerge/Kaleidoscope/Beyond Compare 等,P1,v1.0,工具适配器,GitKraken Docs
+FILE-19,文件与差异,创建与应用 Patch,不含二进制 patch,P1,v1.0,git format-patch/apply,GitKraken Docs
+COMMIT-01,提交,创建提交,摘要正文与快捷键,P0,MVP,Git commit,GitKraken Docs
+COMMIT-02,提交,Commit & Push,一次完成本地与远端操作,P0,v1.0,操作编排,GitKraken Docs
+COMMIT-03,提交,Amend 最新提交,修改消息或内容,P0,MVP,历史改写保护,GitKraken Docs
+COMMIT-04,提交,提交模板,读取 repo/global commit.template,P1,v1.0,Git config,GitKraken Docs
+COMMIT-05,提交,Co-author,识别并展示协作者 trailer,P1,v1.0,Trailer 解析,GitKraken Docs
+COMMIT-06,提交,跳过 Hooks,单次 --no-verify,P1,v1.0,Git hooks,GitKraken Docs
+COMMIT-07,提交,提交签名,GPG 与 SSH 签名验证,P1,v1.0,签名与 Keychain,GitKraken Docs
+COMMIT-08,提交,Cherry-pick,单个与多个提交,P0,MVP,冲突状态机,GitKraken Docs
+COMMIT-09,提交,Interactive cherry-pick,选择应用顺序与是否立即提交,P2,v2.0,操作预览,GitKraken client
+COMMIT-10,提交,Revert,创建反向提交,P0,MVP,冲突状态机,GitKraken client
+COMMIT-11,提交,Reset,soft/mixed/hard 到指定提交,P0,MVP,危险操作保护,GitKraken client
+COMMIT-12,提交,Squash,选中连续提交合并,P0,v1.0,交互式 rebase,GitKraken Docs
+COMMIT-13,提交,提交消息编辑,重写本地提交消息,P1,v1.0,交互式 rebase,GitKraken client
+BRANCH-01,分支与历史,创建与 checkout 分支,从 HEAD 或任意提交,P0,MVP,ref 操作,GitKraken Docs
+BRANCH-02,分支与历史,重命名与删除分支,含多选与强制删除,P0,MVP,合并状态判定,GitKraken Docs
+BRANCH-03,分支与历史,Detached HEAD,识别提示并从提交建分支,P0,MVP,HEAD 状态,GitKraken Docs
+BRANCH-04,分支与历史,Merge,fast-forward/no-ff/普通合并,P0,MVP,冲突状态机,GitKraken Docs
+BRANCH-05,分支与历史,Squash Merge,暂存合并结果后手动提交,P1,v1.0,合并选项,GitKraken Docs
+BRANCH-06,分支与历史,Rebase,将分支变基到目标,P0,v1.0,冲突状态机,GitKraken Docs
+BRANCH-07,分支与历史,范围 Rebase,仅变基选定提交范围,P2,v2.0,高级 rebase,GitKraken Docs
+BRANCH-08,分支与历史,Interactive Rebase,pick/reword/squash/drop/reorder,P0,v1.0,rebase todo 编辑器,GitKraken Docs
+BRANCH-09,分支与历史,Tag,创建查看推送删除轻量/附注标签,P0,v1.0,ref 与签名,GitKraken Docs
+STASH-01,暂存栈,Stash 全部改动,消息可编辑,P0,MVP,stash 操作,GitKraken Docs
+STASH-02,暂存栈,部分 Stash,文件/文件夹/选定改动,P1,v1.0,补丁生成器,GitKraken client
+STASH-03,暂存栈,Apply/Pop/Delete,恢复或删除选定 stash,P0,MVP,冲突状态机,GitKraken Docs
+STASH-04,暂存栈,Auto-stash,checkout/merge/rebase 等前自动保护,P1,v1.0,操作编排,GitKraken client
+UNDO-01,安全与撤销,Undo/Redo 操作栈,撤销提交合并 rebase reset 等,P0,v1.0,操作日志与 reflog,GitKraken Docs
+UNDO-02,安全与撤销,破坏性操作预览,展示命令影响范围与不可逆项,P0,MVP,Operation Plan,产品差异化
+UNDO-03,安全与撤销,恢复点,危险动作前创建可命名本地快照,P0,v1.0,隐藏 refs/reflog,产品差异化
+REMOTE-01,远端协作,管理 Remote,添加编辑删除默认远端,P0,MVP,Git config,GitKraken Docs
+REMOTE-02,远端协作,Fetch,单远端/全部远端/Prune,P0,MVP,网络队列,GitKraken Docs
+REMOTE-03,远端协作,Pull 策略,FF-if-possible/FF-only/rebase,P0,MVP,网络队列,GitKraken Docs
+REMOTE-04,远端协作,Push,设置 upstream/标签/多分支,P0,MVP,网络队列,GitKraken Docs
+REMOTE-05,远端协作,安全强推,force-with-lease 默认并解释风险,P0,v1.0,远端基线校验,产品差异化
+REMOTE-06,远端协作,SSH/HTTPS 凭据,ssh-agent 与 Keychain helper,P0,MVP,Keychain/Process,GitKraken Docs
+REMOTE-07,远端协作,代理与自签证书,企业网络兼容,P2,v2.0,网络与证书策略,GitKraken Docs
+REMOTE-08,远端协作,Fork GitHub 仓库,建立 origin/upstream,P3,Post-v1,GitHub API,GitKraken Docs
+CONFLICT-01,冲突解决,冲突状态面板,列出未解决文件与步骤,P0,MVP,冲突状态机,GitKraken Docs
+CONFLICT-02,冲突解决,内置三方 Merge Tool,ours/base/theirs/output,P0,v1.0,文本 diff3,GitKraken Docs
+CONFLICT-03,冲突解决,Hunk/行选择,组合两侧结果并编辑,P0,v1.0,Merge editor,GitKraken Docs
+CONFLICT-04,冲突解决,外部 Merge Tool,FileMerge/Kaleidoscope 等,P1,v1.0,工具适配器,GitKraken Docs
+CONFLICT-05,冲突解决,提前冲突检测,对目标分支预测重叠,P2,v2.0,merge-tree/协作服务,GitKraken Docs
+ADV-01,高级 Git,Worktree,创建打开锁定删除与新标签,P0,v1.0,多工作目录模型,GitKraken Docs
+ADV-02,高级 Git,Submodule,显示添加初始化更新删除,P1,v1.0,嵌套仓库状态,GitKraken Docs
+ADV-03,高级 Git,Git LFS,安装检测 track/untrack/fetch/prune,P1,v1.0,LFS 二进制,GitKraken Docs
+ADV-04,高级 Git,Gitflow,初始化 feature/release/hotfix 流程,P2,v2.0,工作流编排,GitKraken Docs
+ADV-05,高级 Git,Git Hooks,配置 hooks 目录与执行状态,P1,v1.0,环境继承,GitKraken Docs
+ADV-06,高级 Git,Repo Maintenance,maintenance/gc/LFS prune,P1,v1.0,维护任务,GitKraken performance docs
+HOST-01,托管平台,GitHub.com 登录与仓库列表,OAuth/Device Flow,P3,Post-v1,GitHub API,GitKraken Docs
+HOST-02,托管平台,GitLab.com 登录与仓库列表,OAuth/PAT,P3,Post-v1,GitLab API,GitKraken Docs
+HOST-03,托管平台,Bitbucket Cloud 登录与仓库列表,OAuth,P3,Post-v1,Bitbucket API,GitKraken Docs
+HOST-04,托管平台,Azure DevOps 登录与仓库列表,OAuth/PAT,P3,Post-v1,Azure API,GitKraken Docs
+HOST-05,托管平台,自托管 GitHub/GitLab/Bitbucket/Azure,企业服务地址与证书,P3,Post-v1,企业授权与 API,GitKraken Docs
+PR-01,Pull Request,创建 PR,标题描述目标分支草稿 reviewer,P3,Post-v1,GitHub API,GitKraken Docs
+PR-02,Pull Request,PR 列表与筛选,按作者状态仓库标签查询,P3,Post-v1,Provider API,GitKraken Docs
+PR-03,Pull Request,PR 关联图谱,分支提交与 merged pill,P3,Post-v1,Provider API,GitKraken release notes
+PR-04,Pull Request,PR 详情与 Diff,查看提交文件检查状态,P3,Post-v1,Provider API/Diff,GitKraken Docs
+PR-05,Pull Request,完整 Code Review,评论建议批准合并,P3,Post-v1,Provider API,GitKraken Docs limitation
+ISSUE-01,Issue,GitHub Issues,查看创建分配并关联分支,P3,Post-v1,GitHub API,GitKraken Docs
+ISSUE-02,Issue,GitLab Issues,查看创建分配并关联分支,P3,Post-v1,GitLab API,GitKraken Docs
+ISSUE-03,Issue,Jira Cloud/Data Center,查看创建分配并关联分支,P3,Post-v1,Jira API,GitKraken Docs
+ISSUE-04,Issue,Trello,卡片查看与关联分支,P3,不规划,Trello API,GitKraken Docs
+CI-01,CI/CD,GitHub Actions,工作流状态触发与日志入口,P3,Post-v1,GitHub API,GitKraken Docs
+COLLAB-01,协作,Local Workspace,多仓库项目集合,P1,v1.0,本地元数据,GitKraken Docs
+COLLAB-02,协作,Cloud Workspace,跨设备同步与分享仓库集合,P3,Post-v1,账户与后端,GitKraken Docs
+COLLAB-03,协作,Launchpad,跨仓库 PR/Issue 工作台,P3,Post-v1,多 Provider 后端,GitKraken Docs
+COLLAB-04,协作,Team View,查看成员分支与活动,P3,Post-v1,组织与后端,GitKraken Docs
+COLLAB-05,协作,Cloud Patch,分享 WIP/提交/stash 链接,P3,Post-v1,加密对象存储,GitKraken Docs
+COLLAB-06,协作,组织级冲突预警,成员未推送工作重叠检测,P3,Post-v1,隐私与后端,GitKraken Docs
+TERM-01,效率工具,Command Palette,命令文件仓库分支 stash 搜索,P0,MVP,统一 Action registry,GitKraken Docs
+TERM-02,效率工具,键盘快捷键,可发现且可定制,P0,MVP,Commands 系统,GitKraken Docs
+TERM-03,效率工具,集成终端,当前仓库工作树多会话,P2,v2.0,PTY/终端渲染,GitKraken 12
+TERM-04,效率工具,CLI 启动器,从终端以路径打开 App,P1,v1.0,命令行工具,GitKraken release notes
+AI-01,AI,AI Commit Message,基于 staged diff 生成消息,P3,Post-v1,模型适配器,GitKraken Docs
+AI-02,AI,AI Commit Composer,拆分 WIP 或重组连续提交,P3,Post-v1,安全沙箱/模型,GitKraken Docs
+AI-03,AI,AI Explain,解释提交/多提交/分支变化,P3,Post-v1,模型适配器,GitKraken Docs
+AI-04,AI,AI PR/Stash 文案,生成标题描述与 stash 消息,P3,Post-v1,模型适配器,GitKraken Docs
+AI-05,AI,AI 冲突建议,逐 hunk 建议解释与置信度,P3,Post-v1,模型与 Merge editor,GitKraken Docs
+AI-06,AI,BYOK 与本地模型,OpenAI/Anthropic/自定义 URL,P3,Post-v1,Keychain/Provider protocol,GitKraken Docs
+AGENT-01,Agent 工作流,Agent Sessions View,工作树卡片 WIP ahead/behind PR 状态,P3,Post-v1,Worktree 与进程监控,GitKraken 12
+AGENT-02,Agent 工作流,新 Agent Session,建 worktree 执行 setup 启动 CLI,P3,Post-v1,Worktree/终端,GitKraken 12
+AGENT-03,Agent 工作流,Agent 状态,运行思考工具调用待输入错误,P3,Post-v1,Agent hooks/plugin,GitKraken 12.3
+AGENT-04,Agent 工作流,Agent 聚合通知,跨仓库展示最高优先级状态,P3,Post-v1,通知中心,GitKraken 12.3.1
+AGENT-05,Agent 工作流,支持 Codex/Claude/Gemini/Copilot/OpenCode,自动检测与自定义参数,P3,Post-v1,外部工具适配器,GitKraken 12
+ENT-01,企业,SSO/组织席位/审计日志,企业身份与治理,P3,Post-v1,账户后端,GitKraken pricing
+ENT-02,企业,Serverless/自托管许可,隔离或断网环境,P3,Post-v1,许可服务,GitKraken Docs
+ENT-03,企业,策略控制,AI/冲突检测/更新策略,P3,Post-v1,管理控制面,GitKraken pricing
+SEC-01,安全与隐私,Keychain 存储凭据,不保存 SSH 私钥内容,P0,MVP,Security.framework,产品基线
+SEC-02,安全与隐私,本地优先,核心 Git 功能无需登录与联网,P0,MVP,本地架构,产品差异化
+SEC-03,安全与隐私,日志脱敏,token/URL/userinfo/环境变量不可入日志,P0,MVP,日志管线,产品基线
+SEC-04,安全与隐私,签名公证与 Hardened Runtime,Developer ID 分发,P0,MVP,发布流水线,macOS 基线
+SEC-05,安全与隐私,崩溃与遥测可选,默认最小化并可导出诊断包,P1,v1.0,隐私设计,产品差异化

@@ -1,0 +1,526 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "macOS 原生高性能 Git 客户端：竞品研究与执行方案",
+    "description": "以 GitKraken Desktop 12.3.1 为主样本，形成 macOS 14+ 原生 Git 客户端的产品边界、优先级、架构、性能预算与里程碑。",
+    "generatedAt": "2026-07-24T11:20:00+08:00",
+    "sources": [
+      {
+        "id": "gk-docs",
+        "label": "GitKraken Desktop 官方文档目录",
+        "href": "https://help.gitkraken.com/gitkraken-desktop/gitkraken-desktop-home/",
+        "query": {
+          "description": "用于建立 GitKraken Desktop 的完整功能分类与官方能力边界。",
+          "executed_at": "2026-07-24T11:00:00+08:00",
+          "language": "web"
+        }
+      },
+      {
+        "id": "gk-client",
+        "label": "GitKraken Desktop 12.3.1 官方 macOS DMG 只读检查",
+        "href": "https://api.gitkraken.dev/releases/production/darwin/x64/active/installGitKraken.dmg",
+        "query": {
+          "description": "对官方 DMG 挂载后读取 app bundle 体积、Info.plist、可执行架构、框架和资源目录；未安装、未登录。",
+          "engine": "SQLite",
+          "sql": "SELECT '.app 总体' AS component, 635 AS size_mb, '展开总体' AS relationship, 'GitKraken.app 展开近似值' AS observation UNION ALL SELECT 'Resources', 364, '.app 子目录', '包含 app.asar 与 unpacked 资源' UNION ALL SELECT 'app.asar', 278, 'Resources 子项', 'Electron 应用资源归档' UNION ALL SELECT 'Frameworks', 271, '.app 子目录', '包含 Electron Framework 与 helper apps' UNION ALL SELECT 'app.asar.unpacked', 84, 'Resources 子项', '包含 Git、LFS、CLI 等 unpacked 文件' UNION ALL SELECT 'DMG', 219, '压缩安装包', '官方下载安装文件';",
+          "executed_at": "2026-07-24T11:08:00+08:00",
+          "language": "shell",
+          "filters": [
+            "GitKraken Desktop 12.3.1",
+            "macOS x64 official installer",
+            "read-only package inspection"
+          ],
+          "metric_definitions": [
+            "DMG MB、app MB、Frameworks MB、Resources MB 与 app.asar MB 均为文件系统显示的近似值。",
+            "组件值存在包含关系，不应相加为总量。"
+          ]
+        }
+      },
+      {
+        "id": "gk-performance",
+        "label": "GitKraken Desktop 官方性能排障",
+        "href": "https://help.gitkraken.com/gitkraken-desktop/performance-issues/",
+        "query": {
+          "description": "用于识别大型仓库、图谱、auto-fetch、refs、LFS 和长期运行相关的性能痛点。",
+          "executed_at": "2026-07-24T11:12:00+08:00",
+          "language": "web"
+        }
+      },
+      {
+        "id": "gk-security",
+        "label": "GitKraken Desktop 官方安全与数据存储说明",
+        "href": "https://help.gitkraken.com/gitkraken-desktop/gkc-security/",
+        "query": {
+          "description": "用于界定 Workspace、Teams、Launchpad、Cloud Patch 与冲突检测涉及的云端数据。",
+          "executed_at": "2026-07-24T11:14:00+08:00",
+          "language": "web"
+        }
+      },
+      {
+        "id": "feature-inventory",
+        "label": "GitKraken 功能盘点与产品分期清单",
+        "path": "research/gitkraken_feature_inventory.csv",
+        "query": {
+          "description": "将官方文档和客户端字符串交叉确认的能力拆成可独立规划的功能项，并标注优先级、目标版本和依赖。",
+          "executed_at": "2026-07-24T11:20:00+08:00",
+          "language": "csv",
+          "metric_definitions": [
+            "能力项总数为 CSV 中除标题行外的记录数。",
+            "目标版本数量按 target_release 字段分组计数；每个能力项只归入一个目标版本。"
+          ]
+        }
+      },
+      {
+        "id": "feature-release",
+        "label": "功能清单按目标版本汇总",
+        "path": "research/gitkraken_feature_inventory.csv",
+        "query": {
+          "description": "将功能清单按 target_release 分组计数，并映射每个版本的范围与优先级重点。",
+          "engine": "SQLite",
+          "sql": "SELECT target_release AS release, COUNT(*) AS capability_count, CASE target_release WHEN 'MVP' THEN '本地高频 Git 闭环' WHEN 'v1.0' THEN '专业工作流与 GitHub PR' WHEN 'v1.1' THEN 'AI 与 Agent 工作台' WHEN 'v2.0' THEN '更多 Provider 与高级体验' WHEN 'Cloud' THEN '云工作区、Patch 与协作' WHEN 'Enterprise' THEN 'SSO、治理与自托管' ELSE '当前不进入路线图' END AS scope, CASE target_release WHEN 'MVP' THEN 'P0' WHEN 'v1.0' THEN 'P0/P1' WHEN 'v1.1' THEN 'P1/P2' WHEN 'v2.0' THEN 'P2/P3' ELSE 'P3' END AS priority_focus FROM feature_inventory GROUP BY target_release;",
+          "executed_at": "2026-07-24T11:20:00+08:00",
+          "language": "sql",
+          "tables_used": [
+            "feature_inventory"
+          ],
+          "metric_definitions": [
+            "capability_count 是每个 target_release 下的功能清单记录数；每项只计一次。"
+          ]
+        }
+      },
+      {
+        "id": "feature-module",
+        "label": "功能清单按模块汇总",
+        "path": "research/gitkraken_feature_inventory.csv",
+        "query": {
+          "description": "将功能清单按 module 分组计数，推荐边界来自产品 PRD 的分期判断。",
+          "engine": "SQLite",
+          "sql": "SELECT module, COUNT(*) AS capability_count FROM feature_inventory GROUP BY module ORDER BY capability_count DESC;",
+          "executed_at": "2026-07-24T11:20:00+08:00",
+          "language": "sql",
+          "tables_used": [
+            "feature_inventory"
+          ],
+          "metric_definitions": [
+            "capability_count 是每个 module 下的功能清单记录数；推荐边界是定性产品判断。"
+          ]
+        }
+      },
+      {
+        "id": "product-prd",
+        "label": "macOS 原生 Git 客户端执行 PRD",
+        "path": "research/GitKraken竞品调研与macOS原生Git客户端PRD.md",
+        "query": {
+          "description": "基于竞品证据形成的产品定义、需求、SLO、技术架构、里程碑和风险假设。",
+          "executed_at": "2026-07-24T11:20:00+08:00",
+          "language": "markdown"
+        }
+      }
+    ],
+    "charts": [
+      {
+        "id": "chart-release-scope",
+        "title": "功能分期数量",
+        "subtitle": "MVP 与 v1.0 聚焦本地高频闭环；云和企业能力独立立项。",
+        "type": "bar",
+        "dataset": "release_scope",
+        "sourceId": "feature-release",
+        "encodings": {
+          "x": {
+            "field": "release",
+            "type": "nominal",
+            "label": "目标版本"
+          },
+          "y": {
+            "field": "capability_count",
+            "type": "quantitative",
+            "label": "能力项数量",
+            "format": "number"
+          },
+          "tooltip": [
+            {
+              "field": "scope",
+              "type": "text",
+              "label": "范围"
+            },
+            {
+              "field": "priority_focus",
+              "type": "text",
+              "label": "优先级重点"
+            }
+          ]
+        },
+        "xAxisTitle": "目标版本",
+        "yAxisTitle": "能力项数量",
+        "layout": "full",
+        "maxRows": 7
+      },
+      {
+        "id": "chart-package-size",
+        "title": "GitKraken 12.3.1 macOS 包体观测（MB）",
+        "subtitle": "Electron 框架与应用资源构成主要展开体积；组件存在包含关系，不能相加。",
+        "type": "bar",
+        "dataset": "package_size",
+        "sourceId": "gk-client",
+        "encodings": {
+          "x": {
+            "field": "component",
+            "type": "nominal",
+            "label": "组件"
+          },
+          "y": {
+            "field": "size_mb",
+            "type": "quantitative",
+            "label": "近似体积",
+            "format": "number",
+            "unit": "MB"
+          },
+          "tooltip": [
+            {
+              "field": "relationship",
+              "type": "text",
+              "label": "与总包关系"
+            },
+            {
+              "field": "observation",
+              "type": "text",
+              "label": "说明"
+            }
+          ]
+        },
+        "xAxisTitle": "组件",
+        "yAxisTitle": "近似体积（MB）",
+        "layout": "full",
+        "maxRows": 6
+      }
+    ],
+    "tables": [
+      {
+        "id": "table-module-scope",
+        "title": "功能模块规模",
+        "subtitle": "134 个能力项按产品模块汇总，数量用于判断范围复杂度，不等同工程工时。",
+        "dataset": "module_scope",
+        "defaultSort": {
+          "field": "capability_count",
+          "direction": "desc"
+        },
+        "density": "dense",
+        "sourceId": "feature-module",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "module",
+            "label": "模块",
+            "type": "text"
+          },
+          {
+            "field": "capability_count",
+            "label": "能力项",
+            "format": "number",
+            "type": "number"
+          },
+          {
+            "field": "recommended_boundary",
+            "label": "建议边界",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# macOS 原生高性能 Git 客户端：竞品研究与执行方案",
+        "layout": "full"
+      },
+      {
+        "id": "executive-summary",
+        "type": "markdown",
+        "body": "## Executive Summary\n\n- **不要做 1:1 的 SwiftUI 版 GitKraken。** GitKraken 已是 Git GUI、托管平台、PR/Issue、Cloud、AI 与 Agent 的组合；直接复制会把桌面端、多个 Provider 和云后端同时带入首版。\n- **可占据的位置是“更快、更透明、更安全、更本地”。** 目标产品应比 Tower/Fork 更透明，比 GitHub Desktop 更专业，比 GitKraken 更轻，并保留真实 Git 命令和仓库兼容性。\n- **首版聚焦本地闭环。** MVP 完成图谱、WIP、文件/Hunk 暂存、Diff、commit、branch、fetch/pull/push、merge/cherry-pick/reset/revert、stash、命令面板和安全日志；v1.0 再补 Interactive Rebase、Undo/Recovery、Worktree、Merge Tool 与 GitHub PR。\n- **原生性能必须成为合同。** 首屏增量呈现、真正虚拟化、可取消任务和 per-repo mutation queue 是架构前提；推荐 SwiftUI-first，但允许 AppKit/Core Animation/TextKit 2 承担图谱和 Diff。",
+        "layout": "full"
+      },
+      {
+        "id": "feature-map",
+        "type": "markdown",
+        "body": "## GitKraken 的护城河是组合，而不是提交图\n\n**完整能力面覆盖 20 个模块。** 核心层包括仓库、DAG、WIP、Diff、暂存、提交、分支、rebase、stash、reset/revert、远端与冲突；专业层加入 Worktree、Submodule、LFS、Hooks、签名、Gitflow；平台层加入 GitHub/GitLab/Bitbucket/Azure、PR/Issue/CI；上层再叠加 Workspace、Launchpad、Cloud Patch、冲突预警、AI 和 Agent Session。\n\n这意味着“所有功能”应作为长期能力地图，而不能作为 v1 的验收清单。完整 134 项清单已经逐项标注优先级、版本和依赖。",
+        "sourceId": "feature-inventory",
+        "layout": "full"
+      },
+      {
+        "id": "module-table-block",
+        "type": "table",
+        "tableId": "table-module-scope",
+        "layout": "full"
+      },
+      {
+        "id": "scope-strategy",
+        "type": "markdown",
+        "body": "## 分期应沿技术依赖展开，而不是按竞品菜单平均切片\n\n**MVP 先证明“快且可信”的本地 Git 闭环。** v1.0 才进入历史改写、Worktree、GitHub PR 和高级 Git；v1.1 用已经成熟的 Worktree/Process/Provider 基础构建 Agent Session。Cloud Patch、跨成员冲突检测、团队视图、SSO 与审计都需要服务端和组织模型，应单独立项。\n\n图中数量是产品能力项，不是 story point；它的作用是暴露范围和依赖，避免把 134 项误认为一版可以完成。",
+        "sourceId": "feature-inventory",
+        "layout": "full"
+      },
+      {
+        "id": "release-chart-block",
+        "type": "chart",
+        "chartId": "chart-release-scope",
+        "layout": "full"
+      },
+      {
+        "id": "performance-opportunity",
+        "type": "markdown",
+        "body": "## 原生性能有真实窗口，但“原生”本身不是壁垒\n\n**GitKraken 当前包体和官方性能建议都显示出优化空间。** 本次检查到的 x64 app bundle 约 635 MB，核心为 Electron 41，并捆绑 Git、Scalar 与 LFS。官方在大型或复杂仓库的排障中建议降低图谱提交数、关闭自动 fetch、减少 refs、运行 maintenance/LFS prune，甚至每日重启清缓存。\n\n因此产品承诺必须落到 SLO：M 仓库首批图谱 p95 小于 1.5 秒、Working Copy p95 小于 500 ms、图谱稳定 60 fps、已索引搜索首结果小于 150 ms、稳态内存小于 300 MB。Tower 与 Sublime Merge 同样强调原生/性能，只有持续基准和安全操作模型才能形成壁垒。",
+        "layout": "full"
+      },
+      {
+        "id": "package-chart-block",
+        "type": "chart",
+        "chartId": "chart-package-size",
+        "layout": "full"
+      },
+      {
+        "id": "product-definition",
+        "type": "markdown",
+        "body": "## 产品定义：local-first、keyboard-first、safe-by-default\n\n目标用户是每天高频执行 Git 操作的 macOS 专业开发者、大仓库维护者和多 Agent 用户。核心问题不是“不会 Git”，而是无法快速建立可信状态、构造原子提交成本高、历史改写风险不可见、大仓库交互被后台任务拖慢，以及多 worktree/Agent 缺乏控制面。\n\n价值主张：\n\n1. **Fast by construction**：增量、虚拟化、可取消，无 Web runtime。\n2. **Safe by default**：危险操作先预览，默认 `--force-with-lease`，操作前创建恢复点。\n3. **Git stays real**：显示等价命令与脱敏输出，不引入私有仓库格式。\n4. **Local first**：核心能力无需账号，默认不上传源码或 diff。\n5. **Mac native**：系统菜单、Keychain、Finder/Xcode、深浅模式和辅助功能。",
+        "sourceId": "product-prd",
+        "layout": "full"
+      },
+      {
+        "id": "architecture",
+        "type": "markdown",
+        "body": "## 技术路线：SwiftUI-first，而不是 100% 纯 SwiftUI\n\n**应用壳、状态、菜单、设置和大部分业务 UI 使用 SwiftUI；图谱、Diff 和三方 Merge 使用 AppKit/Core Animation/TextKit 2 的原生性能面。** 禁止用 WebView 承载核心界面。\n\nGit CLI 作为 v1 的语义真相：用 `--porcelain=v2 -z`、`for-each-ref`、自定义 log format 和 `cat-file --batch` 获得机器可读流；写操作完成后由 Git 再验证。每个 common Git dir 对应一个 actor 和串行 mutation queue，避免多个 worktree/标签页并发改 refs。SQLite/FTS5 仅缓存元数据与搜索索引，不复制 Git object database。\n\n危险操作统一走 `OperationPlan`：前置条件、命令预览、受影响 refs/worktree、远端影响、风险级别和恢复策略驱动 UI、日志、Undo 与测试。",
+        "sourceId": "product-prd",
+        "layout": "full"
+      },
+      {
+        "id": "roadmap",
+        "type": "markdown",
+        "body": "## 可执行路线图：3 名核心工程师约 28–30 周到可售 v1.0\n\n1. **技术验证（4 周）**：CLI streaming、graph lane、50k/500k commit fixture、Diff 虚拟化、FSEvents、取消与 actor。\n2. **内部 Alpha（8 周）**：打开/克隆、图谱、WIP、stage、Diff、commit、branch、fetch/pull/push、stash、日志脱敏。\n3. **公开 Beta（8 周）**：merge/cherry-pick/revert/reset、冲突状态、Command Palette、更新与发布质量。\n4. **v1.0（8–10 周）**：Interactive Rebase、Undo/Recovery、Worktree、Merge Tool、GitHub PR、LFS/Submodule/Hooks/Signing。\n5. **v1.1 Agent（6–8 周）**：Codex/Claude adapter、worktree setup、状态卡片、通知与安全清理。\n\n若只有 1 名全职工程师，时间至少乘以 2.2。Phase 0 未达到 M/L 基准 SLO 的 80% 时，不进入完整功能开发。",
+        "sourceId": "product-prd",
+        "layout": "full"
+      },
+      {
+        "id": "next-steps",
+        "type": "markdown",
+        "body": "## 建议下一步\n\n1. 访谈 12–15 名目标用户：至少 5 名大仓库用户、5 名付费 Git GUI 用户、5 名 Agent 重度用户，可重叠。\n2. 用 4 周制作 graph、Diff、Git process 三个性能原型，先证明架构。\n3. 建 30 个高风险 Git fixture，覆盖 merge/rebase/reset/cherry-pick/stash/worktree 的成功、冲突、中断与恢复。\n4. 对“系统 Git vs 捆绑 universal Git”做真实环境 A/B，并完成 GPL 合规清单。\n5. 用可点击原型验证三项差异化：危险操作预览、恢复点、Agent worktree 控制面。\n6. 完成 Gate 后再冻结 v1 backlog、团队和商业模式。",
+        "sourceId": "product-prd",
+        "layout": "full"
+      },
+      {
+        "id": "further-questions",
+        "type": "markdown",
+        "body": "## Further Questions\n\n- 首发只支持 Apple Silicon，还是提供 Intel universal build？\n- GitHub 是否足以验证付费，还是 v1 必须同时有 GitLab？\n- 内置 Merge Tool 是 v1 阻塞项，还是外部工具可先满足专业用户？\n- Agent Session 是否应早于完整 PR review？\n- 用户更愿意为买断更新还是订阅付费？\n- 是否承诺完全离线？这会改变许可、AI、更新和诊断设计。",
+        "sourceId": "product-prd",
+        "layout": "full"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## Caveats and Assumptions\n\n- “所有功能”按官方文档目录和客户端可见字符串拆解，不能证明每个计划层级、Provider 和企业部署中的全部边缘行为。\n- 客户端包检查针对官方 x64 DMG；官方文档说明另有 Apple Silicon 构建，因此架构观察不能外推到所有 macOS 构建。\n- 134 项是产品能力粒度，不是工程任务；进入开发前需拆为 user story、技术 spike 和测试 fixture。\n- 28–30 周假设有 3 名核心工程师和兼职设计/QA，且不包含云协作后端。\n- 性能 SLO 是产品目标，必须由 Phase 0 原型验证后冻结。",
+        "layout": "full"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-24T11:20:00+08:00",
+    "status": "ready",
+    "datasets": {
+      "headline_metrics": [
+        {
+          "feature_count": 134,
+          "mvp_count": 45,
+          "v1_count": 47,
+          "app_size_mb": 635,
+          "dmg_size_mb": 219
+        }
+      ],
+      "release_scope": [
+        {
+          "release": "MVP",
+          "capability_count": 45,
+          "scope": "本地高频 Git 闭环",
+          "priority_focus": "P0"
+        },
+        {
+          "release": "v1.0",
+          "capability_count": 47,
+          "scope": "专业工作流与 GitHub PR",
+          "priority_focus": "P0/P1"
+        },
+        {
+          "release": "v1.1",
+          "capability_count": 11,
+          "scope": "AI 与 Agent 工作台",
+          "priority_focus": "P1/P2"
+        },
+        {
+          "release": "v2.0",
+          "capability_count": 20,
+          "scope": "更多 Provider 与高级体验",
+          "priority_focus": "P2/P3"
+        },
+        {
+          "release": "Cloud",
+          "capability_count": 5,
+          "scope": "云工作区、Patch 与协作",
+          "priority_focus": "P3"
+        },
+        {
+          "release": "Enterprise",
+          "capability_count": 5,
+          "scope": "SSO、治理与自托管",
+          "priority_focus": "P3"
+        },
+        {
+          "release": "不规划",
+          "capability_count": 1,
+          "scope": "当前不进入路线图",
+          "priority_focus": "P3"
+        }
+      ],
+      "package_size": [
+        {
+          "component": ".app 总体",
+          "size_mb": 635,
+          "relationship": "展开总体",
+          "observation": "GitKraken.app 展开近似值"
+        },
+        {
+          "component": "Resources",
+          "size_mb": 364,
+          "relationship": ".app 子目录",
+          "observation": "包含 app.asar 与 unpacked 资源"
+        },
+        {
+          "component": "app.asar",
+          "size_mb": 278,
+          "relationship": "Resources 子项",
+          "observation": "Electron 应用资源归档"
+        },
+        {
+          "component": "Frameworks",
+          "size_mb": 271,
+          "relationship": ".app 子目录",
+          "observation": "包含 Electron Framework 与 helper apps"
+        },
+        {
+          "component": "app.asar.unpacked",
+          "size_mb": 84,
+          "relationship": "Resources 子项",
+          "observation": "包含 Git、LFS、CLI 等 unpacked 文件"
+        },
+        {
+          "component": "DMG",
+          "size_mb": 219,
+          "relationship": "压缩安装包",
+          "observation": "官方下载安装文件"
+        }
+      ],
+      "module_scope": [
+        {
+          "module": "文件与差异",
+          "capability_count": 19,
+          "recommended_boundary": "MVP 做 file/hunk + Inline/Hunk；v1 补 line/Split/History/Blame"
+        },
+        {
+          "module": "提交",
+          "capability_count": 13,
+          "recommended_boundary": "MVP 完成 commit/amend/cherry-pick/revert/reset"
+        },
+        {
+          "module": "应用与仓库",
+          "capability_count": 12,
+          "recommended_boundary": "MVP 仅核心仓库、标签、收藏、日志"
+        },
+        {
+          "module": "提交图谱",
+          "capability_count": 11,
+          "recommended_boundary": "MVP 必须先完成增量、虚拟化和搜索"
+        },
+        {
+          "module": "分支与历史",
+          "capability_count": 9,
+          "recommended_boundary": "MVP branch/merge；v1 Interactive Rebase"
+        },
+        {
+          "module": "远端协作",
+          "capability_count": 8,
+          "recommended_boundary": "MVP fetch/pull/push/凭据；v1 安全强推"
+        },
+        {
+          "module": "高级 Git",
+          "capability_count": 6,
+          "recommended_boundary": "v1 Worktree/Submodule/LFS/Hooks"
+        },
+        {
+          "module": "AI",
+          "capability_count": 6,
+          "recommended_boundary": "v1.1 BYOK Commit/Explain；高级 Composer 后置"
+        },
+        {
+          "module": "协作",
+          "capability_count": 6,
+          "recommended_boundary": "Local Workspace 可进 v1；云协作独立立项"
+        },
+        {
+          "module": "冲突解决",
+          "capability_count": 5,
+          "recommended_boundary": "MVP 状态机；v1 三方 Merge Tool"
+        },
+        {
+          "module": "托管平台",
+          "capability_count": 5,
+          "recommended_boundary": "GitHub 首发；其他 Provider 逐步接入"
+        },
+        {
+          "module": "Pull Request",
+          "capability_count": 5,
+          "recommended_boundary": "v1 创建/列表；完整 review 后置"
+        },
+        {
+          "module": "Agent 工作流",
+          "capability_count": 5,
+          "recommended_boundary": "v1.1 基于成熟 Worktree/Process 能力"
+        },
+        {
+          "module": "安全与隐私",
+          "capability_count": 5,
+          "recommended_boundary": "MVP 全部作为横切基线"
+        },
+        {
+          "module": "暂存栈",
+          "capability_count": 4,
+          "recommended_boundary": "MVP all/apply/pop/drop；v1 部分 stash"
+        },
+        {
+          "module": "Issue",
+          "capability_count": 4,
+          "recommended_boundary": "v2 以后按 Provider 接入"
+        },
+        {
+          "module": "效率工具",
+          "capability_count": 4,
+          "recommended_boundary": "MVP Palette/快捷键；终端后置"
+        },
+        {
+          "module": "安全与撤销",
+          "capability_count": 3,
+          "recommended_boundary": "MVP 操作预览；v1 Undo/Recovery"
+        },
+        {
+          "module": "企业",
+          "capability_count": 3,
+          "recommended_boundary": "独立商业与后端项目"
+        },
+        {
+          "module": "CI/CD",
+          "capability_count": 1,
+          "recommended_boundary": "v2 GitHub Actions 起步"
+        }
+      ]
+    }
+  }
+}

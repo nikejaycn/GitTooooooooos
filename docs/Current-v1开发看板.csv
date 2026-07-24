@@ -1,0 +1,64 @@
+id,epic,work_package,phase,target_weeks,owner,dependencies,feature_ids,prototype,acceptance
+WP-001,E00,创建 Xcode workspace 与 Swift Package 模块,M0,W1,A,,横切,ALL,Debug arm64 构建成功且模块依赖单向
+WP-002,E00,配置本机测试与 GitHub Actions 最低版本矩阵,M0,W1-W2,A,WP-001,横切,ALL,本机 build unit integration 通过且 GitHub Actions 验证最低支持版本
+WP-003,E00,建立 ADR 与代码规范,M0,W1-W2,A,WP-001,横切,ALL,ADR-001 至 ADR-010 有 owner 和状态
+WP-004,E01,构建并捆绑 arm64 Git,M0,W1-W3,C,WP-001,APP-13 APP-14,P01 P10,无系统 Git 的测试机可执行 init status log
+WP-005,E01,Git 版本架构与能力自检,M0,W2-W3,C,WP-004,APP-14,P10,失败自动回退捆绑 Git并显示原因
+WP-006,E01,SBOM 许可证与源码说明,M0,W3-W4,A,WP-004,APP-14 SEC-04,P10,构建自动生成可追溯清单
+WP-007,E02,GitProcessRunner 流式输出取消超时,M0,W1-W3,C,WP-001,横切,P09,取消不遗留子进程且输出可观察
+WP-008,E02,GitEngine protocol 与 typed events,M0,W2-W4,C,WP-007,横切,P09,UI 不直接持有 Process
+WP-009,E02,命令参数安全与日志脱敏,M0,W2-W4,C,WP-007,SEC-03,P09,secret fixture 全部不进入日志
+WP-010,E03,RepositoryIdentity 与普通 bare worktree 识别,M1,W5-W6,C,WP-008,APP-01,P01,三种仓库类型识别正确
+WP-011,E03,RepositoryActor 与 mutation queue,M0-M1,W3-W6,C,WP-008,横切,P01-P05,同 common Git dir 写操作严格串行
+WP-012,E03,FSEvents generation 与主动刷新,M1,W5-W7,C,WP-011,横切,P02 P03,过时读取不能覆盖新状态
+WP-013,E03,GRDB 元数据与 UI 状态缓存,M1,W6-W8,A,WP-010,APP-05 APP-06,P01 P03,不复制 Git objects 或仓库全文
+WP-014,E04,log refs cat-file 流式解析,M0,W2-W4,C,WP-008,GRAPH-01 GRAPH-02 GRAPH-11,P03,M/L fixture 首批数据达到 80% SLO
+WP-015,E04,增量 lane allocator,M0-M1,W3-W8,B,WP-014,GRAPH-01,P03,merge octopus shallow 连接正确
+WP-016,E04,NSTableView 虚拟化与 CALayer 图线,M0-M1,W3-W9,B,WP-015,GRAPH-01 GRAPH-11,P03,快速滚动无 100ms 主线程阻塞
+WP-017,E04,Graph 搜索多选 refs 装饰,M1,W8-W12,B,WP-016,GRAPH-02 GRAPH-09 GRAPH-10,P03,搜索首结果符合 SLO
+WP-018,E04,Graph 定制隐藏 solo 固定,M3,W25-W28,B,WP-017,GRAPH-03 GRAPH-04 GRAPH-05 GRAPH-06 GRAPH-08,P03,设置持久化且键盘可操作
+WP-019,E05,porcelain v2 -z status parser,M1,W5-W7,C,WP-008,FILE-01 FILE-02,P02,特殊文件名 fixture 全通过
+WP-020,E05,文件级 stage unstage ignore discard,M1,W6-W9,C,WP-019,FILE-03 FILE-06 FILE-07,P02,操作后状态与 Git 复核一致
+WP-021,E05,hunk 与行级 stage patch builder,M1-M2,W8-W18,B,WP-019,FILE-04 FILE-05,P02 P04,每个 hunk/行复核一致
+WP-022,E06,Diff parser 与 Inline/Hunk 视图,M0-M1,W3-W10,B,WP-008,FILE-08 FILE-10,P04,10k 行 Diff 首屏符合 SLO
+WP-023,E06,Split Diff 与同步滚动,M2,W17-W18,B,WP-022,FILE-09,P04,行号对齐且同步滚动稳定
+WP-024,E06,可视范围语法高亮与空白选项,M2,W17-W19,B,WP-022,FILE-11 FILE-12,P04,大 Diff 自动降级
+WP-025,E06,文件历史 Blame 比较 Patch,M2-M3,W18-W26,B,WP-022,FILE-13 FILE-14 FILE-15 FILE-19,P04 P08,路径历史与 commit 跳转正确
+WP-026,E06,外部 Diff 工具适配,M2,W19-W20,A,WP-022,FILE-18,P04,参数结构化传递且缺失工具有提示
+WP-027,E07,commit amend template hooks,M1,W8-W12,C,WP-019 WP-020,COMMIT-01 COMMIT-03 COMMIT-04 COMMIT-06,P02,失败保留输入与 stage 状态
+WP-028,E07,Commit & Push coauthor signing,M3,W24-W27,C,WP-027 WP-038,COMMIT-02 COMMIT-05 COMMIT-07,P02,签名和 trailer 复核正确
+WP-029,E07,cherry-pick revert reset squash reword,M1-M3,W10-W25,C,WP-034,COMMIT-08 COMMIT-10 COMMIT-11 COMMIT-12 COMMIT-13,P03 P06 P12,成功冲突中断恢复 fixture 全通过
+WP-030,E08,branch create checkout rename delete detached,M1,W8-W11,C,WP-011,BRANCH-01 BRANCH-02 BRANCH-03,P05,merged/unmerged 与 detached 状态正确
+WP-031,E08,merge 与 squash merge,M1-M3,W10-W24,C,WP-030,BRANCH-04 BRANCH-05,P05 P07,clean/conflict/abort 状态正确
+WP-032,E08,Interactive Rebase 状态机,M3,W21-W23,C,WP-034 WP-041,BRANCH-06 BRANCH-08,P06,pick reword squash drop reorder continue abort 全通过
+WP-033,E08,Tag 管理,M3,W24-W25,C,WP-030,BRANCH-09,P05,轻量与附注 tag 行为正确
+WP-034,E11,OperationPlan 风险分级与确认策略,M1-M2,W9-W14,C,WP-011,UNDO-02,P12,L0/L1 无弹窗且 L2/L3 策略正确
+WP-035,E11,恢复引用临时 stash 与清理,M2,W13-W16,C,WP-034,UNDO-03,P12,dirty reset 可恢复且不会丢唯一恢复路径
+WP-036,E11,撤销上一次可恢复操作,M2,W15-W18,C,WP-035,UNDO-01,P12,仅最后一个已验证策略可用
+WP-037,E09,Remote 管理 fetch pull push,M1,W9-W12,C,WP-011,REMOTE-01 REMOTE-02 REMOTE-03 REMOTE-04,P05,失败类型和取消状态可区分
+WP-038,E09,Keychain credential helper ssh-agent,M1,W10-W12,A,WP-037,REMOTE-06 SEC-01,P05 P10,不读取复制私钥且凭据不入日志
+WP-039,E09,force-with-lease 与远端确认,M2,W18-W20,C,WP-034 WP-037,REMOTE-05,P05 P12,stale lease 阻止推送并解释风险
+WP-040,E10,stash all apply pop drop,M1,W9-W11,C,WP-019,STASH-01 STASH-03,P05,pop 冲突保留 stash
+WP-041,E10,partial stash 与 auto-stash,M3,W24-W26,C,WP-021 WP-040,STASH-02 STASH-04,P05,选定内容与自动恢复正确
+WP-042,E12,统一冲突状态机,M1-M2,W11-W14,C,WP-031,CONFLICT-01,P07,merge rebase cherry-pick 共享状态模型
+WP-043,E12,三方 Merge 数据模型与 diff3,M2,W13-W16,B,WP-022 WP-042,CONFLICT-02,P07,Base Ours Theirs Result 正确
+WP-044,E12,Merge Tool 编辑 hunk 采用与导航,M2,W15-W18,B,WP-043,CONFLICT-03,P07,保存后 diff-check 与 unmerged index 复核
+WP-045,E12,外部 Merge Tool 适配,M2,W18-W19,A,WP-042,CONFLICT-04,P07,首发适配名单通过 smoke
+WP-046,E13,Worktree 管理与共享 refs 协调,M3,W23-W25,C,WP-011,ADV-01,P05,创建锁定删除和 dirty 保护正确
+WP-047,E13,Submodule 管理,M3,W24-W26,C,WP-011,ADV-02,P05,init update pointer delete fixture 通过
+WP-048,E13,LFS 检测 track fetch prune,M3,W24-W27,C,WP-004,ADV-03,P05 P10,捆绑 LFS 与自定义 Git 兼容
+WP-049,E13,Hooks signing maintenance,M3,W25-W28,C,WP-027,ADV-05 ADV-06,P09 P10,hook 取消输出和 maintenance 安全
+WP-050,E14,欢迎仓库中心最近收藏,M1-M3,W5-W27,A,WP-010,APP-01 APP-02 APP-03 APP-04 APP-06,P01,100 最近仓库不阻塞启动
+WP-051,E14,多标签窗口恢复 Local Workspace,M1-M3,W7-W28,A,WP-013,APP-05 COLLAB-01,P01 P03,崩溃后恢复且共享 refs 状态一致
+WP-052,E14,Action Registry Palette 菜单快捷键,M1,W7-W12,A,WP-001,TERM-01 TERM-02,P11,主路径键盘可完成且禁用原因可读
+WP-053,E14,CLI Launcher Finder 外部编辑器,M1-M3,W10-W27,A,WP-050,APP-09 TERM-04,P01,路径参数安全且三入口打开同仓库
+WP-054,E14,主题布局 Graph 字段设置,M3,W26-W28,A,WP-018,APP-08,P03 P10,深浅模式和布局持久化
+WP-055,E15,Operation Console 与活动日志,M1,W9-W12,A,WP-008 WP-009,APP-11,P09,运行成功失败取消均可观察
+WP-056,E15,Crash 报告诊断包与隐私,M2,W17-W20,A,WP-009,SEC-05,P09 P10,默认关闭且导出前可预览
+WP-057,E15,Sparkle 2 自动更新,M3,W24-W29,A,WP-006,APP-12,P10,签名更新关闭检查与失败回退通过
+WP-058,E16,S M L fixture generator,M0,W1-W4,QA,WP-002,横切,P02 P03 P04,规模与 PRD 定义一致且可重复
+WP-059,E16,性能采集与 10% 回归门禁,M0-M3,W3-W30,B QA,WP-058,横切,P02 P03 P04,PR nightly 报告自动生成
+WP-060,E16,30 个高风险 mutation fixtures,M1-M3,W6-W28,QA C,WP-008,横切,P05 P06 P07 P12,状态复核与恢复验证 100%
+WP-061,E17,Developer ID Hardened Runtime 公证,M3,W26-W29,A,WP-001,SEC-04,P10,安装包签名公证 stapled
+WP-062,E17,发布回滚演练与 RC,M3,W28-W30,A QA,WP-057 WP-061,横切,ALL,安装升级回滚和 appcast 全通过
+WP-063,E15,本地优先与无账户依赖边界,M0-M3,W2-W30,A C,WP-008,SEC-02,P01 P05 P10,本地核心工作流不要求账户且除 Remote 与更新外不依赖网络
