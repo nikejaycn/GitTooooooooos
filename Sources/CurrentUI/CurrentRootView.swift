@@ -18,6 +18,8 @@ public struct CurrentRootView: View {
   private let graphRows: [GraphRow]
   private let isHistoryPageLoading: Bool
   private let hasMoreHistory: Bool
+  private let commitComparison: CommitComparison?
+  private let isCommitComparisonLoading: Bool
   private let references: [GitReference]
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
@@ -38,6 +40,7 @@ public struct CurrentRootView: View {
   private let cancelRepositoryOperation: () -> Void
   private let refresh: () -> Void
   private let loadNextHistoryPage: () -> Void
+  private let compareSelectedCommits: ([String]) -> Void
   private let stage: (GitPath) -> Void
   private let unstage: (GitPath) -> Void
   private let discard: (GitPath) -> Void
@@ -73,6 +76,7 @@ public struct CurrentRootView: View {
   @State private var selectedCommitOID: String?
   @State private var selectedCommitCount = 0
   @State private var isWorkingCopySelected = false
+  @State private var selectedGraphRows: [GraphRow] = []
   @State private var pendingHardResetOID: String?
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
@@ -86,6 +90,8 @@ public struct CurrentRootView: View {
     graphRows: [GraphRow],
     isHistoryPageLoading: Bool,
     hasMoreHistory: Bool,
+    commitComparison: CommitComparison?,
+    isCommitComparisonLoading: Bool,
     references: [GitReference],
     stashes: [StashEntry],
     remotes: [GitRemote],
@@ -106,6 +112,7 @@ public struct CurrentRootView: View {
     cancelRepositoryOperation: @escaping () -> Void,
     refresh: @escaping () -> Void,
     loadNextHistoryPage: @escaping () -> Void,
+    compareSelectedCommits: @escaping ([String]) -> Void,
     stage: @escaping (GitPath) -> Void,
     unstage: @escaping (GitPath) -> Void,
     discard: @escaping (GitPath) -> Void,
@@ -141,6 +148,8 @@ public struct CurrentRootView: View {
     self.graphRows = graphRows
     self.isHistoryPageLoading = isHistoryPageLoading
     self.hasMoreHistory = hasMoreHistory
+    self.commitComparison = commitComparison
+    self.isCommitComparisonLoading = isCommitComparisonLoading
     self.references = references
     self.stashes = stashes
     self.remotes = remotes
@@ -161,6 +170,7 @@ public struct CurrentRootView: View {
     self.cancelRepositoryOperation = cancelRepositoryOperation
     self.refresh = refresh
     self.loadNextHistoryPage = loadNextHistoryPage
+    self.compareSelectedCommits = compareSelectedCommits
     self.stage = stage
     self.unstage = unstage
     self.discard = discard
@@ -871,39 +881,221 @@ public struct CurrentRootView: View {
         }
         .padding(10)
         Divider()
-        ZStack(alignment: .bottomTrailing) {
-          CommitGraphView(
-            rows: graphRows,
-            onSelection: { rows in
-              let commitOIDs = rows.compactMap(\.commitOID)
-              selectedCommitCount = commitOIDs.count
-              isWorkingCopySelected = rows.contains(where: \.isWorkingCopy)
-              selectedCommitOID = commitOIDs.count == 1 ? commitOIDs[0] : nil
-            },
-            onApproachingEnd: loadNextHistoryPage
+        HSplitView {
+          ZStack(alignment: .bottomTrailing) {
+            CommitGraphView(
+              rows: graphRows,
+              onSelection: { rows in
+                let commitOIDs = rows.compactMap(\.commitOID)
+                selectedGraphRows = rows
+                selectedCommitCount = commitOIDs.count
+                isWorkingCopySelected = rows.contains(where: \.isWorkingCopy)
+                selectedCommitOID =
+                  rows.count == 1 && commitOIDs.count == 1
+                  ? commitOIDs[0]
+                  : nil
+                compareSelectedCommits(commitOIDs)
+              },
+              onApproachingEnd: loadNextHistoryPage
+            )
+            if isHistoryPageLoading {
+              ProgressView()
+                .controlSize(.small)
+                .padding(8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(10)
+                .allowsHitTesting(false)
+            } else if !hasMoreHistory, commits.count >= 200 {
+              Text("\(commits.count) commits loaded")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(8)
+                .allowsHitTesting(false)
+            }
+          }
+          .frame(minWidth: 360)
+          graphInspector
+        }
+      }
+    }
+  }
+
+  private var graphInspector: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 14) {
+        Text("Inspector")
+          .font(.headline)
+        Divider()
+        if selectedGraphRows.isEmpty {
+          ContentUnavailableView(
+            "No Commit Selected",
+            systemImage: "sidebar.right",
+            description: Text("Select one commit for details or multiple commits to compare.")
           )
-          if isHistoryPageLoading {
-            ProgressView()
-              .controlSize(.small)
-              .padding(8)
-              .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-              .padding(10)
-              .allowsHitTesting(false)
-          } else if !hasMoreHistory, commits.count >= 200 {
-            Text("\(commits.count) commits loaded")
+          .frame(maxWidth: .infinity, minHeight: 260)
+        } else if selectedGraphRows.count == 1, let row = selectedGraphRows.first {
+          singleCommitInspector(row)
+        } else {
+          comparisonInspector
+        }
+      }
+      .padding(14)
+    }
+    .frame(minWidth: 250, idealWidth: 300, maxWidth: 380)
+    .background(.background)
+  }
+
+  @ViewBuilder
+  private func singleCommitInspector(_ row: GraphRow) -> some View {
+    if row.isWorkingCopy {
+      Label("Working Copy", systemImage: "pencil.and.list.clipboard")
+        .font(.title3.weight(.semibold))
+      Text(row.subject)
+        .foregroundStyle(.secondary)
+    } else {
+      Text(row.subject)
+        .font(.title3.weight(.semibold))
+        .textSelection(.enabled)
+      if !row.decorations.isEmpty {
+        VStack(alignment: .leading, spacing: 5) {
+          ForEach(row.decorations, id: \.self) { decoration in
+            Label(decoration.label, systemImage: decorationIcon(decoration.kind))
               .font(.caption)
-              .foregroundStyle(.secondary)
-              .padding(8)
-              .allowsHitTesting(false)
+          }
+        }
+      }
+      inspectorField("Commit", value: row.commitOID ?? "")
+      inspectorField(
+        "Author",
+        value: row.authorEmail.isEmpty
+          ? row.author : "\(row.author) <\(row.authorEmail)>"
+      )
+      if let authoredAt = row.authoredAt {
+        inspectorField(
+          "Date",
+          value: authoredAt.formatted(date: .abbreviated, time: .standard)
+        )
+      }
+      if row.parentOIDs.isEmpty {
+        inspectorField("Parents", value: "Root commit")
+      } else {
+        VStack(alignment: .leading, spacing: 5) {
+          Text("Parents")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          ForEach(row.parentOIDs, id: \.self) { oid in
+            Text(String(oid.prefix(12)))
+              .font(.system(.caption, design: .monospaced))
+              .textSelection(.enabled)
           }
         }
       }
     }
   }
 
+  @ViewBuilder
+  private var comparisonInspector: some View {
+    let selectedCommitOIDs = selectedGraphRows.compactMap(\.commitOID)
+    let includesWorkingCopy = selectedGraphRows.contains(where: \.isWorkingCopy)
+    Text(
+      "\(selectedGraphRows.count) \(includesWorkingCopy ? "items" : "commits") selected"
+    )
+    .font(.title3.weight(.semibold))
+    if includesWorkingCopy {
+      Text("Working Copy is excluded from commit-to-commit comparison.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    if selectedCommitOIDs.count > 2 {
+      Text("Comparing the oldest and newest commits in the selection.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    if selectedCommitOIDs.count < 2 {
+      Text("Select at least two commits to compare their trees.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    } else if isCommitComparisonLoading {
+      HStack(spacing: 8) {
+        ProgressView()
+          .controlSize(.small)
+        Text("Comparing commits…")
+          .foregroundStyle(.secondary)
+      }
+    } else if let commitComparison {
+      inspectorField("Base", value: String(commitComparison.baseOID.prefix(12)))
+      inspectorField("Target", value: String(commitComparison.targetOID.prefix(12)))
+      Divider()
+      Text("\(commitComparison.files.count) changed files")
+        .font(.subheadline.weight(.semibold))
+      if commitComparison.files.isEmpty {
+        Text("The selected commits have identical trees.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        LazyVStack(alignment: .leading, spacing: 8) {
+          ForEach(commitComparison.files) { file in
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Text(file.status)
+                .font(.system(.caption2, design: .monospaced, weight: .bold))
+                .foregroundStyle(comparisonColor(file.kind))
+                .frame(minWidth: 28, alignment: .leading)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(file.path.displayString)
+                  .font(.caption)
+                  .textSelection(.enabled)
+                if let oldPath = file.oldPath {
+                  Text("from \(oldPath.displayString)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                }
+              }
+            }
+            Divider()
+          }
+        }
+      }
+    }
+  }
+
+  private func inspectorField(_ title: String, value: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Text(value)
+        .font(.system(.caption, design: title == "Author" ? .default : .monospaced))
+        .textSelection(.enabled)
+    }
+  }
+
+  private func decorationIcon(_ kind: GraphDecorationKind) -> String {
+    switch kind {
+    case .head: "location.fill"
+    case .localBranch: "arrow.triangle.branch"
+    case .remoteBranch: "cloud"
+    case .tag: "tag"
+    case .note: "note.text"
+    case .other: "bookmark"
+    case .workingCopy: "pencil"
+    }
+  }
+
+  private func comparisonColor(_ kind: CommitFileChangeKind) -> Color {
+    switch kind {
+    case .added: .green
+    case .deleted: .red
+    case .renamed, .copied: .blue
+    case .unmerged: .orange
+    case .modified, .typeChanged, .unknown: .secondary
+    }
+  }
+
   private var graphSelectionTitle: String {
-    if selectedCommitCount > 1 {
-      return "\(selectedCommitCount) commits selected"
+    if selectedGraphRows.count > 1 {
+      let noun = isWorkingCopySelected ? "items" : "commits"
+      return "\(selectedGraphRows.count) \(noun) selected"
     }
     if let selectedCommitOID {
       return String(selectedCommitOID.prefix(12))

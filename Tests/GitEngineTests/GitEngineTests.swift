@@ -124,6 +124,51 @@ struct GitEngineTests {
     #expect(command.redactedDescription.contains("--max-count=201"))
   }
 
+  @Test("Commit comparison preserves rename paths from NUL output")
+  func commitComparison() async throws {
+    let base = String(repeating: "a", count: 40)
+    let target = String(repeating: "b", count: 40)
+    var output: [UInt8] = []
+    for field in ["M", "README.md", "R087", "old name.swift", "new name.swift"] {
+      output.append(contentsOf: field.utf8)
+      output.append(0)
+    }
+    let runner = StubRunner(
+      results: [
+        .success("\(base)\n"),
+        .success("\(target)\n"),
+        GitProcessResult(
+          termination: .exited(0),
+          standardOutput: output,
+          standardError: [],
+          duration: .milliseconds(1)
+        ),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let files = try await engine.compareCommits(
+      at: location,
+      base: base,
+      target: target
+    )
+
+    #expect(files.count == 2)
+    #expect(files[0].kind == .modified)
+    #expect(files[0].path == GitPath("README.md"))
+    #expect(files[1].kind == .renamed)
+    #expect(files[1].status == "R087")
+    #expect(files[1].oldPath == GitPath("old name.swift"))
+    #expect(files[1].path == GitPath("new name.swift"))
+    let commands = await runner.commands()
+    #expect(commands[2].redactedDescription.contains("diff --name-status -z"))
+    #expect(commands[2].redactedDescription.hasSuffix("\(base) \(target) --"))
+  }
+
   @Test("Identifies a standard repository")
   func standardRepositoryIdentity() async throws {
     let runner = StubRunner(

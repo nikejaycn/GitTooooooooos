@@ -103,6 +103,41 @@ struct RepositoryActorTests {
     )
   }
 
+  @Test("Commit comparisons publish only for the requested generation")
+  func commitComparison() async throws {
+    let files = [
+      CommitFileChange(
+        status: "M",
+        kind: .modified,
+        path: GitPath("README.md")
+      )
+    ]
+    let engine = StubGitEngine(comparisonFiles: files)
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let snapshot = try await repository.refreshSnapshot()
+    let comparison = try #require(
+      try await repository.compareCommits(
+        base: String(repeating: "a", count: 40),
+        target: String(repeating: "b", count: 40),
+        generation: snapshot.generation
+      )
+    )
+
+    #expect(comparison.files == files)
+    #expect(comparison.generation == snapshot.generation)
+    await repository.invalidate()
+    #expect(
+      try await repository.compareCommits(
+        base: String(repeating: "a", count: 40),
+        target: String(repeating: "b", count: 40),
+        generation: snapshot.generation
+      ) == nil
+    )
+  }
+
   @Test("Working-copy mutation is followed by an authoritative status refresh")
   func mutationRefresh() async throws {
     let engine = StubGitEngine()
@@ -175,13 +210,16 @@ private actor StubGitEngine: GitEngineProtocol {
   private var receivedCommits: [CommitRequest] = []
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
+  private let comparisonFiles: [CommitFileChange]
 
   init(
     statusDelays: [UInt64: Duration] = [:],
-    history: [CommitSummary] = []
+    history: [CommitSummary] = [],
+    comparisonFiles: [CommitFileChange] = []
   ) {
     self.statusDelays = statusDelays
     historyCommits = history
+    self.comparisonFiles = comparisonFiles
   }
 
   func version() async throws -> String {
@@ -218,6 +256,14 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func references(at location: RepositoryLocation) async throws -> [GitReference] {
     []
+  }
+
+  func compareCommits(
+    at location: RepositoryLocation,
+    base: String,
+    target: String
+  ) async throws -> [CommitFileChange] {
+    comparisonFiles
   }
 
   func mutateWorkingCopy(

@@ -163,7 +163,9 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
   public let commitOID: String?
   public let subject: String
   public let author: String
+  public let authorEmail: String
   public let authoredAt: Date?
+  public let parentOIDs: [String]
   public let decorations: [GraphDecoration]
   public let layout: GraphRowLayout
   public let isWorkingCopy: Bool
@@ -173,7 +175,9 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
     commitOID: String?,
     subject: String,
     author: String,
+    authorEmail: String,
     authoredAt: Date?,
+    parentOIDs: [String],
     decorations: [GraphDecoration],
     layout: GraphRowLayout,
     isWorkingCopy: Bool
@@ -182,7 +186,9 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
     self.commitOID = commitOID
     self.subject = subject
     self.author = author
+    self.authorEmail = authorEmail
     self.authoredAt = authoredAt
+    self.parentOIDs = parentOIDs
     self.decorations = decorations
     self.layout = layout
     self.isWorkingCopy = isWorkingCopy
@@ -242,7 +248,9 @@ public struct GraphRowBuilder: Sendable {
         commitOID: isWorkingCopy ? nil : commit.oid,
         subject: commit.subject,
         author: commit.authorName,
+        authorEmail: commit.authorEmail,
         authoredAt: isWorkingCopy ? nil : commit.authoredAt,
+        parentOIDs: isWorkingCopy ? [] : commit.parentOIDs,
         decorations: decorations,
         layout: allocator.append(commit),
         isWorkingCopy: isWorkingCopy

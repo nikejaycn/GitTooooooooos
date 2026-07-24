@@ -24,6 +24,8 @@ final class AppModel {
   private(set) var graphRows: [GraphRow] = []
   private(set) var isHistoryPageLoading = false
   private(set) var hasMoreHistory = false
+  private(set) var commitComparison: CommitComparison?
+  private(set) var isCommitComparisonLoading = false
   private(set) var references: [GitReference] = []
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
@@ -45,6 +47,8 @@ final class AppModel {
   private var graphLayoutRequestID: UUID?
   private var historyPageTask: Task<Void, Never>?
   private var nextHistoryCursor: HistoryCursor?
+  private var commitComparisonTask: Task<Void, Never>?
+  private var commitComparisonRequestID: UUID?
   private var diffRequestID: UUID?
   private var repositoryOperationTask: Task<Void, Never>?
 
@@ -208,6 +212,64 @@ final class AppModel {
         return
       } catch {
         guard
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+        errorMessage = error.localizedDescription
+      }
+    }
+  }
+
+  func compareSelectedCommits(_ commitOIDs: [String]) {
+    commitComparisonTask?.cancel()
+    commitComparisonTask = nil
+    commitComparisonRequestID = nil
+    commitComparison = nil
+    isCommitComparisonLoading = false
+
+    guard
+      commitOIDs.count >= 2,
+      let repository,
+      let generation = repositoryStatus?.generation
+    else {
+      return
+    }
+
+    let baseOID = commitOIDs[commitOIDs.count - 1]
+    let targetOID = commitOIDs[0]
+    let requestID = UUID()
+    let sessionID = repositorySessionID
+    commitComparisonRequestID = requestID
+    isCommitComparisonLoading = true
+    commitComparisonTask = Task {
+      defer {
+        if commitComparisonRequestID == requestID {
+          isCommitComparisonLoading = false
+          commitComparisonTask = nil
+        }
+      }
+      do {
+        let comparison = try await repository.compareCommits(
+          base: baseOID,
+          target: targetOID,
+          generation: generation
+        )
+        guard
+          !Task.isCancelled,
+          commitComparisonRequestID == requestID,
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+        commitComparison = comparison
+      } catch is CancellationError {
+        return
+      } catch {
+        guard
+          commitComparisonRequestID == requestID,
           repositorySessionID == sessionID,
           repositoryStatus?.generation == generation
         else {
@@ -503,6 +565,7 @@ final class AppModel {
     nextHistoryCursor = nil
     isHistoryPageLoading = false
     hasMoreHistory = false
+    clearCommitComparison()
     references = []
     stashes = []
     remotes = []
@@ -740,6 +803,7 @@ final class AppModel {
     historyPageTask?.cancel()
     historyPageTask = nil
     isHistoryPageLoading = false
+    clearCommitComparison()
     repositoryStatus = snapshot.status
     commits = Array(snapshot.commits.prefix(Self.maximumLoadedCommitCount))
     nextHistoryCursor =
@@ -758,6 +822,7 @@ final class AppModel {
     else {
       return
     }
+    clearCommitComparison()
     repositoryStatus = status
     rebuildGraphRows(generation: status.generation)
   }
@@ -787,6 +852,14 @@ final class AppModel {
       }
       graphRows = rows
     }
+  }
+
+  private func clearCommitComparison() {
+    commitComparisonTask?.cancel()
+    commitComparisonTask = nil
+    commitComparisonRequestID = nil
+    commitComparison = nil
+    isCommitComparisonLoading = false
   }
 
   private func startWatchingRepository(_ opened: RepositoryActor) {

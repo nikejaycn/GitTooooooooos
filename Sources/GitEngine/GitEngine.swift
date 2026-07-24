@@ -132,6 +132,11 @@ public protocol GitEngineProtocol: Sendable {
     path: GitPath,
     source: DiffSource
   ) async throws -> DiffDocument
+  func compareCommits(
+    at location: RepositoryLocation,
+    base: String,
+    target: String
+  ) async throws -> [CommitFileChange]
   func mutateBranch(
     at location: RepositoryLocation,
     mutation: BranchMutation
@@ -189,6 +194,14 @@ extension GitEngineProtocol {
     path: GitPath
   ) async throws -> ConflictFileContents {
     throw GitEngineError.invalidOutput("Conflict content reading is not implemented.")
+  }
+
+  public func compareCommits(
+    at location: RepositoryLocation,
+    base: String,
+    target: String
+  ) async throws -> [CommitFileChange] {
+    throw GitEngineError.invalidOutput("Commit comparison is not implemented.")
   }
 
   public func initializeRepository(
@@ -609,6 +622,33 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     } catch {
       throw GitEngineError.invalidOutput(String(describing: error))
     }
+  }
+
+  public func compareCommits(
+    at location: RepositoryLocation,
+    base: String,
+    target: String
+  ) async throws -> [CommitFileChange] {
+    let baseOID = try await resolveCommit(base, at: location)
+    let targetOID = try await resolveCommit(target, at: location)
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "diff",
+          "--name-status",
+          "-z",
+          "--find-renames",
+          "--find-copies",
+          baseOID,
+          targetOID,
+          "--",
+        ],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 32 * 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
+    return try parseNameStatus(result.standardOutput)
   }
 
   public func mutateBranch(
@@ -1123,6 +1163,77 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       throw GitEngineError.invalidOutput("Git returned an invalid commit object ID.")
     }
     return oid
+  }
+
+  private func parseNameStatus(_ bytes: [UInt8]) throws -> [CommitFileChange] {
+    var fields =
+      bytes
+      .split(separator: 0, omittingEmptySubsequences: false)
+      .map(Array.init)
+    if fields.last?.isEmpty == true {
+      fields.removeLast()
+    }
+
+    var changes: [CommitFileChange] = []
+    var index = 0
+    while index < fields.count {
+      let status = String(decoding: fields[index], as: UTF8.self)
+      index += 1
+      guard let code = status.first, !status.isEmpty else {
+        throw GitEngineError.invalidOutput("Commit comparison contained an empty status.")
+      }
+
+      let kind: CommitFileChangeKind =
+        switch code {
+        case "A": .added
+        case "M": .modified
+        case "D": .deleted
+        case "R": .renamed
+        case "C": .copied
+        case "T": .typeChanged
+        case "U": .unmerged
+        default: .unknown
+        }
+
+      if code == "R" || code == "C" {
+        guard index + 1 < fields.count else {
+          throw GitEngineError.invalidOutput(
+            "Commit comparison contained a truncated rename or copy."
+          )
+        }
+        let oldPath = GitPath(rawBytes: fields[index])
+        let path = GitPath(rawBytes: fields[index + 1])
+        index += 2
+        guard !oldPath.rawBytes.isEmpty, !path.rawBytes.isEmpty else {
+          throw GitEngineError.invalidOutput("Commit comparison contained an empty path.")
+        }
+        changes.append(
+          CommitFileChange(
+            status: status,
+            kind: kind,
+            path: path,
+            oldPath: oldPath
+          )
+        )
+      } else {
+        guard index < fields.count else {
+          throw GitEngineError.invalidOutput("Commit comparison contained a truncated path.")
+        }
+        let path = GitPath(rawBytes: fields[index])
+        index += 1
+        guard !path.rawBytes.isEmpty else {
+          throw GitEngineError.invalidOutput("Commit comparison contained an empty path.")
+        }
+        changes.append(
+          CommitFileChange(
+            status: status,
+            kind: kind,
+            path: path
+          )
+        )
+      }
+    }
+    return changes
   }
 
   private func createRecoveryReference(

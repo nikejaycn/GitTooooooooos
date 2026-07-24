@@ -51,6 +51,61 @@ public struct HistoryPage: Hashable, Sendable {
   }
 }
 
+public enum CommitFileChangeKind: String, Hashable, Sendable, Codable {
+  case added
+  case modified
+  case deleted
+  case renamed
+  case copied
+  case typeChanged
+  case unmerged
+  case unknown
+}
+
+public struct CommitFileChange: Hashable, Sendable, Codable, Identifiable {
+  public let status: String
+  public let kind: CommitFileChangeKind
+  public let path: GitPath
+  public let oldPath: GitPath?
+
+  public init(
+    status: String,
+    kind: CommitFileChangeKind,
+    path: GitPath,
+    oldPath: GitPath? = nil
+  ) {
+    self.status = status
+    self.kind = kind
+    self.path = path
+    self.oldPath = oldPath
+  }
+
+  public var id: String {
+    let oldPathID = oldPath.map { Data($0.rawBytes).base64EncodedString() } ?? ""
+    let pathID = Data(path.rawBytes).base64EncodedString()
+    return "\(status)\0\(oldPathID)\0\(pathID)"
+  }
+}
+
+public struct CommitComparison: Hashable, Sendable {
+  public let generation: RepositoryGeneration
+  public let baseOID: String
+  public let targetOID: String
+  public let files: [CommitFileChange]
+
+  public init(
+    generation: RepositoryGeneration,
+    baseOID: String,
+    targetOID: String,
+    files: [CommitFileChange]
+  ) {
+    self.generation = generation
+    self.baseOID = baseOID
+    self.targetOID = targetOID
+    self.files = files
+  }
+}
+
 public enum GitReferenceKind: String, Hashable, Sendable, Codable {
   case localBranch
   case remoteBranch
