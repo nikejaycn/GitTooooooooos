@@ -60,6 +60,39 @@ struct UnifiedDiffParserTests {
     #expect(document.hunks.isEmpty)
   }
 
+  @Test("Aligns deletion and addition blocks for split presentation")
+  func splitLayout() throws {
+    let fixture = """
+      diff --git a/file.txt b/file.txt
+      --- a/file.txt
+      +++ b/file.txt
+      @@ -1,4 +1,3 @@
+       before
+      -old one
+      -old two
+      +new one
+       after
+
+      """
+    let document = try UnifiedDiffParser().parse(
+      Array(fixture.utf8),
+      path: GitPath("file.txt"),
+      source: .unstaged
+    )
+
+    let rows = SplitDiffLayout().rows(for: document)
+
+    #expect(rows.count == 5)
+    #expect(rows[1].oldLine?.text == "before")
+    #expect(rows[1].newLine?.text == "before")
+    #expect(rows[2].oldLine?.text == "old one")
+    #expect(rows[2].newLine?.text == "new one")
+    #expect(rows[3].oldLine?.text == "old two")
+    #expect(rows[3].newLine == nil)
+    #expect(rows[4].oldLine?.text == "after")
+    #expect(rows[4].newLine?.text == "after")
+  }
+
   @Test("Builds a valid partial-line patch")
   func lineSelection() throws {
     let fixture = """

@@ -12,7 +12,10 @@ public struct DiffTextView: NSViewRepresentable {
     let contentStorage = NSTextContentStorage()
     let layoutManager = NSTextLayoutManager()
     let container = NSTextContainer(
-      size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+      size: NSSize(
+        width: CGFloat.greatestFiniteMagnitude,
+        height: CGFloat.greatestFiniteMagnitude
+      )
     )
     contentStorage.addTextLayoutManager(layoutManager)
     layoutManager.textContainer = container
@@ -23,8 +26,11 @@ public struct DiffTextView: NSViewRepresentable {
     textView.isRichText = false
     textView.usesFindBar = true
     textView.isIncrementalSearchingEnabled = true
+    textView.isHorizontallyResizable = true
+    textView.isVerticallyResizable = true
     textView.textContainerInset = NSSize(width: 12, height: 10)
-    textView.autoresizingMask = [NSView.AutoresizingMask.width]
+    textView.autoresizingMask = [.width]
+    textView.textContainer?.widthTracksTextView = false
 
     let scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true

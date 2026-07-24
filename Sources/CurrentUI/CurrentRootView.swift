@@ -91,6 +91,7 @@ public struct CurrentRootView: View {
   @State private var graphSearchText = ""
   @State private var graphSearchScope: GraphSearchScope = .loaded
   @State private var hasSubmittedRepositorySearch = false
+  @State private var diffPresentation: DiffPresentation = .unified
   @State private var pendingHardResetOID: String?
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
@@ -777,10 +778,11 @@ public struct CurrentRootView: View {
           }
           .font(.system(.body, design: .monospaced))
         }
-        .frame(minWidth: 360, idealWidth: 440)
+        .frame(minWidth: 280, idealWidth: 340, maxWidth: 440)
 
         diffPane
-          .frame(minWidth: 360)
+          .frame(minWidth: 440)
+          .layoutPriority(1)
       }
     }
   }
@@ -792,15 +794,28 @@ public struct CurrentRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if let selectedDiff {
       VStack(alignment: .leading, spacing: 0) {
-        HStack {
-          Text(selectedDiff.path.displayString)
-            .font(.headline)
-            .lineLimit(1)
-          Spacer()
-          Text(selectedDiff.source.rawValue.capitalized)
-            .foregroundStyle(.secondary)
-          Text("\(selectedDiff.changedLineCount) changed lines")
-            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+          HStack {
+            Text(selectedDiff.path.displayString)
+              .font(.headline)
+              .lineLimit(1)
+            Picker("Diff presentation", selection: $diffPresentation) {
+              Text("Unified")
+                .tag(DiffPresentation.unified)
+              Text("Side-by-Side")
+                .tag(DiffPresentation.split)
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 190)
+            Spacer()
+          }
+          HStack(spacing: 10) {
+            Text(selectedDiff.source.rawValue.capitalized)
+            Text("\(selectedDiff.changedLineCount) changed lines")
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
         }
         .padding(10)
         Divider()
@@ -840,7 +855,29 @@ public struct CurrentRootView: View {
           }
           Divider()
         }
-        DiffTextView(document: selectedDiff)
+        switch diffPresentation {
+        case .unified:
+          DiffTextView(document: selectedDiff)
+        case .split:
+          VStack(spacing: 0) {
+            HStack(spacing: 0) {
+              Label("Before", systemImage: "minus")
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+              Divider()
+              Label("After", systemImage: "plus")
+                .foregroundStyle(.green)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+            }
+            .font(.caption.weight(.semibold))
+            .frame(height: 28)
+            .background(.bar)
+            Divider()
+            SplitDiffTextView(document: selectedDiff)
+          }
+        }
       }
     } else {
       ContentUnavailableView(
