@@ -168,6 +168,48 @@ public actor RepositoryActor {
     return snapshot
   }
 
+  @discardableResult
+  public func applyBranchMutation(
+    _ mutation: BranchMutation,
+    historyLimit: Int = 500
+  ) async throws -> RepositorySnapshot {
+    let requestedGeneration = generation.next()
+    generation = requestedGeneration
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      try await engine.mutateBranch(at: location, mutation: mutation)
+      async let status = engine.status(
+        at: location,
+        generation: requestedGeneration
+      )
+      async let commits = engine.history(at: location, limit: historyLimit)
+      async let references = engine.references(at: location)
+      let loaded = try await (status, commits, references)
+      return RepositorySnapshot(
+        generation: requestedGeneration,
+        status: loaded.0,
+        commits: loaded.1,
+        references: loaded.2
+      )
+    }
+    mutationTail = Task {
+      _ = try? await operation.value
+    }
+
+    let snapshot = try await operation.value
+    guard requestedGeneration == generation else {
+      return snapshot
+    }
+    cachedStatus = snapshot.status
+    cachedSnapshot = snapshot
+    return snapshot
+  }
+
   public func invalidate() {
     generation = generation.next()
   }

@@ -157,6 +157,11 @@ private actor StubGitEngine: GitEngineProtocol {
     )
   }
 
+  func mutateBranch(
+    at location: RepositoryLocation,
+    mutation: BranchMutation
+  ) async throws {}
+
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations
   }

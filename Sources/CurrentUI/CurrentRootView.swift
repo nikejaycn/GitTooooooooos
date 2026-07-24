@@ -27,9 +27,13 @@ public struct CurrentRootView: View {
   private let ignore: (GitPath) -> Void
   private let commit: (String) async throws -> Void
   private let loadDiff: (FileChange) -> Void
+  private let createBranch: (String) -> Void
+  private let checkoutBranch: (String) -> Void
   @State private var workspace: Workspace = .changes
   @State private var pendingDiscard: GitPath?
   @State private var commitMessage = ""
+  @State private var newBranchName = ""
+  @State private var isCreatingBranch = false
 
   public init(
     repositoryName: String?,
@@ -48,7 +52,9 @@ public struct CurrentRootView: View {
     discard: @escaping (GitPath) -> Void,
     ignore: @escaping (GitPath) -> Void,
     commit: @escaping (String) async throws -> Void,
-    loadDiff: @escaping (FileChange) -> Void
+    loadDiff: @escaping (FileChange) -> Void,
+    createBranch: @escaping (String) -> Void,
+    checkoutBranch: @escaping (String) -> Void
   ) {
     self.repositoryName = repositoryName
     self.gitVersion = gitVersion
@@ -67,6 +73,8 @@ public struct CurrentRootView: View {
     self.ignore = ignore
     self.commit = commit
     self.loadDiff = loadDiff
+    self.createBranch = createBranch
+    self.checkoutBranch = checkoutBranch
   }
 
   public var body: some View {
@@ -86,8 +94,19 @@ public struct CurrentRootView: View {
         if !references.isEmpty {
           Section("References") {
             ForEach(references.prefix(20)) { reference in
-              Label(reference.shortName, systemImage: referenceIcon(reference.kind))
-                .help(reference.fullName)
+              if reference.kind == .localBranch {
+                Button {
+                  checkoutBranch(reference.shortName)
+                } label: {
+                  Label(reference.shortName, systemImage: referenceIcon(reference.kind))
+                }
+                .buttonStyle(.plain)
+                .disabled(reference.isHEAD || isLoading)
+                .help(reference.isHEAD ? "Current branch" : "Check out \(reference.shortName)")
+              } else {
+                Label(reference.shortName, systemImage: referenceIcon(reference.kind))
+                  .help(reference.fullName)
+              }
             }
           }
         }
@@ -104,7 +123,24 @@ public struct CurrentRootView: View {
               Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(status == nil || isLoading)
+            Button {
+              newBranchName = ""
+              isCreatingBranch = true
+            } label: {
+              Label("New Branch", systemImage: "plus")
+            }
+            .disabled(status == nil || isLoading)
           }
+        }
+        .alert("Create Branch", isPresented: $isCreatingBranch) {
+          TextField("Branch name", text: $newBranchName)
+          Button("Create and Check Out") {
+            createBranch(newBranchName)
+          }
+          .disabled(newBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          Button("Cancel", role: .cancel) {}
+        } message: {
+          Text("The new branch starts at the current HEAD.")
         }
         .confirmationDialog(
           "Discard changes to \(pendingDiscard?.displayString ?? "this file")?",

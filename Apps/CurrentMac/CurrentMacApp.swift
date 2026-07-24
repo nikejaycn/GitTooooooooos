@@ -24,7 +24,9 @@ struct CurrentMacApp: App {
         discard: model.discard,
         ignore: model.ignore,
         commit: model.commit,
-        loadDiff: model.loadDiff
+        loadDiff: model.loadDiff,
+        createBranch: model.createBranch,
+        checkoutBranch: model.checkoutBranch
       )
       .frame(minWidth: 880, minHeight: 560)
     }

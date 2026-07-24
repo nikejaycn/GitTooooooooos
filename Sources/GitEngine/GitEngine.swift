@@ -101,6 +101,10 @@ public protocol GitEngineProtocol: Sendable {
     path: GitPath,
     source: DiffSource
   ) async throws -> DiffDocument
+  func mutateBranch(
+    at location: RepositoryLocation,
+    mutation: BranchMutation
+  ) async throws
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -406,6 +410,59 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     } catch {
       throw GitEngineError.invalidOutput(String(describing: error))
     }
+  }
+
+  public func mutateBranch(
+    at location: RepositoryLocation,
+    mutation: BranchMutation
+  ) async throws {
+    if location.kind == .bare {
+      switch mutation {
+      case .checkout, .create(_, _, checkout: true):
+        throw GitEngineError.invalidRepository("A bare repository cannot check out a branch.")
+      default:
+        break
+      }
+    }
+
+    let arguments: [String]
+    switch mutation {
+    case .create(let name, let startPoint, let checkout):
+      try await validateBranchName(name, at: location)
+      arguments =
+        [checkout ? "switch" : "branch", checkout ? "-c" : name]
+        + (checkout ? [name] : [])
+        + (startPoint.map { [$0] } ?? [])
+    case .checkout(let name):
+      arguments = ["switch", name]
+    case .rename(let oldName, let newName):
+      try await validateBranchName(newName, at: location)
+      arguments = ["branch", "-m", oldName, newName]
+    case .delete(let name, let force):
+      arguments = ["branch", force ? "-D" : "-d", name]
+    }
+    _ = try await execute(
+      GitCommand(
+        arguments: arguments,
+        workingDirectory: location.worktreeURL,
+        timeout: .seconds(120)
+      )
+    )
+  }
+
+  private func validateBranchName(
+    _ name: String,
+    at location: RepositoryLocation
+  ) async throws {
+    guard !name.isEmpty, !name.utf8.contains(0) else {
+      throw GitEngineError.invalidOutput("A branch name is required.")
+    }
+    _ = try await execute(
+      GitCommand(
+        arguments: ["check-ref-format", "--branch", name],
+        workingDirectory: location.worktreeURL
+      )
+    )
   }
 
   private func appendIgnoreRules(

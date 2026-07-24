@@ -225,6 +225,25 @@ struct GitEngineTests {
     #expect(command.redactedDescription.contains("--cached -- file.txt"))
   }
 
+  @Test("Creating and checking out a branch validates its name first")
+  func createBranch() async throws {
+    let runner = StubRunner(results: [.success("topic\n"), .success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .create(name: "topic", startPoint: "main", checkout: true)
+    )
+
+    let commands = await runner.commands()
+    #expect(commands[0].redactedDescription == "check-ref-format --branch topic")
+    #expect(commands[1].redactedDescription == "switch -c topic main")
+  }
+
   @Test(
     "Live runner reads a real repository",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
@@ -299,6 +318,24 @@ struct GitEngineTests {
     try await engine.commit(
       at: location,
       request: CommitRequest(message: "base")
+    )
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .create(name: "feature", startPoint: nil, checkout: true)
+    )
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(3)
+    )
+    #expect(status.head == .branch("feature"))
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .rename(oldName: "feature", newName: "topic")
+    )
+    try await engine.mutateBranch(at: location, mutation: .checkout(name: "main"))
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .delete(name: "topic", force: false)
     )
     try Data("changed\n".utf8).write(to: file)
     let unstagedDocument = try await engine.diff(

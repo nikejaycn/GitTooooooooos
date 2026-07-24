@@ -125,6 +125,14 @@ final class AppModel {
     }
   }
 
+  func createBranch(_ name: String) {
+    applyBranch(.create(name: name, startPoint: nil, checkout: true))
+  }
+
+  func checkoutBranch(_ name: String) {
+    applyBranch(.checkout(name: name))
+  }
+
   private func loadGitVersion() async {
     guard let engine else { return }
     do {
@@ -181,6 +189,24 @@ final class AppModel {
       errorMessage = nil
       do {
         repositoryStatus = try await repository.applyWorkingCopyMutation(mutation)
+      } catch {
+        errorMessage = error.localizedDescription
+      }
+      isLoading = false
+    }
+  }
+
+  private func applyBranch(_ mutation: BranchMutation) {
+    guard let repository else { return }
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        let snapshot = try await repository.applyBranchMutation(mutation)
+        repositoryStatus = snapshot.status
+        commits = snapshot.commits
+        references = snapshot.references
+        selectedDiff = nil
       } catch {
         errorMessage = error.localizedDescription
       }

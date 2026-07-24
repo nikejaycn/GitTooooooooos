@@ -172,3 +172,10 @@ public struct CommitRequest: Hashable, Sendable {
     self.amend = amend
   }
 }
+
+public enum BranchMutation: Hashable, Sendable {
+  case create(name: String, startPoint: String?, checkout: Bool)
+  case checkout(name: String)
+  case rename(oldName: String, newName: String)
+  case delete(name: String, force: Bool)
+}
