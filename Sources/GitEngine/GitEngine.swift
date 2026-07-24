@@ -105,6 +105,16 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: BranchMutation
   ) async throws
+  func stashes(at location: RepositoryLocation) async throws -> [StashEntry]
+  func mutateStash(
+    at location: RepositoryLocation,
+    mutation: StashMutation
+  ) async throws
+  func remotes(at location: RepositoryLocation) async throws -> [GitRemote]
+  func mutateRemote(
+    at location: RepositoryLocation,
+    mutation: RemoteMutation
+  ) async throws
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -450,6 +460,145 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  public func stashes(
+    at location: RepositoryLocation
+  ) async throws -> [StashEntry] {
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "stash",
+          "list",
+          "--format=%gd%x00%H%x00%at%x00%s%x00%x1e",
+        ],
+        workingDirectory: location.worktreeURL
+      )
+    )
+    do {
+      return try StashParser().parse(result.standardOutput).map {
+        StashEntry(
+          selector: $0.selector,
+          oid: $0.oid,
+          createdAt: Date(timeIntervalSince1970: TimeInterval($0.createdAtUnixSeconds)),
+          subject: $0.subject
+        )
+      }
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+  }
+
+  public func mutateStash(
+    at location: RepositoryLocation,
+    mutation: StashMutation
+  ) async throws {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository has no changes to stash.")
+    }
+    var arguments: [[UInt8]]
+    switch mutation {
+    case .save(let message, let includeUntracked):
+      arguments = ["stash", "push"].map { Array($0.utf8) }
+      if includeUntracked {
+        arguments.append(Array("--include-untracked".utf8))
+      }
+      if let message, !message.isEmpty {
+        guard !message.utf8.contains(0) else {
+          throw GitEngineError.invalidOutput("A stash message cannot contain a NUL byte.")
+        }
+        arguments.append(Array("-m".utf8))
+        arguments.append(Array(message.utf8))
+      }
+    case .apply(let selector, let reinstateIndex):
+      try validateStashSelector(selector)
+      arguments = ["stash", "apply"].map { Array($0.utf8) }
+      if reinstateIndex { arguments.append(Array("--index".utf8)) }
+      arguments.append(Array(selector.utf8))
+    case .pop(let selector, let reinstateIndex):
+      try validateStashSelector(selector)
+      arguments = ["stash", "pop"].map { Array($0.utf8) }
+      if reinstateIndex { arguments.append(Array("--index".utf8)) }
+      arguments.append(Array(selector.utf8))
+    case .drop(let selector):
+      try validateStashSelector(selector)
+      arguments = ["stash", "drop", selector].map { Array($0.utf8) }
+    }
+    _ = try await execute(
+      GitCommand(
+        rawArguments: arguments,
+        workingDirectory: location.worktreeURL,
+        timeout: .seconds(300)
+      )
+    )
+  }
+
+  public func remotes(
+    at location: RepositoryLocation
+  ) async throws -> [GitRemote] {
+    let namesResult = try await execute(
+      GitCommand(arguments: ["remote"], workingDirectory: location.worktreeURL)
+    )
+    let names = String(decoding: namesResult.standardOutput, as: UTF8.self)
+      .split(separator: "\n")
+      .map(String.init)
+    var result: [GitRemote] = []
+    for name in names {
+      let fetch = try await execute(
+        GitCommand(
+          arguments: ["remote", "get-url", name],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      let push = try await execute(
+        GitCommand(
+          arguments: ["remote", "get-url", "--push", name],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      result.append(
+        GitRemote(
+          name: name,
+          fetchURL: String(decoding: fetch.standardOutput, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+          pushURL: String(decoding: push.standardOutput, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+      )
+    }
+    return result
+  }
+
+  public func mutateRemote(
+    at location: RepositoryLocation,
+    mutation: RemoteMutation
+  ) async throws {
+    let arguments: [String]
+    switch mutation {
+    case .fetch(let remote, let prune):
+      arguments =
+        ["fetch"]
+        + (prune ? ["--prune"] : [])
+        + (remote.map { [$0] } ?? ["--all"])
+    case .pull(let remote, let branch, let rebase):
+      arguments =
+        ["pull", rebase ? "--rebase" : "--ff-only"]
+        + (remote.map { [$0] } ?? [])
+        + (branch.map { [$0] } ?? [])
+    case .push(let remote, let branch, let setUpstream):
+      arguments =
+        ["push"]
+        + (setUpstream ? ["--set-upstream"] : [])
+        + [remote, branch]
+    }
+    _ = try await execute(
+      GitCommand(
+        arguments: arguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 32 * 1024 * 1024,
+        timeout: .seconds(900)
+      )
+    )
+  }
+
   private func validateBranchName(
     _ name: String,
     at location: RepositoryLocation
@@ -463,6 +612,14 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         workingDirectory: location.worktreeURL
       )
     )
+  }
+
+  private func validateStashSelector(_ selector: String) throws {
+    guard selector.hasPrefix("stash@{"), selector.hasSuffix("}"),
+      selector.dropFirst(7).dropLast().allSatisfy(\.isNumber)
+    else {
+      throw GitEngineError.invalidOutput("Invalid stash selector.")
+    }
   }
 
   private func appendIgnoreRules(

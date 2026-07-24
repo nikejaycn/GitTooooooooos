@@ -275,10 +275,16 @@ struct GitEngineTests {
   func liveWorkingCopyMutations() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("current-mutation-\(UUID().uuidString)", isDirectory: true)
+    let remoteRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-remote-\(UUID().uuidString).git", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      try? FileManager.default.removeItem(at: remoteRoot)
+    }
 
     try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["init", "--bare", "--initial-branch=main", remoteRoot.path])
     try runGit(["-C", root.path, "config", "user.name", "Current Test"])
     try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
 
@@ -337,6 +343,22 @@ struct GitEngineTests {
       at: location,
       mutation: .delete(name: "topic", force: false)
     )
+    try runGit(["-C", root.path, "remote", "add", "origin", remoteRoot.path])
+    let remotes = try await engine.remotes(at: location)
+    #expect(
+      remotes == [GitRemote(name: "origin", fetchURL: remoteRoot.path, pushURL: remoteRoot.path)])
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .push(remote: "origin", branch: "main", setUpstream: true)
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .fetch(remote: "origin", prune: true)
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .pull(remote: "origin", branch: "main", rebase: false)
+    )
     try Data("changed\n".utf8).write(to: file)
     let unstagedDocument = try await engine.diff(
       at: location,
@@ -344,6 +366,18 @@ struct GitEngineTests {
       source: .unstaged
     )
     #expect(unstagedDocument.changedLineCount == 2)
+    try await engine.mutateStash(
+      at: location,
+      mutation: .save(message: "local work", includeUntracked: false)
+    )
+    let stashes = try await engine.stashes(at: location)
+    #expect(stashes.count == 1)
+    #expect(stashes[0].subject.contains("local work"))
+    try await engine.mutateStash(
+      at: location,
+      mutation: .pop(selector: stashes[0].selector, reinstateIndex: true)
+    )
+    #expect(try String(contentsOf: file, encoding: .utf8) == "changed\n")
     try await engine.mutateWorkingCopy(at: location, mutation: .discardTracked([path]))
     #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
 

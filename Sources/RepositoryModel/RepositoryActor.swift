@@ -56,16 +56,22 @@ public actor RepositoryActor {
     )
     async let commits = engine.history(at: location, limit: historyLimit)
     async let references = engine.references(at: location)
-    let (loadedStatus, loadedCommits, loadedReferences) = try await (
+    async let stashes = engine.stashes(at: location)
+    async let remotes = engine.remotes(at: location)
+    let loaded = try await (
       status,
       commits,
-      references
+      references,
+      stashes,
+      remotes
     )
     let snapshot = RepositorySnapshot(
       generation: requestedGeneration,
-      status: loadedStatus,
-      commits: loadedCommits,
-      references: loadedReferences
+      status: loaded.0,
+      commits: loaded.1,
+      references: loaded.2,
+      stashes: loaded.3,
+      remotes: loaded.4
     )
 
     guard requestedGeneration == generation else {
@@ -120,7 +126,9 @@ public actor RepositoryActor {
         generation: requestedGeneration,
         status: status,
         commits: cachedSnapshot.commits,
-        references: cachedSnapshot.references
+        references: cachedSnapshot.references,
+        stashes: cachedSnapshot.stashes,
+        remotes: cachedSnapshot.remotes
       )
     }
     return status
@@ -147,12 +155,16 @@ public actor RepositoryActor {
       )
       async let commits = engine.history(at: location, limit: historyLimit)
       async let references = engine.references(at: location)
-      let loaded = try await (status, commits, references)
+      async let stashes = engine.stashes(at: location)
+      async let remotes = engine.remotes(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes)
       return RepositorySnapshot(
         generation: requestedGeneration,
         status: loaded.0,
         commits: loaded.1,
-        references: loaded.2
+        references: loaded.2,
+        stashes: loaded.3,
+        remotes: loaded.4
       )
     }
     mutationTail = Task {
@@ -189,12 +201,16 @@ public actor RepositoryActor {
       )
       async let commits = engine.history(at: location, limit: historyLimit)
       async let references = engine.references(at: location)
-      let loaded = try await (status, commits, references)
+      async let stashes = engine.stashes(at: location)
+      async let remotes = engine.remotes(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes)
       return RepositorySnapshot(
         generation: requestedGeneration,
         status: loaded.0,
         commits: loaded.1,
-        references: loaded.2
+        references: loaded.2,
+        stashes: loaded.3,
+        remotes: loaded.4
       )
     }
     mutationTail = Task {
@@ -205,6 +221,72 @@ public actor RepositoryActor {
     guard requestedGeneration == generation else {
       return snapshot
     }
+    cachedStatus = snapshot.status
+    cachedSnapshot = snapshot
+    return snapshot
+  }
+
+  @discardableResult
+  public func applyStashMutation(
+    _ mutation: StashMutation,
+    historyLimit: Int = 500
+  ) async throws -> RepositorySnapshot {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.mutateStash(at: location, mutation: mutation)
+    }
+  }
+
+  @discardableResult
+  public func applyRemoteMutation(
+    _ mutation: RemoteMutation,
+    historyLimit: Int = 500
+  ) async throws -> RepositorySnapshot {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.mutateRemote(at: location, mutation: mutation)
+    }
+  }
+
+  private func applyRepositoryMutation(
+    historyLimit: Int,
+    operation mutation:
+      @Sendable @escaping (
+        any GitEngineProtocol,
+        RepositoryLocation
+      ) async throws -> Void
+  ) async throws -> RepositorySnapshot {
+    let requestedGeneration = generation.next()
+    generation = requestedGeneration
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      try await mutation(engine, location)
+      async let status = engine.status(
+        at: location,
+        generation: requestedGeneration
+      )
+      async let commits = engine.history(at: location, limit: historyLimit)
+      async let references = engine.references(at: location)
+      async let stashes = engine.stashes(at: location)
+      async let remotes = engine.remotes(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes)
+      return RepositorySnapshot(
+        generation: requestedGeneration,
+        status: loaded.0,
+        commits: loaded.1,
+        references: loaded.2,
+        stashes: loaded.3,
+        remotes: loaded.4
+      )
+    }
+    mutationTail = Task {
+      _ = try? await operation.value
+    }
+    let snapshot = try await operation.value
+    guard requestedGeneration == generation else { return snapshot }
     cachedStatus = snapshot.status
     cachedSnapshot = snapshot
     return snapshot

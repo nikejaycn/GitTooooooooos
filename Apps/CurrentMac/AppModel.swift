@@ -14,6 +14,8 @@ final class AppModel {
   private(set) var repositoryStatus: RepositoryStatus?
   private(set) var commits: [CommitSummary] = []
   private(set) var references: [GitReference] = []
+  private(set) var stashes: [StashEntry] = []
+  private(set) var remotes: [GitRemote] = []
   private(set) var selectedDiff: DiffDocument?
   private(set) var isDiffLoading = false
   private(set) var isLoading = false
@@ -91,9 +93,7 @@ final class AppModel {
       let snapshot = try await repository.createCommit(
         CommitRequest(message: message)
       )
-      repositoryStatus = snapshot.status
-      commits = snapshot.commits
-      references = snapshot.references
+      apply(snapshot)
     } catch {
       errorMessage = error.localizedDescription
       throw error
@@ -152,15 +152,15 @@ final class AppModel {
       repository = opened
       repositoryName = opened.location.worktreeURL.lastPathComponent
       let snapshot = try await opened.refreshSnapshot()
-      repositoryStatus = snapshot.status
-      commits = snapshot.commits
-      references = snapshot.references
+      apply(snapshot)
     } catch {
       repository = nil
       repositoryName = nil
       repositoryStatus = nil
       commits = []
       references = []
+      stashes = []
+      remotes = []
       selectedDiff = nil
       errorMessage = error.localizedDescription
     }
@@ -173,9 +173,7 @@ final class AppModel {
     errorMessage = nil
     do {
       let snapshot = try await repository.refreshSnapshot()
-      repositoryStatus = snapshot.status
-      commits = snapshot.commits
-      references = snapshot.references
+      apply(snapshot)
     } catch {
       errorMessage = error.localizedDescription
     }
@@ -203,14 +201,92 @@ final class AppModel {
       errorMessage = nil
       do {
         let snapshot = try await repository.applyBranchMutation(mutation)
-        repositoryStatus = snapshot.status
-        commits = snapshot.commits
-        references = snapshot.references
+        apply(snapshot)
         selectedDiff = nil
       } catch {
         errorMessage = error.localizedDescription
       }
       isLoading = false
     }
+  }
+
+  func saveStash(_ message: String?) {
+    applyStash(.save(message: message, includeUntracked: true))
+  }
+
+  func popStash(_ selector: String) {
+    applyStash(.pop(selector: selector, reinstateIndex: true))
+  }
+
+  func dropStash(_ selector: String) {
+    applyStash(.drop(selector: selector))
+  }
+
+  func fetch() {
+    applyRemote(.fetch(remote: nil, prune: true))
+  }
+
+  func pull() {
+    applyRemote(.pull(remote: nil, branch: nil, rebase: false))
+  }
+
+  func push() {
+    guard let branch = currentBranch,
+      let remote = remotes.first?.name
+        ?? repositoryStatus?.upstream?.split(separator: "/").first.map(
+          String.init
+        )
+    else {
+      errorMessage = "A local branch and remote are required before pushing."
+      return
+    }
+    applyRemote(
+      .push(
+        remote: remote,
+        branch: branch,
+        setUpstream: repositoryStatus?.upstream == nil
+      )
+    )
+  }
+
+  private var currentBranch: String? {
+    guard case .branch(let name) = repositoryStatus?.head else { return nil }
+    return name
+  }
+
+  private func applyStash(_ mutation: StashMutation) {
+    guard let repository else { return }
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        apply(try await repository.applyStashMutation(mutation))
+      } catch {
+        errorMessage = error.localizedDescription
+      }
+      isLoading = false
+    }
+  }
+
+  private func applyRemote(_ mutation: RemoteMutation) {
+    guard let repository else { return }
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        apply(try await repository.applyRemoteMutation(mutation))
+      } catch {
+        errorMessage = error.localizedDescription
+      }
+      isLoading = false
+    }
+  }
+
+  private func apply(_ snapshot: RepositorySnapshot) {
+    repositoryStatus = snapshot.status
+    commits = snapshot.commits
+    references = snapshot.references
+    stashes = snapshot.stashes
+    remotes = snapshot.remotes
   }
 }

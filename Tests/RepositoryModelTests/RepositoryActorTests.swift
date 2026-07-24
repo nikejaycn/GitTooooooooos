@@ -162,6 +162,24 @@ private actor StubGitEngine: GitEngineProtocol {
     mutation: BranchMutation
   ) async throws {}
 
+  func stashes(at location: RepositoryLocation) async throws -> [StashEntry] {
+    []
+  }
+
+  func mutateStash(
+    at location: RepositoryLocation,
+    mutation: StashMutation
+  ) async throws {}
+
+  func remotes(at location: RepositoryLocation) async throws -> [GitRemote] {
+    []
+  }
+
+  func mutateRemote(
+    at location: RepositoryLocation,
+    mutation: RemoteMutation
+  ) async throws {}
+
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations
   }

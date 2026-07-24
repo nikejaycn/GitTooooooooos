@@ -15,6 +15,8 @@ public struct CurrentRootView: View {
   private let status: RepositoryStatus?
   private let commits: [CommitSummary]
   private let references: [GitReference]
+  private let stashes: [StashEntry]
+  private let remotes: [GitRemote]
   private let selectedDiff: DiffDocument?
   private let isDiffLoading: Bool
   private let isLoading: Bool
@@ -29,6 +31,12 @@ public struct CurrentRootView: View {
   private let loadDiff: (FileChange) -> Void
   private let createBranch: (String) -> Void
   private let checkoutBranch: (String) -> Void
+  private let saveStash: (String?) -> Void
+  private let popStash: (String) -> Void
+  private let dropStash: (String) -> Void
+  private let fetch: () -> Void
+  private let pull: () -> Void
+  private let push: () -> Void
   @State private var workspace: Workspace = .changes
   @State private var pendingDiscard: GitPath?
   @State private var commitMessage = ""
@@ -41,6 +49,8 @@ public struct CurrentRootView: View {
     status: RepositoryStatus?,
     commits: [CommitSummary],
     references: [GitReference],
+    stashes: [StashEntry],
+    remotes: [GitRemote],
     selectedDiff: DiffDocument?,
     isDiffLoading: Bool,
     isLoading: Bool,
@@ -54,13 +64,21 @@ public struct CurrentRootView: View {
     commit: @escaping (String) async throws -> Void,
     loadDiff: @escaping (FileChange) -> Void,
     createBranch: @escaping (String) -> Void,
-    checkoutBranch: @escaping (String) -> Void
+    checkoutBranch: @escaping (String) -> Void,
+    saveStash: @escaping (String?) -> Void,
+    popStash: @escaping (String) -> Void,
+    dropStash: @escaping (String) -> Void,
+    fetch: @escaping () -> Void,
+    pull: @escaping () -> Void,
+    push: @escaping () -> Void
   ) {
     self.repositoryName = repositoryName
     self.gitVersion = gitVersion
     self.status = status
     self.commits = commits
     self.references = references
+    self.stashes = stashes
+    self.remotes = remotes
     self.selectedDiff = selectedDiff
     self.isDiffLoading = isDiffLoading
     self.isLoading = isLoading
@@ -75,6 +93,12 @@ public struct CurrentRootView: View {
     self.loadDiff = loadDiff
     self.createBranch = createBranch
     self.checkoutBranch = checkoutBranch
+    self.saveStash = saveStash
+    self.popStash = popStash
+    self.dropStash = dropStash
+    self.fetch = fetch
+    self.pull = pull
+    self.push = push
   }
 
   public var body: some View {
@@ -110,6 +134,14 @@ public struct CurrentRootView: View {
             }
           }
         }
+        if !remotes.isEmpty {
+          Section("Remotes") {
+            ForEach(remotes) { remote in
+              Label(remote.name, systemImage: "cloud")
+                .help(remote.fetchURL)
+            }
+          }
+        }
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 220)
     } detail: {
@@ -128,6 +160,20 @@ public struct CurrentRootView: View {
               isCreatingBranch = true
             } label: {
               Label("New Branch", systemImage: "plus")
+            }
+            .disabled(status == nil || isLoading)
+            Menu {
+              Button("Fetch All", action: fetch)
+              Button("Pull (Fast-forward Only)", action: pull)
+              Button("Push", action: push)
+                .disabled(remotes.isEmpty)
+              Divider()
+              Button("Stash All Changes") {
+                saveStash(nil)
+              }
+              .disabled(status?.changes.isEmpty != false)
+            } label: {
+              Label("Repository Actions", systemImage: "ellipsis.circle")
             }
             .disabled(status == nil || isLoading)
           }
@@ -207,11 +253,7 @@ public struct CurrentRootView: View {
         case .history:
           history
         case .stashes:
-          ContentUnavailableView(
-            "No Stashes Loaded",
-            systemImage: "archivebox",
-            description: Text("Stash operations are introduced in the next M1 work package.")
-          )
+          stashList
         }
 
         Divider()
@@ -230,6 +272,39 @@ public struct CurrentRootView: View {
         systemImage: "point.3.connected.trianglepath.dotted",
         description: Text("Choose a local repository to inspect its working copy.")
       )
+    }
+  }
+
+  @ViewBuilder
+  private var stashList: some View {
+    if stashes.isEmpty {
+      ContentUnavailableView(
+        "No Stashes",
+        systemImage: "archivebox",
+        description: Text("Stashed changes will appear here.")
+      )
+    } else {
+      List(stashes) { stash in
+        HStack {
+          VStack(alignment: .leading, spacing: 3) {
+            Text(stash.subject)
+              .lineLimit(1)
+            Text(stash.selector)
+              .font(.caption.monospaced())
+              .foregroundStyle(.secondary)
+          }
+          Spacer()
+          Button("Pop") {
+            popStash(stash.selector)
+          }
+          Button(role: .destructive) {
+            dropStash(stash.selector)
+          } label: {
+            Image(systemName: "trash")
+          }
+          .help("Drop stash")
+        }
+      }
     }
   }
 

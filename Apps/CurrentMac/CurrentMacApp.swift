@@ -13,6 +13,8 @@ struct CurrentMacApp: App {
         status: model.repositoryStatus,
         commits: model.commits,
         references: model.references,
+        stashes: model.stashes,
+        remotes: model.remotes,
         selectedDiff: model.selectedDiff,
         isDiffLoading: model.isDiffLoading,
         isLoading: model.isLoading,
@@ -26,7 +28,13 @@ struct CurrentMacApp: App {
         commit: model.commit,
         loadDiff: model.loadDiff,
         createBranch: model.createBranch,
-        checkoutBranch: model.checkoutBranch
+        checkoutBranch: model.checkoutBranch,
+        saveStash: model.saveStash,
+        popStash: model.popStash,
+        dropStash: model.dropStash,
+        fetch: model.fetch,
+        pull: model.pull,
+        push: model.push
       )
       .frame(minWidth: 880, minHeight: 560)
     }

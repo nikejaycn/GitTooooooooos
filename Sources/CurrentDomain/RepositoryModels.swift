@@ -134,17 +134,23 @@ public struct RepositorySnapshot: Hashable, Sendable {
   public let status: RepositoryStatus
   public let commits: [CommitSummary]
   public let references: [GitReference]
+  public let stashes: [StashEntry]
+  public let remotes: [GitRemote]
 
   public init(
     generation: RepositoryGeneration,
     status: RepositoryStatus,
     commits: [CommitSummary],
-    references: [GitReference]
+    references: [GitReference],
+    stashes: [StashEntry] = [],
+    remotes: [GitRemote] = []
   ) {
     self.generation = generation
     self.status = status
     self.commits = commits
     self.references = references
+    self.stashes = stashes
+    self.remotes = remotes
   }
 }
 
