@@ -44,6 +44,7 @@ public struct CurrentRootView: View {
   private let rebase: (String) -> Void
   private let undoLastOperation: () -> Void
   private let applyHunk: (DiffDocument, DiffHunk) -> Void
+  private let applyLine: (DiffDocument, DiffHunk, Int) -> Void
   private let saveStash: (String?) -> Void
   private let popStash: (String) -> Void
   private let dropStash: (String) -> Void
@@ -92,6 +93,7 @@ public struct CurrentRootView: View {
     rebase: @escaping (String) -> Void,
     undoLastOperation: @escaping () -> Void,
     applyHunk: @escaping (DiffDocument, DiffHunk) -> Void,
+    applyLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
     saveStash: @escaping (String?) -> Void,
     popStash: @escaping (String) -> Void,
     dropStash: @escaping (String) -> Void,
@@ -132,6 +134,7 @@ public struct CurrentRootView: View {
     self.rebase = rebase
     self.undoLastOperation = undoLastOperation
     self.applyHunk = applyHunk
+    self.applyLine = applyLine
     self.saveStash = saveStash
     self.popStash = popStash
     self.dropStash = dropStash
@@ -609,6 +612,20 @@ public struct CurrentRootView: View {
                 .help(
                   "@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@"
                 )
+                Menu("Lines") {
+                  ForEach(
+                    hunk.lines.indices.filter {
+                      hunk.lines[$0].kind == .addition || hunk.lines[$0].kind == .deletion
+                    },
+                    id: \.self
+                  ) { lineIndex in
+                    let line = hunk.lines[lineIndex]
+                    Button(lineActionTitle(line, source: selectedDiff.source)) {
+                      applyLine(selectedDiff, hunk, lineIndex)
+                    }
+                  }
+                }
+                .disabled(isLoading)
               }
             }
             .padding(.horizontal, 10)
@@ -625,6 +642,16 @@ public struct CurrentRootView: View {
         description: Text("Choose a tracked file to inspect its diff.")
       )
     }
+  }
+
+  private func lineActionTitle(
+    _ line: DiffLine,
+    source: DiffSource
+  ) -> String {
+    let verb = source == .staged ? "Unstage" : "Stage"
+    let marker = line.kind == .addition ? "+" : "-"
+    let number = line.newLineNumber ?? line.oldLineNumber ?? 0
+    return "\(verb) \(marker)\(number): \(line.text)"
   }
 
   @ViewBuilder

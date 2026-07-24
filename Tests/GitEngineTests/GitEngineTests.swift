@@ -637,6 +637,38 @@ struct GitEngineTests {
     )
     #expect(status.changes.first?.isStaged == false)
     #expect(status.changes.first?.isUnstaged == true)
+
+    let remaining = try await engine.diff(
+      at: location,
+      path: path,
+      source: .unstaged
+    )
+    let firstHunk = try #require(remaining.hunks.first)
+    let additionIndex = try #require(
+      firstHunk.lines.firstIndex { $0.kind == .addition }
+    )
+    let linePatch = try LinePatchBuilder().selecting(
+      lineIndices: [additionIndex],
+      from: firstHunk
+    )
+    try await engine.applyHunk(
+      at: location,
+      hunk: linePatch,
+      source: .unstaged
+    )
+    let lineStaged = try await engine.diff(
+      at: location,
+      path: path,
+      source: .staged
+    )
+    let lineRemaining = try await engine.diff(
+      at: location,
+      path: path,
+      source: .unstaged
+    )
+    #expect(lineStaged.changedLineCount == 1)
+    #expect(lineStaged.hunks[0].lines.contains { $0.kind == .addition })
+    #expect(lineRemaining.changedLineCount == 3)
   }
 }
 

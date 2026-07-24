@@ -179,7 +179,8 @@ private struct HunkBuilder {
       newCount: newCount,
       heading: heading,
       lines: lines,
-      patchText: (fileHeader + [rawHeader] + rawLines).joined(separator: "\n") + "\n"
+      patchText: (fileHeader + [rawHeader] + rawLines).joined(separator: "\n") + "\n",
+      fileHeaderText: fileHeader.joined(separator: "\n") + "\n"
     )
   }
 }

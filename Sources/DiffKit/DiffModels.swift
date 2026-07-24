@@ -45,6 +45,7 @@ public struct DiffHunk: Hashable, Sendable, Codable, Identifiable {
   public let heading: String
   public let lines: [DiffLine]
   public let patchText: String
+  public let fileHeaderText: String
 
   public init(
     oldStart: Int,
@@ -53,7 +54,8 @@ public struct DiffHunk: Hashable, Sendable, Codable, Identifiable {
     newCount: Int,
     heading: String,
     lines: [DiffLine],
-    patchText: String = ""
+    patchText: String = "",
+    fileHeaderText: String = ""
   ) {
     self.oldStart = oldStart
     self.oldCount = oldCount
@@ -62,6 +64,7 @@ public struct DiffHunk: Hashable, Sendable, Codable, Identifiable {
     self.heading = heading
     self.lines = lines
     self.patchText = patchText
+    self.fileHeaderText = fileHeaderText
   }
 
   public var id: String {

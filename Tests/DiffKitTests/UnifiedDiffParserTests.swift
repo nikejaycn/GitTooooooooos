@@ -59,4 +59,38 @@ struct UnifiedDiffParserTests {
     #expect(document.isBinary)
     #expect(document.hunks.isEmpty)
   }
+
+  @Test("Builds a valid partial-line patch")
+  func lineSelection() throws {
+    let fixture = """
+      diff --git a/file.txt b/file.txt
+      index 1111111..2222222 100644
+      --- a/file.txt
+      +++ b/file.txt
+      @@ -1,3 +1,4 @@
+       before
+      -old
+      +new
+      +extra
+       after
+
+      """
+    let document = try UnifiedDiffParser().parse(
+      Array(fixture.utf8),
+      path: GitPath("file.txt"),
+      source: .unstaged
+    )
+    let hunk = try #require(document.hunks.first)
+    let selected = try LinePatchBuilder().selecting(
+      lineIndices: [2],
+      from: hunk
+    )
+
+    #expect(selected.patchText.contains("\n old\n"))
+    #expect(selected.patchText.contains("\n+new\n"))
+    #expect(!selected.patchText.contains("\n-old\n"))
+    #expect(!selected.patchText.contains("\n+extra\n"))
+    #expect(selected.oldCount == 3)
+    #expect(selected.newCount == 4)
+  }
 }

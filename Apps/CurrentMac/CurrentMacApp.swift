@@ -41,6 +41,7 @@ struct CurrentMacApp: App {
         rebase: model.rebase,
         undoLastOperation: model.undoLastRecoverableOperation,
         applyHunk: model.applyHunk,
+        applyLine: model.applyLine,
         saveStash: model.saveStash,
         popStash: model.popStash,
         dropStash: model.dropStash,

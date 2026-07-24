@@ -201,6 +201,18 @@ final class AppModel {
     }
   }
 
+  func applyLine(_ document: DiffDocument, hunk: DiffHunk, lineIndex: Int) {
+    do {
+      let patch = try LinePatchBuilder().selecting(
+        lineIndices: [lineIndex],
+        from: hunk
+      )
+      applyHunk(document, hunk: patch)
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   private func loadGitVersion() async {
     guard let engine else { return }
     do {
