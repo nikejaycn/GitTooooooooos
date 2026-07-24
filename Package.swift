@@ -39,7 +39,10 @@ let package = Package(
     ),
     .target(
       name: "RepositoryModel",
-      dependencies: ["CurrentDomain", "DiffKit", "GitEngine"]
+      dependencies: ["CurrentDomain", "DiffKit", "GitEngine"],
+      linkerSettings: [
+        .linkedFramework("CoreServices")
+      ]
     ),
     .target(
       name: "OperationKit",

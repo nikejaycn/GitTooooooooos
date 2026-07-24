@@ -86,6 +86,35 @@ struct RepositoryActorTests {
     #expect(await repository.snapshot() == snapshot)
     #expect(await engine.commits() == [request])
   }
+
+  @Test("A slow stale read cannot replace a newer cached snapshot")
+  func staleReadDoesNotReplaceNewerSnapshot() async throws {
+    let engine = StubGitEngine(
+      statusDelays: [
+        1: .milliseconds(150),
+        2: .milliseconds(5),
+      ]
+    )
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    let slowRead = Task {
+      try await repository.refreshSnapshot()
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    let fastRead = Task {
+      try await repository.refreshSnapshot()
+    }
+
+    let newest = try await fastRead.value
+    let staleCallerResult = try await slowRead.value
+
+    #expect(newest.generation == RepositoryGeneration(2))
+    #expect(staleCallerResult.generation == newest.generation)
+    #expect(await repository.snapshot()?.generation == newest.generation)
+  }
 }
 
 private actor StubGitEngine: GitEngineProtocol {
@@ -95,6 +124,11 @@ private actor StubGitEngine: GitEngineProtocol {
   )
   private var receivedMutations: [WorkingCopyMutation] = []
   private var receivedCommits: [CommitRequest] = []
+  private let statusDelays: [UInt64: Duration]
+
+  init(statusDelays: [UInt64: Duration] = [:]) {
+    self.statusDelays = statusDelays
+  }
 
   func version() async throws -> String {
     "git version test"
@@ -108,7 +142,10 @@ private actor StubGitEngine: GitEngineProtocol {
     at location: RepositoryLocation,
     generation: RepositoryGeneration
   ) async throws -> RepositoryStatus {
-    RepositoryStatus(
+    if let delay = statusDelays[generation.rawValue] {
+      try await Task.sleep(for: delay)
+    }
+    return RepositoryStatus(
       generation: generation,
       head: .branch("main"),
       upstream: nil,

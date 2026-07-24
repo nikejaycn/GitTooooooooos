@@ -60,8 +60,7 @@ public struct GitCommand: Hashable, Sendable {
   }
 
   private static func redact(_ argument: String) -> String {
-    if
-      var components = URLComponents(string: argument),
+    if var components = URLComponents(string: argument),
       components.scheme != nil,
       components.user != nil || components.password != nil
     {
@@ -128,10 +127,12 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
     self.executableURL = executableURL
     let binDirectory = executableURL.deletingLastPathComponent()
     let bundleRoot = binDirectory.deletingLastPathComponent()
-    let execPath = bundleRoot
+    let execPath =
+      bundleRoot
       .appendingPathComponent("libexec", isDirectory: true)
       .appendingPathComponent("git-core", isDirectory: true)
-    let templatePath = bundleRoot
+    let templatePath =
+      bundleRoot
       .appendingPathComponent("share", isDirectory: true)
       .appendingPathComponent("git-core", isDirectory: true)
       .appendingPathComponent("templates", isDirectory: true)
@@ -176,6 +177,9 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
               "LC_ALL": "C",
               "LANG": "C",
               "GIT_TERMINAL_PROMPT": "0",
+              // Read commands must not refresh the index and feed the
+              // repository watcher an endless self-triggered refresh loop.
+              "GIT_OPTIONAL_LOCKS": "0",
             ] as [String: String?])
             .merging(self.runtimeEnvironment) { _, runtimeValue in runtimeValue }
             .merging(command.environmentOverrides) { _, commandValue in commandValue }

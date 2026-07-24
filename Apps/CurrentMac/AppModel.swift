@@ -32,6 +32,9 @@ final class AppModel {
 
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
+  private var repositoryWatchSession: RepositoryWatchSession?
+  private var repositoryRefreshTask: Task<Void, Never>?
+  private var repositorySessionID = UUID()
   private var diffRequestID: UUID?
   private var repositoryOperationTask: Task<Void, Never>?
 
@@ -404,13 +407,19 @@ final class AppModel {
     let snapshot = try await opened.refreshSnapshot()
     try Task.checkCancellation()
     repository = opened
+    repositorySessionID = UUID()
     repositoryName = opened.location.worktreeURL.lastPathComponent
     apply(snapshot)
     selectedDiff = nil
+    startWatchingRepository(opened)
     recordRecentRepository(opened.location.worktreeURL)
   }
 
   private func clearRepository() {
+    repositoryRefreshTask?.cancel()
+    repositoryRefreshTask = nil
+    repositoryWatchSession = nil
+    repositorySessionID = UUID()
     repository = nil
     repositoryName = nil
     repositoryStatus = nil
@@ -422,9 +431,11 @@ final class AppModel {
   }
 
   private func suggestedCloneName(from remoteURL: String) -> String {
-    let withoutQuery = remoteURL.split(separator: "?", maxSplits: 1).first.map(String.init)
+    let withoutQuery =
+      remoteURL.split(separator: "?", maxSplits: 1).first.map(String.init)
       ?? remoteURL
-    let tail = withoutQuery
+    let tail =
+      withoutQuery
       .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
       .split(separator: "/")
       .last
@@ -469,17 +480,25 @@ final class AppModel {
     return Array(repositories.prefix(100))
   }
 
-  private func refreshRepository() async {
+  private func refreshRepository(showsLoadingIndicator: Bool = true) async {
     guard let repository else { return }
-    isLoading = true
-    errorMessage = nil
+    let sessionID = repositorySessionID
+    if showsLoadingIndicator {
+      isLoading = true
+      errorMessage = nil
+    }
     do {
       let snapshot = try await repository.refreshSnapshot()
+      guard repositorySessionID == sessionID else { return }
       apply(snapshot)
     } catch {
-      errorMessage = error.localizedDescription
+      if !(error is CancellationError), repositorySessionID == sessionID {
+        errorMessage = error.localizedDescription
+      }
     }
-    isLoading = false
+    if showsLoadingIndicator, repositorySessionID == sessionID {
+      isLoading = false
+    }
   }
 
   private func apply(_ mutation: WorkingCopyMutation) {
@@ -489,7 +508,7 @@ final class AppModel {
       isLoading = true
       errorMessage = nil
       do {
-        repositoryStatus = try await repository.applyWorkingCopyMutation(mutation)
+        apply(try await repository.applyWorkingCopyMutation(mutation))
         finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription
@@ -635,11 +654,73 @@ final class AppModel {
   }
 
   private func apply(_ snapshot: RepositorySnapshot) {
+    guard snapshot.generation >= (repositoryStatus?.generation ?? RepositoryGeneration(0))
+    else {
+      return
+    }
     repositoryStatus = snapshot.status
     commits = snapshot.commits
     references = snapshot.references
     stashes = snapshot.stashes
     remotes = snapshot.remotes
+  }
+
+  private func apply(_ status: RepositoryStatus) {
+    guard status.generation >= (repositoryStatus?.generation ?? RepositoryGeneration(0))
+    else {
+      return
+    }
+    repositoryStatus = status
+  }
+
+  private func startWatchingRepository(_ opened: RepositoryActor) {
+    repositoryWatchSession = nil
+    let sessionID = repositorySessionID
+    do {
+      repositoryWatchSession = try RepositoryWatchSession(
+        location: opened.location
+      ) { [weak self] events in
+        Task { @MainActor [weak self] in
+          self?.repositoryFilesDidChange(events, sessionID: sessionID)
+        }
+      }
+    } catch {
+      errorMessage = "Repository monitoring is unavailable: \(error.localizedDescription)"
+    }
+  }
+
+  private func repositoryFilesDidChange(
+    _ events: [RepositoryWatchEvent],
+    sessionID: UUID
+  ) {
+    guard
+      sessionID == repositorySessionID,
+      let repository,
+      !events.isEmpty
+    else {
+      return
+    }
+
+    let requiresRefresh = events.contains { $0.requiresSnapshotRefresh }
+    Task {
+      await repository.invalidate()
+      guard sessionID == repositorySessionID, requiresRefresh else { return }
+      scheduleRepositoryRefresh(sessionID: sessionID)
+    }
+  }
+
+  private func scheduleRepositoryRefresh(sessionID: UUID) {
+    repositoryRefreshTask?.cancel()
+    repositoryRefreshTask = Task {
+      do {
+        try await Task.sleep(for: .milliseconds(100))
+        try Task.checkCancellation()
+        guard sessionID == repositorySessionID else { return }
+        await refreshRepository(showsLoadingIndicator: false)
+      } catch {
+        // A newer filesystem event superseded this refresh.
+      }
+    }
   }
 
   private func beginActivity(_ title: String) -> UUID {
