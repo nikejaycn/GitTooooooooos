@@ -1,5 +1,6 @@
 import AppKit
 import CurrentDomain
+import GraphKit
 import SwiftUI
 
 enum AppAppearance: String, CaseIterable, Identifiable {
@@ -113,6 +114,38 @@ struct CurrentSettingsView: View {
           }
         }
         Text("History is loaded in 200-commit pages up to this in-memory limit.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        Picker(
+          "Row density",
+          selection: Binding(
+            get: { model.graphDisplayConfiguration.density },
+            set: { model.setGraphDensity($0) }
+          )
+        ) {
+          ForEach(GraphRowDensity.allCases) { density in
+            Text(density.title).tag(density)
+          }
+        }
+
+        LabeledContent("Visible columns") {
+          HStack {
+            ForEach(GraphOptionalColumn.allCases) { column in
+              Toggle(
+                column.title,
+                isOn: Binding(
+                  get: {
+                    model.graphDisplayConfiguration.visibleOptionalColumns.contains(column)
+                  },
+                  set: { _ in model.toggleGraphColumn(column) }
+                )
+              )
+              .toggleStyle(.checkbox)
+            }
+          }
+        }
+        Text("Column widths and order are restored automatically.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }

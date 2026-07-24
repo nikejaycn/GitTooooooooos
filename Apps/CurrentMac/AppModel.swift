@@ -37,6 +37,11 @@ final class AppModel {
   private static let externalMergeToolKey = "Current.externalMergeTool.v1"
   private static let customDiffToolPathKey = "Current.customDiffToolPath.v1"
   private static let customMergeToolPathKey = "Current.customMergeToolPath.v1"
+  private static let graphColumnsKey = "Current.graphColumns.v1"
+  private static let graphDensityKey = "Current.graphDensity.v1"
+  private static let hiddenGraphReferencesKey = "Current.hiddenGraphReferences.v1"
+  private static let soloGraphReferenceKey = "Current.soloGraphReference.v1"
+  private static let pinnedGraphReferencesKey = "Current.pinnedGraphReferences.v1"
   private static let historyPageSize = 200
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
@@ -61,6 +66,10 @@ final class AppModel {
   private(set) var externalMergeTool = ExternalTool.none
   private(set) var customDiffToolPath = ""
   private(set) var customMergeToolPath = ""
+  private(set) var graphDisplayConfiguration = GraphDisplayConfiguration()
+  private(set) var hiddenGraphReferences = Set<String>()
+  private(set) var soloGraphReference: String?
+  private(set) var pinnedGraphReferences = Set<String>()
   private(set) var commitComparison: CommitComparison?
   private(set) var isCommitComparisonLoading = false
   private(set) var references: [GitReference] = []
@@ -119,6 +128,27 @@ final class AppModel {
       UserDefaults.standard.string(forKey: Self.customDiffToolPathKey) ?? ""
     customMergeToolPath =
       UserDefaults.standard.string(forKey: Self.customMergeToolPathKey) ?? ""
+    let savedGraphColumns = UserDefaults.standard.stringArray(forKey: Self.graphColumnsKey)
+    let visibleGraphColumns =
+      savedGraphColumns.map {
+        Set($0.compactMap(GraphOptionalColumn.init(rawValue:)))
+      } ?? Set(GraphOptionalColumn.allCases)
+    let graphDensity =
+      UserDefaults.standard.string(forKey: Self.graphDensityKey)
+      .flatMap(GraphRowDensity.init(rawValue:)) ?? .comfortable
+    graphDisplayConfiguration = GraphDisplayConfiguration(
+      visibleOptionalColumns: visibleGraphColumns,
+      density: graphDensity
+    )
+    hiddenGraphReferences = Set(
+      UserDefaults.standard.stringArray(forKey: Self.hiddenGraphReferencesKey) ?? []
+    )
+    soloGraphReference = UserDefaults.standard.string(
+      forKey: Self.soloGraphReferenceKey
+    )
+    pinnedGraphReferences = Set(
+      UserDefaults.standard.stringArray(forKey: Self.pinnedGraphReferencesKey) ?? []
+    )
     appearance =
       UserDefaults.standard.string(forKey: Self.appearanceKey)
       .flatMap(AppAppearance.init(rawValue:)) ?? .system
@@ -342,6 +372,78 @@ final class AppModel {
   func setCustomMergeToolPath(_ path: String) {
     customMergeToolPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
     UserDefaults.standard.set(customMergeToolPath, forKey: Self.customMergeToolPathKey)
+  }
+
+  func toggleGraphColumn(_ column: GraphOptionalColumn) {
+    var columns = graphDisplayConfiguration.visibleOptionalColumns
+    if columns.contains(column) {
+      columns.remove(column)
+    } else {
+      columns.insert(column)
+    }
+    graphDisplayConfiguration = GraphDisplayConfiguration(
+      visibleOptionalColumns: columns,
+      density: graphDisplayConfiguration.density
+    )
+    UserDefaults.standard.set(
+      GraphOptionalColumn.allCases
+        .filter(columns.contains)
+        .map(\.rawValue),
+      forKey: Self.graphColumnsKey
+    )
+  }
+
+  func setGraphDensity(_ density: GraphRowDensity) {
+    guard density != graphDisplayConfiguration.density else { return }
+    graphDisplayConfiguration = GraphDisplayConfiguration(
+      visibleOptionalColumns: graphDisplayConfiguration.visibleOptionalColumns,
+      density: density
+    )
+    UserDefaults.standard.set(density.rawValue, forKey: Self.graphDensityKey)
+  }
+
+  func toggleHiddenGraphReference(_ name: String) {
+    if hiddenGraphReferences.contains(name) {
+      hiddenGraphReferences.remove(name)
+    } else {
+      hiddenGraphReferences.insert(name)
+      if soloGraphReference == name {
+        soloGraphReference = nil
+        UserDefaults.standard.removeObject(forKey: Self.soloGraphReferenceKey)
+      }
+    }
+    UserDefaults.standard.set(
+      hiddenGraphReferences.sorted(),
+      forKey: Self.hiddenGraphReferencesKey
+    )
+    rebuildGraphForCurrentGeneration()
+  }
+
+  func setSoloGraphReference(_ name: String?) {
+    soloGraphReference = name
+    if let name {
+      hiddenGraphReferences.remove(name)
+      UserDefaults.standard.set(name, forKey: Self.soloGraphReferenceKey)
+      UserDefaults.standard.set(
+        hiddenGraphReferences.sorted(),
+        forKey: Self.hiddenGraphReferencesKey
+      )
+    } else {
+      UserDefaults.standard.removeObject(forKey: Self.soloGraphReferenceKey)
+    }
+    rebuildGraphForCurrentGeneration()
+  }
+
+  func togglePinnedGraphReference(_ name: String) {
+    if pinnedGraphReferences.contains(name) {
+      pinnedGraphReferences.remove(name)
+    } else {
+      pinnedGraphReferences.insert(name)
+    }
+    UserDefaults.standard.set(
+      pinnedGraphReferences.sorted(),
+      forKey: Self.pinnedGraphReferencesKey
+    )
   }
 
   func applyGitToolchain(useCustom: Bool, path: String) {
@@ -1750,8 +1852,21 @@ final class AppModel {
   }
 
   private func rebuildGraphRows(generation: RepositoryGeneration) {
-    let commits = self.commits
-    let references = self.references
+    let visibleReferences = self.references.filter {
+      !hiddenGraphReferences.contains($0.shortName)
+    }
+    let references =
+      if let soloGraphReference {
+        visibleReferences.filter { $0.shortName == soloGraphReference }
+      } else {
+        visibleReferences
+      }
+    let commits = filteredGraphCommits(
+      commits: self.commits,
+      references: references,
+      isSolo: soloGraphReference != nil
+    )
+    let pinnedReferenceNames = pinnedGraphReferences
     let workingCopyChangeCount = repositoryStatus?.changes.count ?? 0
     let requestID = UUID()
     graphLayoutRequestID = requestID
@@ -1761,6 +1876,7 @@ final class AppModel {
         GraphRowBuilder().build(
           commits: commits,
           references: references,
+          pinnedReferenceNames: pinnedReferenceNames,
           workingCopyChangeCount: workingCopyChangeCount,
           generation: generation
         )
@@ -1774,6 +1890,26 @@ final class AppModel {
       }
       graphRows = rows
     }
+  }
+
+  private func rebuildGraphForCurrentGeneration() {
+    guard let generation = repositoryStatus?.generation else { return }
+    rebuildGraphRows(generation: generation)
+  }
+
+  private func filteredGraphCommits(
+    commits: [CommitSummary],
+    references: [GitReference],
+    isSolo: Bool
+  ) -> [CommitSummary] {
+    let startingOIDs = references.map(\.targetOID)
+    guard !startingOIDs.isEmpty else {
+      return isSolo ? [] : commits
+    }
+    return GraphCommitFilter.reachableCommits(
+      from: startingOIDs,
+      in: commits
+    )
   }
 
   private func clearCommitComparison() {

@@ -115,6 +115,62 @@ struct GraphLaneAllocatorTests {
     #expect(!row.matches(searchQuery: "missing"))
   }
 
+  @Test("Solo and hidden reference filtering keeps only reachable loaded history")
+  func reachableReferenceFiltering() {
+    let commits = [
+      commit("main", parents: ["root"]),
+      commit("topic", parents: ["root"]),
+      commit("root"),
+      commit("orphan"),
+    ]
+
+    #expect(
+      GraphCommitFilter.reachableCommits(
+        from: ["topic"],
+        in: commits
+      ).map(\.oid) == ["topic", "root"]
+    )
+    #expect(
+      GraphCommitFilter.reachableCommits(
+        from: ["main", "topic"],
+        in: commits
+      ).map(\.oid) == ["main", "topic", "root"]
+    )
+  }
+
+  @Test("Pinned references reserve stable first-parent lanes")
+  func pinnedReferenceLanes() {
+    let commits = [
+      commit("merge", parents: ["main", "topic"]),
+      commit("main", parents: ["root"]),
+      commit("topic", parents: ["root"]),
+      commit("root"),
+    ]
+    let references = [
+      reference("refs/heads/main", short: "main", oid: "main", kind: .localBranch),
+      reference("refs/heads/topic", short: "topic", oid: "topic", kind: .localBranch),
+    ]
+
+    let rows = GraphRowBuilder().build(
+      commits: commits,
+      references: references,
+      pinnedReferenceNames: ["main", "topic"],
+      workingCopyChangeCount: 1,
+      generation: RepositoryGeneration(3)
+    )
+    let lanes = Dictionary(
+      uniqueKeysWithValues: rows.compactMap { row in
+        row.commitOID.map { ($0, row.layout.lane) }
+      }
+    )
+
+    #expect(rows[0].isWorkingCopy)
+    #expect(rows[0].layout.lane == 2)
+    #expect(lanes["main"] == 0)
+    #expect(lanes["topic"] == 1)
+    #expect(lanes["root"] == 0)
+  }
+
   @Test("Allocates fifty thousand linear commits with bounded state")
   func largeLinearHistory() {
     let count = 50_000

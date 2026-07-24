@@ -42,10 +42,14 @@ public struct GraphRowLayout: Hashable, Sendable {
 public struct GraphLaneAllocator: Sendable {
   public private(set) var activeLaneOIDs: [String?]
   public private(set) var maximumLaneCount: Int
+  private let preferredLaneByOID: [String: Int]
+  private let reservedLanes: Set<Int>
 
-  public init() {
+  public init(preferredLaneByOID: [String: Int] = [:]) {
     activeLaneOIDs = []
     maximumLaneCount = 0
+    self.preferredLaneByOID = preferredLaneByOID
+    reservedLanes = Set(preferredLaneByOID.values)
   }
 
   public mutating func append(
@@ -65,12 +69,17 @@ public struct GraphLaneAllocator: Sendable {
     let commitLane: Int
     if let existingLane {
       commitLane = existingLane
-    } else if let reusableLane = lanesBefore.firstIndex(where: { $0 == nil }) {
+    } else if let preferredLane = availablePreferredLane(
+      for: commit.oid,
+      in: &lanesBefore
+    ) {
+      commitLane = preferredLane
+      lanesBefore[preferredLane] = commit.oid
+    } else if let reusableLane = reusableLane(in: lanesBefore) {
       commitLane = reusableLane
       lanesBefore[reusableLane] = commit.oid
     } else {
-      commitLane = lanesBefore.count
-      lanesBefore.append(commit.oid)
+      commitLane = appendNewLane(for: commit.oid, to: &lanesBefore)
     }
 
     var lanesAfter = lanesBefore
@@ -83,15 +92,20 @@ public struct GraphLaneAllocator: Sendable {
       let parentLane: Int
       if let existingParentLane = lanesAfter.firstIndex(where: { $0 == parentOID }) {
         parentLane = existingParentLane
+      } else if let preferredLane = availablePreferredLane(
+        for: parentOID,
+        in: &lanesAfter
+      ) {
+        parentLane = preferredLane
+        lanesAfter[parentLane] = parentOID
       } else if index == 0, lanesAfter[commitLane] == nil {
         parentLane = commitLane
         lanesAfter[parentLane] = parentOID
-      } else if let reusableLane = lanesAfter.firstIndex(where: { $0 == nil }) {
+      } else if let reusableLane = reusableLane(in: lanesAfter) {
         parentLane = reusableLane
         lanesAfter[parentLane] = parentOID
       } else {
-        parentLane = lanesAfter.count
-        lanesAfter.append(parentOID)
+        parentLane = appendNewLane(for: parentOID, to: &lanesAfter)
       }
       parentLanes.append((parentLane, index == 0))
     }
@@ -135,6 +149,40 @@ public struct GraphLaneAllocator: Sendable {
       edges: edges,
       hasIncomingEdge: existingLane != nil
     )
+  }
+
+  private func availablePreferredLane(
+    for oid: String,
+    in lanes: inout [String?]
+  ) -> Int? {
+    guard let preferredLane = preferredLaneByOID[oid] else { return nil }
+    if lanes.count <= preferredLane {
+      lanes.append(
+        contentsOf: repeatElement(nil, count: preferredLane - lanes.count + 1)
+      )
+    }
+    return lanes[preferredLane] == nil ? preferredLane : nil
+  }
+
+  private func reusableLane(in lanes: [String?]) -> Int? {
+    lanes.indices.first {
+      lanes[$0] == nil && !reservedLanes.contains($0)
+    }
+  }
+
+  private func appendNewLane(
+    for oid: String,
+    to lanes: inout [String?]
+  ) -> Int {
+    var lane = lanes.count
+    while reservedLanes.contains(lane) {
+      lane += 1
+    }
+    if lanes.count < lane {
+      lanes.append(contentsOf: repeatElement(nil, count: lane - lanes.count))
+    }
+    lanes.append(oid)
+    return lane
   }
 }
 
@@ -221,6 +269,7 @@ public struct GraphRowBuilder: Sendable {
   public func build(
     commits: [CommitSummary],
     references: [GitReference],
+    pinnedReferenceNames: Set<String> = [],
     workingCopyChangeCount: Int,
     generation: RepositoryGeneration
   ) -> [GraphRow] {
@@ -245,7 +294,13 @@ public struct GraphRowBuilder: Sendable {
       )
     }
 
-    var allocator = GraphLaneAllocator()
+    var allocator = GraphLaneAllocator(
+      preferredLaneByOID: Self.preferredLanes(
+        commits: commits,
+        references: references,
+        pinnedReferenceNames: pinnedReferenceNames
+      )
+    )
     return graphCommits.map { commit in
       let isWorkingCopy = commit.oid == workingCopyOID
       let decorations: [GraphDecoration]
@@ -291,5 +346,53 @@ public struct GraphRowBuilder: Sendable {
       case .other: .other
       }
     return GraphDecoration(label: reference.shortName, kind: kind)
+  }
+
+  private static func preferredLanes(
+    commits: [CommitSummary],
+    references: [GitReference],
+    pinnedReferenceNames: Set<String>
+  ) -> [String: Int] {
+    let pinnedReferences =
+      references
+      .filter { pinnedReferenceNames.contains($0.shortName) }
+      .sorted {
+        $0.shortName.localizedStandardCompare($1.shortName) == .orderedAscending
+      }
+    guard !pinnedReferences.isEmpty else { return [:] }
+
+    let commitsByOID = Dictionary(uniqueKeysWithValues: commits.map { ($0.oid, $0) })
+    var preferredLaneByOID: [String: Int] = [:]
+    for (lane, reference) in pinnedReferences.enumerated() {
+      var oid: String? = reference.targetOID
+      var visited = Set<String>()
+      while let currentOID = oid, visited.insert(currentOID).inserted {
+        if preferredLaneByOID[currentOID] != nil {
+          break
+        }
+        preferredLaneByOID[currentOID] = lane
+        oid = commitsByOID[currentOID]?.parentOIDs.first
+      }
+    }
+    return preferredLaneByOID
+  }
+}
+
+public enum GraphCommitFilter {
+  public static func reachableCommits(
+    from startingOIDs: [String],
+    in commits: [CommitSummary]
+  ) -> [CommitSummary] {
+    guard !startingOIDs.isEmpty else { return [] }
+    let commitsByOID = Dictionary(uniqueKeysWithValues: commits.map { ($0.oid, $0) })
+    var reachable = Set<String>()
+    var pending = startingOIDs
+    while let oid = pending.popLast() {
+      guard reachable.insert(oid).inserted, let commit = commitsByOID[oid] else {
+        continue
+      }
+      pending.append(contentsOf: commit.parentOIDs)
+    }
+    return commits.filter { reachable.contains($0.oid) }
   }
 }

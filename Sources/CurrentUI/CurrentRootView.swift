@@ -29,6 +29,10 @@ public struct CurrentRootView: View {
   private let status: RepositoryStatus?
   private let commits: [CommitSummary]
   private let graphRows: [GraphRow]
+  private let graphDisplayConfiguration: GraphDisplayConfiguration
+  private let hiddenGraphReferences: Set<String>
+  private let soloGraphReference: String?
+  private let pinnedGraphReferences: Set<String>
   private let repositorySearchRows: [GraphRow]
   private let isRepositorySearchLoading: Bool
   private let isHistoryPageLoading: Bool
@@ -66,6 +70,9 @@ public struct CurrentRootView: View {
   private let loadNextHistoryPage: () -> Void
   private let searchRepositoryHistory: (String) -> Void
   private let clearRepositoryHistorySearch: () -> Void
+  private let toggleHiddenGraphReference: (String) -> Void
+  private let setSoloGraphReference: (String?) -> Void
+  private let togglePinnedGraphReference: (String) -> Void
   private let compareSelectedCommits: ([String]) -> Void
   private let stage: (GitPath) -> Void
   private let unstage: (GitPath) -> Void
@@ -132,6 +139,7 @@ public struct CurrentRootView: View {
   private let forcePushWithLease: () -> Void
   @State private var workspace: Workspace = .changes
   @State private var pendingDiscard: GitPath?
+  @State private var graphJumpOID: String?
   @State private var commitMessage = ""
   @State private var newBranchName = ""
   @State private var isCreatingBranch = false
@@ -188,6 +196,10 @@ public struct CurrentRootView: View {
     status: RepositoryStatus?,
     commits: [CommitSummary],
     graphRows: [GraphRow],
+    graphDisplayConfiguration: GraphDisplayConfiguration,
+    hiddenGraphReferences: Set<String>,
+    soloGraphReference: String?,
+    pinnedGraphReferences: Set<String>,
     repositorySearchRows: [GraphRow],
     isRepositorySearchLoading: Bool,
     isHistoryPageLoading: Bool,
@@ -225,6 +237,9 @@ public struct CurrentRootView: View {
     loadNextHistoryPage: @escaping () -> Void,
     searchRepositoryHistory: @escaping (String) -> Void,
     clearRepositoryHistorySearch: @escaping () -> Void,
+    toggleHiddenGraphReference: @escaping (String) -> Void,
+    setSoloGraphReference: @escaping (String?) -> Void,
+    togglePinnedGraphReference: @escaping (String) -> Void,
     compareSelectedCommits: @escaping ([String]) -> Void,
     stage: @escaping (GitPath) -> Void,
     unstage: @escaping (GitPath) -> Void,
@@ -295,6 +310,10 @@ public struct CurrentRootView: View {
     self.status = status
     self.commits = commits
     self.graphRows = graphRows
+    self.graphDisplayConfiguration = graphDisplayConfiguration
+    self.hiddenGraphReferences = hiddenGraphReferences
+    self.soloGraphReference = soloGraphReference
+    self.pinnedGraphReferences = pinnedGraphReferences
     self.repositorySearchRows = repositorySearchRows
     self.isRepositorySearchLoading = isRepositorySearchLoading
     self.isHistoryPageLoading = isHistoryPageLoading
@@ -332,6 +351,9 @@ public struct CurrentRootView: View {
     self.loadNextHistoryPage = loadNextHistoryPage
     self.searchRepositoryHistory = searchRepositoryHistory
     self.clearRepositoryHistorySearch = clearRepositoryHistorySearch
+    self.toggleHiddenGraphReference = toggleHiddenGraphReference
+    self.setSoloGraphReference = setSoloGraphReference
+    self.togglePinnedGraphReference = togglePinnedGraphReference
     self.compareSelectedCommits = compareSelectedCommits
     self.stage = stage
     self.unstage = unstage
@@ -1889,6 +1911,74 @@ public struct CurrentRootView: View {
               .font(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
           }
+          Menu {
+            Menu("Pinned References") {
+              if pinnedGraphReferenceOptions.isEmpty {
+                Text("No pinned references")
+              } else {
+                ForEach(pinnedGraphReferenceOptions) { reference in
+                  Button(reference.shortName) {
+                    jumpToGraphReference(reference)
+                  }
+                }
+              }
+            }
+            Menu("Solo") {
+              Button {
+                setSoloGraphReference(nil)
+              } label: {
+                if soloGraphReference == nil {
+                  Label("Show All References", systemImage: "checkmark")
+                } else {
+                  Text("Show All References")
+                }
+              }
+              Divider()
+              ForEach(graphReferenceOptions) { reference in
+                Button {
+                  setSoloGraphReference(reference.shortName)
+                } label: {
+                  if soloGraphReference == reference.shortName {
+                    Label(reference.shortName, systemImage: "checkmark")
+                  } else {
+                    Text(reference.shortName)
+                  }
+                }
+              }
+            }
+            Menu("Hidden References") {
+              ForEach(graphReferenceOptions) { reference in
+                Toggle(
+                  reference.shortName,
+                  isOn: Binding(
+                    get: {
+                      hiddenGraphReferences.contains(reference.shortName)
+                    },
+                    set: { _ in
+                      toggleHiddenGraphReference(reference.shortName)
+                    }
+                  )
+                )
+              }
+            }
+            Menu("Pin References") {
+              ForEach(graphReferenceOptions) { reference in
+                Toggle(
+                  reference.shortName,
+                  isOn: Binding(
+                    get: {
+                      pinnedGraphReferences.contains(reference.shortName)
+                    },
+                    set: { _ in
+                      togglePinnedGraphReference(reference.shortName)
+                    }
+                  )
+                )
+              }
+            }
+          } label: {
+            Label("Graph Options", systemImage: "slider.horizontal.3")
+          }
           Button("Cherry-pick") {
             if let selectedCommitOID { cherryPick(selectedCommitOID) }
           }
@@ -1924,6 +2014,8 @@ public struct CurrentRootView: View {
             CommitGraphView(
               rows: activeGraphRows,
               searchQuery: graphSearchScope == .loaded ? graphSearchText : "",
+              displayConfiguration: graphDisplayConfiguration,
+              scrollToCommitOID: graphJumpOID,
               onSelection: { rows in
                 let commitOIDs = rows.compactMap(\.commitOID)
                 selectedGraphRows = rows
@@ -1992,6 +2084,37 @@ public struct CurrentRootView: View {
         hasSubmittedRepositorySearch = false
         clearRepositoryHistorySearch()
       }
+    }
+  }
+
+  private var graphReferenceOptions: [GitReference] {
+    var seen = Set<String>()
+    return
+      references
+      .filter {
+        switch $0.kind {
+        case .localBranch, .remoteBranch, .tag:
+          seen.insert($0.shortName).inserted
+        case .note, .other:
+          false
+        }
+      }
+      .sorted {
+        $0.shortName.localizedStandardCompare($1.shortName) == .orderedAscending
+      }
+  }
+
+  private var pinnedGraphReferenceOptions: [GitReference] {
+    graphReferenceOptions.filter {
+      pinnedGraphReferences.contains($0.shortName)
+    }
+  }
+
+  private func jumpToGraphReference(_ reference: GitReference) {
+    graphJumpOID = reference.targetOID
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(150))
+      graphJumpOID = nil
     }
   }
 
