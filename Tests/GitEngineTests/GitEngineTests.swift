@@ -126,6 +126,49 @@ struct GitEngineTests {
     #expect(command.redactedDescription == "fetch token=<redacted> Authorization=<redacted>")
   }
 
+  @Test("Stage passes pathspec bytes without shell or UTF-8 conversion")
+  func stageRawPath() async throws {
+    let runner = StubRunner(results: [.success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+    let path = GitPath(rawBytes: [0x66, 0x0A, 0x80])
+
+    try await engine.mutateWorkingCopy(
+      at: location,
+      mutation: .stage([path])
+    )
+
+    let command = try #require(await runner.commands().first)
+    #expect(command.arguments == [Array("add".utf8), Array("--".utf8), path.rawBytes])
+  }
+
+  @Test("Unstage uses index removal when an unborn repository has no HEAD")
+  func unstageUnborn() async throws {
+    let runner = StubRunner(
+      results: [
+        .failure(code: 1),
+        .success(""),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateWorkingCopy(
+      at: location,
+      mutation: .unstage([GitPath("new.txt")])
+    )
+
+    let commands = await runner.commands()
+    #expect(commands.count == 2)
+    #expect(commands[1].redactedDescription == "rm --cached -r --ignore-unmatch -- new.txt")
+  }
+
   @Test(
     "Live runner reads a real repository",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
@@ -149,6 +192,83 @@ struct GitEngineTests {
     #expect(history.count == 2)
     #expect(history.allSatisfy { $0.oid.count == 40 })
     #expect(references.contains { $0.fullName == "refs/heads/main" })
+  }
+
+  @Test(
+    "Live working-copy mutations round-trip through Git",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveWorkingCopyMutations() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-mutation-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+
+    let file = root.appendingPathComponent("name with space.txt")
+    try Data("base\n".utf8).write(to: file)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    let path = GitPath("name with space.txt")
+
+    try await engine.mutateWorkingCopy(at: location, mutation: .stage([path]))
+    var status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.changes.first?.isStaged == true)
+
+    try await engine.mutateWorkingCopy(at: location, mutation: .unstage([path]))
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(2)
+    )
+    #expect(status.changes.first?.kind == .untracked)
+
+    try await engine.mutateWorkingCopy(at: location, mutation: .stage([path]))
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try Data("changed\n".utf8).write(to: file)
+    try await engine.mutateWorkingCopy(at: location, mutation: .discardTracked([path]))
+    #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
+
+    let ignoredPath = GitPath("[draft] note.txt")
+    try Data("local\n".utf8).write(
+      to: root.appendingPathComponent(ignoredPath.displayString)
+    )
+    try await engine.mutateWorkingCopy(at: location, mutation: .ignore([ignoredPath]))
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(3)
+    )
+    #expect(!status.changes.contains { $0.path == ignoredPath })
+    let ignoreContents = try String(
+      contentsOf: root.appendingPathComponent(".gitignore"),
+      encoding: .utf8
+    )
+    #expect(ignoreContents.contains("/\\[draft\\]\\ note.txt"))
+  }
+}
+
+private func runGit(_ arguments: [String]) throws {
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+  process.arguments = arguments
+  process.standardOutput = FileHandle.nullDevice
+  process.standardError = FileHandle.nullDevice
+  try process.run()
+  process.waitUntilExit()
+  guard process.terminationStatus == 0 else {
+    throw GitEngineError.commandFailed(
+      arguments: arguments.joined(separator: " "),
+      message: "fixture Git command exited \(process.terminationStatus)"
+    )
   }
 }
 
@@ -176,6 +296,15 @@ extension GitProcessResult {
       termination: .exited(0),
       standardOutput: Array(output.utf8),
       standardError: [],
+      duration: .milliseconds(1)
+    )
+  }
+
+  fileprivate static func failure(code: Int32, error: String = "") -> Self {
+    GitProcessResult(
+      termination: .exited(code),
+      standardOutput: [],
+      standardError: Array(error.utf8),
       duration: .milliseconds(1)
     )
   }

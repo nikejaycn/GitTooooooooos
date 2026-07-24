@@ -16,7 +16,11 @@ struct CurrentMacApp: App {
         isLoading: model.isLoading,
         errorMessage: model.errorMessage,
         openRepository: model.chooseRepository,
-        refresh: model.refresh
+        refresh: model.refresh,
+        stage: model.stage,
+        unstage: model.unstage,
+        discard: model.discard,
+        ignore: model.ignore
       )
       .frame(minWidth: 880, minHeight: 560)
     }

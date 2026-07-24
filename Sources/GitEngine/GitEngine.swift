@@ -1,4 +1,5 @@
 import CurrentDomain
+import Darwin
 import Foundation
 import GitParsers
 
@@ -86,6 +87,10 @@ public protocol GitEngineProtocol: Sendable {
     limit: Int
   ) async throws -> [CommitSummary]
   func references(at location: RepositoryLocation) async throws -> [GitReference]
+  func mutateWorkingCopy(
+    at location: RepositoryLocation,
+    mutation: WorkingCopyMutation
+  ) async throws
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -274,6 +279,105 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
     } catch {
       throw GitEngineError.invalidOutput(String(describing: error))
+    }
+  }
+
+  public func mutateWorkingCopy(
+    at location: RepositoryLocation,
+    mutation: WorkingCopyMutation
+  ) async throws {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository has no working copy.")
+    }
+    guard !mutation.paths.isEmpty else { return }
+    guard mutation.paths.allSatisfy({ !$0.rawBytes.isEmpty && !$0.rawBytes.contains(0) }) else {
+      throw GitEngineError.invalidOutput("A pathspec was empty or contained a NUL byte.")
+    }
+
+    let prefix: [String]
+    switch mutation {
+    case .stage:
+      prefix = ["add", "--"]
+    case .discardTracked:
+      prefix = ["restore", "--worktree", "--"]
+    case .ignore(let paths):
+      try appendIgnoreRules(paths, at: location)
+      return
+    case .unstage:
+      let head = try await runner.run(
+        GitCommand(
+          arguments: ["rev-parse", "--verify", "--quiet", "HEAD"],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      prefix =
+        head.succeeded
+        ? ["restore", "--staged", "--"]
+        : ["rm", "--cached", "-r", "--ignore-unmatch", "--"]
+    }
+
+    let rawArguments =
+      prefix.map { Array($0.utf8) }
+      + mutation.paths.map(\.rawBytes)
+    _ = try await execute(
+      GitCommand(
+        rawArguments: rawArguments,
+        workingDirectory: location.worktreeURL
+      )
+    )
+  }
+
+  private func appendIgnoreRules(
+    _ paths: [GitPath],
+    at location: RepositoryLocation
+  ) throws {
+    let ignoreURL = location.worktreeURL.appendingPathComponent(".gitignore")
+    let descriptor = open(
+      ignoreURL.path,
+      O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW,
+      mode_t(0o644)
+    )
+    guard descriptor >= 0 else {
+      throw GitEngineError.commandFailed(
+        arguments: "ignore",
+        message: String(cString: strerror(errno))
+      )
+    }
+    defer { close(descriptor) }
+
+    var payload: [UInt8] = [0x0A]
+    for path in paths {
+      guard !path.rawBytes.contains(where: { $0 == 0 || $0 == 0x0A || $0 == 0x0D }) else {
+        throw GitEngineError.invalidOutput(
+          "Git ignore rules cannot safely represent a path containing NUL or a newline."
+        )
+      }
+      payload.append(0x2F)
+      for byte in path.rawBytes {
+        if [0x20, 0x21, 0x23, 0x2A, 0x3F, 0x5B, 0x5C, 0x5D].contains(byte) {
+          payload.append(0x5C)
+        }
+        payload.append(byte)
+      }
+      payload.append(0x0A)
+    }
+
+    var written = 0
+    while written < payload.count {
+      let count = payload.withUnsafeBytes { buffer in
+        Darwin.write(
+          descriptor,
+          buffer.baseAddress!.advanced(by: written),
+          payload.count - written
+        )
+      }
+      guard count > 0 else {
+        throw GitEngineError.commandFailed(
+          arguments: "ignore",
+          message: String(cString: strerror(errno))
+        )
+      }
+      written += count
     }
   }
 

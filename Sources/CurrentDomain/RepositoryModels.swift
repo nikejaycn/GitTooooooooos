@@ -147,3 +147,18 @@ public struct RepositorySnapshot: Hashable, Sendable {
     self.references = references
   }
 }
+
+public enum WorkingCopyMutation: Hashable, Sendable {
+  case stage([GitPath])
+  case unstage([GitPath])
+  case discardTracked([GitPath])
+  case ignore([GitPath])
+
+  public var paths: [GitPath] {
+    switch self {
+    case .stage(let paths), .unstage(let paths), .discardTracked(let paths),
+      .ignore(let paths):
+      paths
+    }
+  }
+}

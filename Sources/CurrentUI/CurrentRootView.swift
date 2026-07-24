@@ -19,7 +19,12 @@ public struct CurrentRootView: View {
   private let errorMessage: String?
   private let openRepository: () -> Void
   private let refresh: () -> Void
+  private let stage: (GitPath) -> Void
+  private let unstage: (GitPath) -> Void
+  private let discard: (GitPath) -> Void
+  private let ignore: (GitPath) -> Void
   @State private var workspace: Workspace = .changes
+  @State private var pendingDiscard: GitPath?
 
   public init(
     repositoryName: String?,
@@ -30,7 +35,11 @@ public struct CurrentRootView: View {
     isLoading: Bool,
     errorMessage: String?,
     openRepository: @escaping () -> Void,
-    refresh: @escaping () -> Void
+    refresh: @escaping () -> Void,
+    stage: @escaping (GitPath) -> Void,
+    unstage: @escaping (GitPath) -> Void,
+    discard: @escaping (GitPath) -> Void,
+    ignore: @escaping (GitPath) -> Void
   ) {
     self.repositoryName = repositoryName
     self.gitVersion = gitVersion
@@ -41,6 +50,10 @@ public struct CurrentRootView: View {
     self.errorMessage = errorMessage
     self.openRepository = openRepository
     self.refresh = refresh
+    self.stage = stage
+    self.unstage = unstage
+    self.discard = discard
+    self.ignore = ignore
   }
 
   public var body: some View {
@@ -79,6 +92,28 @@ public struct CurrentRootView: View {
             }
             .disabled(status == nil || isLoading)
           }
+        }
+        .confirmationDialog(
+          "Discard changes to \(pendingDiscard?.displayString ?? "this file")?",
+          isPresented: Binding(
+            get: { pendingDiscard != nil },
+            set: { if !$0 { pendingDiscard = nil } }
+          ),
+          titleVisibility: .visible
+        ) {
+          Button("Discard Changes", role: .destructive) {
+            if let pendingDiscard {
+              discard(pendingDiscard)
+            }
+            pendingDiscard = nil
+          }
+          Button("Cancel", role: .cancel) {
+            pendingDiscard = nil
+          }
+        } message: {
+          Text(
+            "This replaces the working-copy file with its indexed version and cannot be undone by Git."
+          )
         }
     }
   }
@@ -165,6 +200,36 @@ public struct CurrentRootView: View {
           Spacer()
           Text(change.kind.rawValue)
             .foregroundStyle(.secondary)
+          if change.isStaged {
+            Button("Unstage") {
+              unstage(change.path)
+            }
+            .buttonStyle(.borderless)
+          }
+          if change.isUnstaged || change.kind == .untracked {
+            Button("Stage") {
+              stage(change.path)
+            }
+            .buttonStyle(.borderless)
+          }
+          if change.isUnstaged && change.kind != .untracked {
+            Button(role: .destructive) {
+              pendingDiscard = change.path
+            } label: {
+              Image(systemName: "arrow.uturn.backward")
+            }
+            .buttonStyle(.borderless)
+            .help("Discard unstaged changes")
+          }
+          if change.kind == .untracked {
+            Button {
+              ignore(change.path)
+            } label: {
+              Image(systemName: "eye.slash")
+            }
+            .buttonStyle(.borderless)
+            .help("Add an anchored rule to .gitignore")
+          }
         }
         .font(.system(.body, design: .monospaced))
       }

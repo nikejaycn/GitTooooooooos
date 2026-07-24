@@ -9,6 +9,7 @@ public actor RepositoryActor {
   private var generation = RepositoryGeneration(0)
   private var cachedStatus: RepositoryStatus?
   private var cachedSnapshot: RepositorySnapshot?
+  private var mutationTail: Task<Void, Never>?
 
   public init(location: RepositoryLocation, engine: any GitEngineProtocol) {
     self.location = location
@@ -76,6 +77,45 @@ public actor RepositoryActor {
 
   public func snapshot() -> RepositorySnapshot? {
     cachedSnapshot
+  }
+
+  @discardableResult
+  public func applyWorkingCopyMutation(
+    _ mutation: WorkingCopyMutation
+  ) async throws -> RepositoryStatus {
+    let requestedGeneration = generation.next()
+    generation = requestedGeneration
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      try await engine.mutateWorkingCopy(at: location, mutation: mutation)
+      return try await engine.status(
+        at: location,
+        generation: requestedGeneration
+      )
+    }
+    mutationTail = Task {
+      _ = try? await operation.value
+    }
+
+    let status = try await operation.value
+    guard requestedGeneration == generation else {
+      return status
+    }
+    cachedStatus = status
+    if let cachedSnapshot {
+      self.cachedSnapshot = RepositorySnapshot(
+        generation: requestedGeneration,
+        status: status,
+        commits: cachedSnapshot.commits,
+        references: cachedSnapshot.references
+      )
+    }
+    return status
   }
 
   public func invalidate() {

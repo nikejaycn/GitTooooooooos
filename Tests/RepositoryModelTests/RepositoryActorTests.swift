@@ -52,6 +52,23 @@ struct RepositoryActorTests {
     #expect(snapshot.references.isEmpty)
     #expect(await repository.snapshot() == snapshot)
   }
+
+  @Test("Working-copy mutation is followed by an authoritative status refresh")
+  func mutationRefresh() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    let status = try await repository.applyWorkingCopyMutation(
+      .stage([GitPath("README.md")])
+    )
+
+    #expect(status.generation == RepositoryGeneration(1))
+    #expect(await repository.status() == status)
+    #expect(await engine.mutations() == [.stage([GitPath("README.md")])])
+  }
 }
 
 private actor StubGitEngine: GitEngineProtocol {
@@ -59,6 +76,7 @@ private actor StubGitEngine: GitEngineProtocol {
     worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
     commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
   )
+  private var receivedMutations: [WorkingCopyMutation] = []
 
   func version() async throws -> String {
     "git version test"
@@ -91,5 +109,16 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func references(at location: RepositoryLocation) async throws -> [GitReference] {
     []
+  }
+
+  func mutateWorkingCopy(
+    at location: RepositoryLocation,
+    mutation: WorkingCopyMutation
+  ) async throws {
+    receivedMutations.append(mutation)
+  }
+
+  func mutations() -> [WorkingCopyMutation] {
+    receivedMutations
   }
 }

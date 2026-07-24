@@ -62,6 +62,22 @@ final class AppModel {
     }
   }
 
+  func stage(_ path: GitPath) {
+    apply(.stage([path]))
+  }
+
+  func unstage(_ path: GitPath) {
+    apply(.unstage([path]))
+  }
+
+  func discard(_ path: GitPath) {
+    apply(.discardTracked([path]))
+  }
+
+  func ignore(_ path: GitPath) {
+    apply(.ignore([path]))
+  }
+
   private func loadGitVersion() async {
     guard let engine else { return }
     do {
@@ -108,5 +124,19 @@ final class AppModel {
       errorMessage = error.localizedDescription
     }
     isLoading = false
+  }
+
+  private func apply(_ mutation: WorkingCopyMutation) {
+    guard let repository else { return }
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        repositoryStatus = try await repository.applyWorkingCopyMutation(mutation)
+      } catch {
+        errorMessage = error.localizedDescription
+      }
+      isLoading = false
+    }
   }
 }

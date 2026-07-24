@@ -137,9 +137,16 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
         )
 
         do {
+          // swift-subprocess 0.5.0 forwards raw byte arguments through
+          // `strdup`, so every backing buffer must be NUL terminated.
+          // GitCommand intentionally stores payload bytes without that
+          // terminator so non-UTF-8 pathspecs round-trip exactly.
+          let terminatedArguments = command.arguments.map { argument in
+            argument.last == 0 ? argument : argument + [0]
+          }
           let result = try await Subprocess.run(
             .path(.init(self.executableURL.path)),
-            arguments: Arguments(command.arguments),
+            arguments: Arguments(terminatedArguments),
             environment: environment,
             workingDirectory: command.workingDirectory.map { .init($0.path) },
             platformOptions: platformOptions,
