@@ -100,6 +100,11 @@ public protocol GitEngineProtocol: Sendable {
   func version() async throws -> String
   func lfsVersion() async throws -> String
   func locateRepository(at url: URL) async throws -> RepositoryLocation
+  func initializeRepository(
+    at url: URL,
+    initialBranch: String
+  ) async throws -> RepositoryLocation
+  func cloneRepository(_ request: CloneRequest) async throws -> RepositoryLocation
   func status(
     at location: RepositoryLocation,
     generation: RepositoryGeneration
@@ -165,6 +170,17 @@ extension GitEngineProtocol {
     path: GitPath
   ) async throws -> ConflictFileContents {
     throw GitEngineError.invalidOutput("Conflict content reading is not implemented.")
+  }
+
+  public func initializeRepository(
+    at url: URL,
+    initialBranch: String
+  ) async throws -> RepositoryLocation {
+    throw GitEngineError.invalidOutput("Repository initialization is not implemented.")
+  }
+
+  public func cloneRepository(_ request: CloneRequest) async throws -> RepositoryLocation {
+    throw GitEngineError.invalidOutput("Repository cloning is not implemented.")
   }
 }
 
@@ -254,6 +270,91 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       commonGitDirectoryURL: commonDirectory,
       kind: kind
     )
+  }
+
+  public func initializeRepository(
+    at url: URL,
+    initialBranch: String = "main"
+  ) async throws -> RepositoryLocation {
+    guard !initialBranch.isEmpty, !initialBranch.utf8.contains(0) else {
+      throw GitEngineError.invalidOutput("The initial branch name is invalid.")
+    }
+    var isDirectory: ObjCBool = false
+    guard
+      FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      throw GitEngineError.invalidRepository(
+        "The selected initialization directory does not exist."
+      )
+    }
+
+    _ = try await execute(
+      GitCommand(
+        arguments: ["check-ref-format", "--branch", initialBranch]
+      )
+    )
+    _ = try await execute(
+      GitCommand(
+        arguments: [
+          "init",
+          "--initial-branch=\(initialBranch)",
+          "--",
+          url.path,
+        ],
+        workingDirectory: url.deletingLastPathComponent(),
+        timeout: .seconds(120)
+      )
+    )
+    return try await locateRepository(at: url)
+  }
+
+  public func cloneRepository(_ request: CloneRequest) async throws -> RepositoryLocation {
+    let remoteURL = request.remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !remoteURL.isEmpty, !remoteURL.utf8.contains(0) else {
+      throw GitEngineError.invalidOutput("The clone URL is empty or invalid.")
+    }
+    let destination = request.destinationURL.standardizedFileURL
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      throw GitEngineError.invalidRepository(
+        "The clone destination already exists."
+      )
+    }
+    var isDirectory: ObjCBool = false
+    let parent = destination.deletingLastPathComponent()
+    guard
+      FileManager.default.fileExists(atPath: parent.path, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      throw GitEngineError.invalidRepository(
+        "The clone destination parent directory does not exist."
+      )
+    }
+    if let depth = request.depth, depth < 1 {
+      throw GitEngineError.invalidOutput("Clone depth must be greater than zero.")
+    }
+
+    var arguments = ["clone", "--progress", "--origin", "origin"]
+    if let branch = request.branch, !branch.isEmpty {
+      arguments += ["--branch", branch]
+    }
+    if let depth = request.depth {
+      arguments += ["--depth", String(depth)]
+    }
+    if request.recurseSubmodules {
+      arguments.append("--recurse-submodules")
+    }
+    arguments += ["--", remoteURL, destination.path]
+
+    _ = try await execute(
+      GitCommand(
+        arguments: arguments,
+        workingDirectory: parent,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: .seconds(3_600)
+      )
+    )
+    return try await locateRepository(at: destination)
   }
 
   public func status(
@@ -771,7 +872,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     }
     throw GitEngineError.commandFailed(
       arguments: command.redactedDescription,
-      message: result.errorDescription
+      message: command.redactingSecrets(in: result.errorDescription)
     )
   }
 
@@ -837,7 +938,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
       throw GitEngineError.commandFailed(
         arguments: command.redactedDescription,
-        message: result.errorDescription
+        message: command.redactingSecrets(in: result.errorDescription)
       )
 
     case .revert(let commit):
@@ -854,7 +955,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
       throw GitEngineError.commandFailed(
         arguments: command.redactedDescription,
-        message: result.errorDescription
+        message: command.redactingSecrets(in: result.errorDescription)
       )
 
     case .reset(let target, let mode):
@@ -896,7 +997,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
       throw GitEngineError.commandFailed(
         arguments: command.redactedDescription,
-        message: result.errorDescription
+        message: command.redactingSecrets(in: result.errorDescription)
       )
 
     case .undo(let reference):
@@ -1178,7 +1279,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     guard result.succeeded else {
       throw GitEngineError.commandFailed(
         arguments: command.redactedDescription,
-        message: result.errorDescription
+        message: command.redactingSecrets(in: result.errorDescription)
       )
     }
     return result

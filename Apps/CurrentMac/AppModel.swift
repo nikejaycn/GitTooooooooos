@@ -9,6 +9,8 @@ import RepositoryModel
 @MainActor
 @Observable
 final class AppModel {
+  private static let recentRepositoriesKey = "Current.recentRepositories.v1"
+
   private(set) var repositoryName: String?
   private(set) var gitVersion: String?
   private(set) var gitLFSVersion: String?
@@ -20,17 +22,21 @@ final class AppModel {
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
   private(set) var activities: [OperationActivity] = []
+  private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
   private(set) var selectedDiff: DiffDocument?
   private(set) var isDiffLoading = false
   private(set) var isLoading = false
+  private(set) var isRepositoryOperation = false
   private(set) var errorMessage: String?
 
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
   private var diffRequestID: UUID?
+  private var repositoryOperationTask: Task<Void, Never>?
 
   init() {
+    recentRepositories = Self.loadRecentRepositories()
     do {
       let executable = try GitExecutableResolver().resolve()
       let liveEngine = LiveGitEngine(
@@ -73,6 +79,63 @@ final class AppModel {
     Task {
       await openRepository(at: url)
     }
+  }
+
+  func chooseInitializationDirectory() {
+    let panel = NSOpenPanel()
+    panel.title = "Initialize Git Repository"
+    panel.message = "Choose an existing folder. Git metadata will be created inside it."
+    panel.prompt = "Initialize"
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    initializeRepository(at: url)
+  }
+
+  func chooseCloneDestination(remoteURL: String) {
+    let trimmed = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      errorMessage = "Enter a repository URL before choosing a destination."
+      return
+    }
+
+    let panel = NSSavePanel()
+    panel.title = "Clone Git Repository"
+    panel.message = "Choose the new local repository folder."
+    panel.prompt = "Clone"
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = suggestedCloneName(from: trimmed)
+
+    guard panel.runModal() == .OK, let destination = panel.url else { return }
+    cloneRepository(remoteURL: trimmed, destinationURL: destination)
+  }
+
+  func openRecentRepository(_ recent: RecentRepository) {
+    Task {
+      await openRepository(at: URL(fileURLWithPath: recent.path, isDirectory: true))
+    }
+  }
+
+  func toggleFavoriteRepository(_ recent: RecentRepository) {
+    guard let index = recentRepositories.firstIndex(where: { $0.id == recent.id }) else {
+      return
+    }
+    recentRepositories[index] = recent.updating(
+      isFavorite: !recent.isFavorite
+    )
+    persistRecentRepositories()
+  }
+
+  func removeRecentRepository(_ recent: RecentRepository) {
+    recentRepositories.removeAll { $0.id == recent.id }
+    persistRecentRepositories()
+  }
+
+  func cancelRepositoryOperation() {
+    repositoryOperationTask?.cancel()
   }
 
   func refresh() {
@@ -269,23 +332,141 @@ final class AppModel {
     errorMessage = nil
 
     do {
-      let opened = try await RepositoryActor.open(at: url, engine: engine)
-      repository = opened
-      repositoryName = opened.location.worktreeURL.lastPathComponent
-      let snapshot = try await opened.refreshSnapshot()
-      apply(snapshot)
+      try await loadRepository(at: url, engine: engine)
     } catch {
-      repository = nil
-      repositoryName = nil
-      repositoryStatus = nil
-      commits = []
-      references = []
-      stashes = []
-      remotes = []
-      selectedDiff = nil
+      clearRepository()
       errorMessage = error.localizedDescription
     }
     isLoading = false
+  }
+
+  private func initializeRepository(at url: URL) {
+    guard let engine, repositoryOperationTask == nil else { return }
+    let activityID = beginActivity("Initialize \(url.lastPathComponent)")
+    isRepositoryOperation = true
+    isLoading = true
+    errorMessage = nil
+    repositoryOperationTask = Task {
+      defer {
+        isRepositoryOperation = false
+        isLoading = false
+        repositoryOperationTask = nil
+      }
+      do {
+        let location = try await engine.initializeRepository(
+          at: url,
+          initialBranch: "main"
+        )
+        try Task.checkCancellation()
+        try await loadRepository(at: location.worktreeURL, engine: engine)
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+    }
+  }
+
+  private func cloneRepository(remoteURL: String, destinationURL: URL) {
+    guard let engine, repositoryOperationTask == nil else { return }
+    let activityID = beginActivity("Clone \(destinationURL.lastPathComponent)")
+    isRepositoryOperation = true
+    isLoading = true
+    errorMessage = nil
+    repositoryOperationTask = Task {
+      defer {
+        isRepositoryOperation = false
+        isLoading = false
+        repositoryOperationTask = nil
+      }
+      do {
+        let location = try await engine.cloneRepository(
+          CloneRequest(
+            remoteURL: remoteURL,
+            destinationURL: destinationURL
+          )
+        )
+        try Task.checkCancellation()
+        try await loadRepository(at: location.worktreeURL, engine: engine)
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+    }
+  }
+
+  private func loadRepository(
+    at url: URL,
+    engine: any GitEngineProtocol
+  ) async throws {
+    let opened = try await RepositoryActor.open(at: url, engine: engine)
+    let snapshot = try await opened.refreshSnapshot()
+    try Task.checkCancellation()
+    repository = opened
+    repositoryName = opened.location.worktreeURL.lastPathComponent
+    apply(snapshot)
+    selectedDiff = nil
+    recordRecentRepository(opened.location.worktreeURL)
+  }
+
+  private func clearRepository() {
+    repository = nil
+    repositoryName = nil
+    repositoryStatus = nil
+    commits = []
+    references = []
+    stashes = []
+    remotes = []
+    selectedDiff = nil
+  }
+
+  private func suggestedCloneName(from remoteURL: String) -> String {
+    let withoutQuery = remoteURL.split(separator: "?", maxSplits: 1).first.map(String.init)
+      ?? remoteURL
+    let tail = withoutQuery
+      .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      .split(separator: "/")
+      .last
+      .map(String.init)
+      ?? "Repository"
+    if tail.hasSuffix(".git") {
+      return String(tail.dropLast(4))
+    }
+    return tail.isEmpty ? "Repository" : tail
+  }
+
+  private func recordRecentRepository(_ url: URL) {
+    let path = url.standardizedFileURL.path
+    let existing = recentRepositories.first { $0.path == path }
+    recentRepositories.removeAll { $0.path == path }
+    recentRepositories.insert(
+      RecentRepository(
+        path: path,
+        displayName: url.lastPathComponent,
+        isFavorite: existing?.isFavorite ?? false
+      ),
+      at: 0
+    )
+    if recentRepositories.count > 100 {
+      recentRepositories.removeLast(recentRepositories.count - 100)
+    }
+    persistRecentRepositories()
+  }
+
+  private func persistRecentRepositories() {
+    guard let data = try? JSONEncoder().encode(recentRepositories) else { return }
+    UserDefaults.standard.set(data, forKey: Self.recentRepositoriesKey)
+  }
+
+  private static func loadRecentRepositories() -> [RecentRepository] {
+    guard
+      let data = UserDefaults.standard.data(forKey: recentRepositoriesKey),
+      let repositories = try? JSONDecoder().decode([RecentRepository].self, from: data)
+    else {
+      return []
+    }
+    return Array(repositories.prefix(100))
   }
 
   private func refreshRepository() async {

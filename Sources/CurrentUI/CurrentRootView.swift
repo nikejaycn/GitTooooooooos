@@ -19,12 +19,20 @@ public struct CurrentRootView: View {
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
   private let activities: [OperationActivity]
+  private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
   private let selectedDiff: DiffDocument?
   private let isDiffLoading: Bool
   private let isLoading: Bool
+  private let isRepositoryOperation: Bool
   private let errorMessage: String?
   private let openRepository: () -> Void
+  private let initializeRepository: () -> Void
+  private let cloneRepository: (String) -> Void
+  private let openRecentRepository: (RecentRepository) -> Void
+  private let toggleFavoriteRepository: (RecentRepository) -> Void
+  private let removeRecentRepository: (RecentRepository) -> Void
+  private let cancelRepositoryOperation: () -> Void
   private let refresh: () -> Void
   private let stage: (GitPath) -> Void
   private let unstage: (GitPath) -> Void
@@ -61,6 +69,8 @@ public struct CurrentRootView: View {
   @State private var selectedCommitOID: String?
   @State private var pendingHardResetOID: String?
   @State private var conflictEditorPath: GitPath?
+  @State private var isCloningRepository = false
+  @State private var cloneURL = ""
 
   public init(
     repositoryName: String?,
@@ -71,12 +81,20 @@ public struct CurrentRootView: View {
     stashes: [StashEntry],
     remotes: [GitRemote],
     activities: [OperationActivity],
+    recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
     selectedDiff: DiffDocument?,
     isDiffLoading: Bool,
     isLoading: Bool,
+    isRepositoryOperation: Bool,
     errorMessage: String?,
     openRepository: @escaping () -> Void,
+    initializeRepository: @escaping () -> Void,
+    cloneRepository: @escaping (String) -> Void,
+    openRecentRepository: @escaping (RecentRepository) -> Void,
+    toggleFavoriteRepository: @escaping (RecentRepository) -> Void,
+    removeRecentRepository: @escaping (RecentRepository) -> Void,
+    cancelRepositoryOperation: @escaping () -> Void,
     refresh: @escaping () -> Void,
     stage: @escaping (GitPath) -> Void,
     unstage: @escaping (GitPath) -> Void,
@@ -114,12 +132,20 @@ public struct CurrentRootView: View {
     self.stashes = stashes
     self.remotes = remotes
     self.activities = activities
+    self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
     self.selectedDiff = selectedDiff
     self.isDiffLoading = isDiffLoading
     self.isLoading = isLoading
+    self.isRepositoryOperation = isRepositoryOperation
     self.errorMessage = errorMessage
     self.openRepository = openRepository
+    self.initializeRepository = initializeRepository
+    self.cloneRepository = cloneRepository
+    self.openRecentRepository = openRecentRepository
+    self.toggleFavoriteRepository = toggleFavoriteRepository
+    self.removeRecentRepository = removeRecentRepository
+    self.cancelRepositoryOperation = cancelRepositoryOperation
     self.refresh = refresh
     self.stage = stage
     self.unstage = unstage
@@ -248,6 +274,16 @@ public struct CurrentRootView: View {
         } message: {
           Text("The new branch starts at the current HEAD.")
         }
+        .alert("Clone Repository", isPresented: $isCloningRepository) {
+          TextField("HTTPS, SSH, or local repository URL", text: $cloneURL)
+          Button("Choose Destination…") {
+            cloneRepository(cloneURL)
+          }
+          .disabled(cloneURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          Button("Cancel", role: .cancel) {}
+        } message: {
+          Text("Credentials are provided by Keychain, ssh-agent, or configured Git helpers.")
+        }
         .confirmationDialog(
           "Discard changes to \(pendingDiscard?.displayString ?? "this file")?",
           isPresented: Binding(
@@ -313,16 +349,28 @@ public struct CurrentRootView: View {
   @ViewBuilder
   private var content: some View {
     if isLoading {
-      ProgressView("Reading repository…")
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    } else if let errorMessage {
-      ContentUnavailableView(
-        "Unable to Read Repository",
-        systemImage: "exclamationmark.triangle",
-        description: Text(errorMessage)
-      )
+      VStack(spacing: 14) {
+        ProgressView(isRepositoryOperation ? "Running repository operation…" : "Reading repository…")
+        if isRepositoryOperation {
+          Button("Cancel Operation", role: .cancel, action: cancelRepositoryOperation)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if let status {
       VStack(spacing: 0) {
+        if let errorMessage {
+          HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(.orange)
+            Text(errorMessage)
+              .font(.callout)
+              .lineLimit(2)
+            Spacer()
+          }
+          .padding(10)
+          .background(Color.orange.opacity(0.08))
+          Divider()
+        }
         HStack {
           VStack(alignment: .leading, spacing: 4) {
             Text(headTitle(status.head))
@@ -370,11 +418,96 @@ public struct CurrentRootView: View {
         .padding(8)
       }
     } else {
-      ContentUnavailableView(
-        "Open a Git Repository",
-        systemImage: "point.3.connected.trianglepath.dotted",
-        description: Text("Choose a local repository to inspect its working copy.")
-      )
+      welcomeView
+    }
+  }
+
+  private var welcomeView: some View {
+    VStack(spacing: 20) {
+      VStack(spacing: 8) {
+        Image(systemName: "point.3.connected.trianglepath.dotted")
+          .font(.system(size: 46))
+          .foregroundStyle(.tint)
+        Text("Current")
+          .font(.largeTitle.weight(.semibold))
+        Text("A fast, native Git workspace for macOS")
+          .foregroundStyle(.secondary)
+      }
+
+      HStack(spacing: 12) {
+        Button("Open Repository…", action: openRepository)
+          .keyboardShortcut("o")
+        Button("Clone Repository…") {
+          cloneURL = ""
+          isCloningRepository = true
+        }
+        Button("Initialize Repository…", action: initializeRepository)
+      }
+      .controlSize(.large)
+
+      if let errorMessage {
+        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+          .font(.callout)
+          .foregroundStyle(.red)
+          .padding(10)
+          .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+          .frame(maxWidth: 620)
+      }
+
+      if !recentRepositories.isEmpty {
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Recent Repositories")
+            .font(.headline)
+          List {
+            ForEach(sortedRecentRepositories) { recent in
+              HStack(spacing: 10) {
+                Button {
+                  openRecentRepository(recent)
+                } label: {
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text(recent.displayName)
+                      .fontWeight(.medium)
+                    Text(recent.path)
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(1)
+                  }
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                Button {
+                  toggleFavoriteRepository(recent)
+                } label: {
+                  Image(systemName: recent.isFavorite ? "star.fill" : "star")
+                }
+                .buttonStyle(.borderless)
+                .help(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites")
+              }
+              .contextMenu {
+                Button(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+                  toggleFavoriteRepository(recent)
+                }
+                Button("Remove from Recents", role: .destructive) {
+                  removeRecentRepository(recent)
+                }
+              }
+            }
+          }
+          .frame(height: min(CGFloat(recentRepositories.count) * 48 + 8, 300))
+        }
+        .frame(maxWidth: 680)
+      }
+    }
+    .padding(32)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var sortedRecentRepositories: [RecentRepository] {
+    recentRepositories.sorted {
+      if $0.isFavorite != $1.isFavorite {
+        return $0.isFavorite && !$1.isFavorite
+      }
+      return $0.lastOpenedAt > $1.lastOpenedAt
     }
   }
 

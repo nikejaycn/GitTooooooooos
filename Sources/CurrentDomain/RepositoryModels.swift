@@ -184,6 +184,61 @@ public struct RepositorySnapshot: Hashable, Sendable {
   }
 }
 
+public struct CloneRequest: Hashable, Sendable {
+  public let remoteURL: String
+  public let destinationURL: URL
+  public let branch: String?
+  public let depth: Int?
+  public let recurseSubmodules: Bool
+
+  public init(
+    remoteURL: String,
+    destinationURL: URL,
+    branch: String? = nil,
+    depth: Int? = nil,
+    recurseSubmodules: Bool = false
+  ) {
+    self.remoteURL = remoteURL
+    self.destinationURL = destinationURL
+    self.branch = branch
+    self.depth = depth
+    self.recurseSubmodules = recurseSubmodules
+  }
+}
+
+public struct RecentRepository: Hashable, Sendable, Codable, Identifiable {
+  public let path: String
+  public let displayName: String
+  public let lastOpenedAt: Date
+  public let isFavorite: Bool
+
+  public init(
+    path: String,
+    displayName: String,
+    lastOpenedAt: Date = Date(),
+    isFavorite: Bool = false
+  ) {
+    self.path = path
+    self.displayName = displayName
+    self.lastOpenedAt = lastOpenedAt
+    self.isFavorite = isFavorite
+  }
+
+  public var id: String { path }
+
+  public func updating(
+    lastOpenedAt: Date? = nil,
+    isFavorite: Bool? = nil
+  ) -> Self {
+    Self(
+      path: path,
+      displayName: displayName,
+      lastOpenedAt: lastOpenedAt ?? self.lastOpenedAt,
+      isFavorite: isFavorite ?? self.isFavorite
+    )
+  }
+}
+
 public enum WorkingCopyMutation: Hashable, Sendable {
   case stage([GitPath])
   case unstage([GitPath])

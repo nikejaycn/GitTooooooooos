@@ -54,6 +54,21 @@ PATH="$bundle_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
   "$git" -C "$smoke_root/repository" lfs version >/dev/null
 PATH="$bundle_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
   "$git" -C "$smoke_root/repository" status --porcelain=v2 >/dev/null
+printf 'Current bundled Git smoke test\n' >"$smoke_root/repository/README.md"
+PATH="$bundle_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$git" -C "$smoke_root/repository" add README.md
+PATH="$bundle_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$git" -C "$smoke_root/repository" \
+  -c user.name='Current Smoke Test' \
+  -c user.email='current@example.invalid' \
+  commit -m initial >/dev/null
+PATH="$bundle_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$git" -C "$smoke_root/repository" log -1 --format=%s |
+  grep '^initial$' >/dev/null
+PATH="$bundle_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$git" clone "$smoke_root/repository" "$smoke_root/clone" >/dev/null 2>&1
+PATH="$bundle_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$git" -C "$smoke_root/clone" status --porcelain=v2 >/dev/null
 
 echo "$git_version"
 echo "$lfs_version"

@@ -156,14 +156,89 @@ struct GitEngineTests {
     #expect(location.commonGitDirectoryURL.path == "/tmp/main/.git")
   }
 
+  @Test("Initializes a repository with an explicit initial branch")
+  func initializeRepository() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-init-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let gitDirectory = root.appendingPathComponent(".git").path
+    let runner = StubRunner(
+      results: [
+        .success("main\n"),
+        .success(""),
+        .success("\(gitDirectory)\n\(gitDirectory)\nfalse\ntrue\n"),
+        .success("\(root.path)\n"),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+
+    let location = try await engine.initializeRepository(
+      at: root,
+      initialBranch: "main"
+    )
+
+    #expect(location.worktreeURL == root.standardizedFileURL)
+    let commands = await runner.commands()
+    #expect(commands[0].redactedDescription == "check-ref-format --branch main")
+    #expect(commands[1].redactedDescription.contains("init --initial-branch=main --"))
+  }
+
+  @Test("Clones into a new destination using option-safe arguments")
+  func cloneRepository() async throws {
+    let parent = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-clone-parent-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: parent) }
+    let destination = parent.appendingPathComponent("checkout", isDirectory: true)
+    let gitDirectory = destination.appendingPathComponent(".git").path
+    let runner = StubRunner(
+      results: [
+        .success(""),
+        .success("\(gitDirectory)\n\(gitDirectory)\nfalse\ntrue\n"),
+        .success("\(destination.path)\n"),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+
+    let location = try await engine.cloneRepository(
+      CloneRequest(
+        remoteURL: "https://example.invalid/team/repository.git",
+        destinationURL: destination,
+        branch: "main",
+        depth: 10,
+        recurseSubmodules: true
+      )
+    )
+
+    #expect(location.worktreeURL == destination.standardizedFileURL)
+    let command = try #require(await runner.commands().first)
+    #expect(
+      command.redactedDescription.contains(
+        "clone --progress --origin origin --branch main --depth 10 --recurse-submodules --"
+      )
+    )
+  }
+
   @Test("Does not leak token-like arguments in diagnostics")
   func redaction() {
+    let secretURL = "https://alice:password@example.com/repository.git"
     let command = GitCommand(arguments: [
       "fetch",
       "token=super-secret",
       "Authorization=Bearer-secret",
+      secretURL,
     ])
-    #expect(command.redactedDescription == "fetch token=<redacted> Authorization=<redacted>")
+    #expect(
+      command.redactedDescription
+        == "fetch token=<redacted> Authorization=<redacted> https://example.com/repository.git"
+    )
+    let sanitizedError = command.redactingSecrets(
+      in: "fatal: unable to access '\(secretURL)': authentication failed"
+    )
+    #expect(!sanitizedError.contains("alice"))
+    #expect(!sanitizedError.contains("password"))
+    #expect(sanitizedError.contains("https://example.com/repository.git"))
   }
 
   @Test("Stage passes pathspec bytes without shell or UTF-8 conversion")
@@ -436,6 +511,87 @@ struct GitEngineTests {
       encoding: .utf8
     )
     #expect(ignoreContents.contains("/\\[draft\\]\\ note.txt"))
+  }
+
+  @Test(
+    "Live init and clone produce repositories that can be loaded",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveInitializeAndClone() async throws {
+    let parent = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-entry-\(UUID().uuidString)", isDirectory: true)
+    let source = parent.appendingPathComponent("source", isDirectory: true)
+    let clone = parent.appendingPathComponent("clone", isDirectory: true)
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: parent) }
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let sourceLocation = try await engine.initializeRepository(
+      at: source,
+      initialBranch: "main"
+    )
+    #expect(sourceLocation.worktreeURL == source.standardizedFileURL)
+    let emptyStatus = try await engine.status(
+      at: sourceLocation,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(emptyStatus.head == .unborn(branch: "main"))
+    #expect(try await engine.history(at: sourceLocation, limit: 10).isEmpty)
+
+    try runGit(["-C", source.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", source.path, "config", "user.email", "current@example.invalid"])
+    try Data("hello\n".utf8).write(to: source.appendingPathComponent("README.md"))
+    try runGit(["-C", source.path, "add", "README.md"])
+    try runGit(["-C", source.path, "commit", "-m", "initial"])
+
+    let cloneLocation = try await engine.cloneRepository(
+      CloneRequest(remoteURL: source.path, destinationURL: clone)
+    )
+    let history = try await engine.history(at: cloneLocation, limit: 10)
+    let remotes = try await engine.remotes(at: cloneLocation)
+
+    #expect(cloneLocation.worktreeURL == clone.standardizedFileURL)
+    #expect(history.map(\.subject) == ["initial"])
+    #expect(remotes.first?.name == "origin")
+    #expect(remotes.first?.fetchURL == source.path)
+  }
+
+  @Test(
+    "Cancelling a live Git command tears down its process group promptly",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveCancellation() async throws {
+    let runner = SwiftSubprocessRunner(
+      executableURL: URL(fileURLWithPath: "/usr/bin/git")
+    )
+    let clock = ContinuousClock()
+    let started = clock.now
+    let operation = Task {
+      try await runner.run(
+        GitCommand(
+          arguments: [
+            "-c",
+            "alias.current-wait=!sleep 10",
+            "current-wait",
+          ],
+          timeout: .seconds(20)
+        )
+      )
+    }
+
+    try await Task.sleep(for: .milliseconds(150))
+    operation.cancel()
+
+    do {
+      _ = try await operation.value
+      Issue.record("The cancelled Git command unexpectedly completed successfully.")
+    } catch is CancellationError {
+      #expect(started.duration(to: clock.now) < .seconds(4))
+    } catch {
+      Issue.record("Expected CancellationError, got \(error)")
+    }
   }
 
   @Test(

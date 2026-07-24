@@ -50,7 +50,25 @@ public struct GitCommand: Hashable, Sendable {
       .joined(separator: " ")
   }
 
+  public func redactingSecrets(in text: String) -> String {
+    arguments.reduce(text) { sanitized, bytes in
+      let argument = String(decoding: bytes, as: UTF8.self)
+      let redacted = Self.redact(argument)
+      guard argument != redacted, !argument.isEmpty else { return sanitized }
+      return sanitized.replacingOccurrences(of: argument, with: redacted)
+    }
+  }
+
   private static func redact(_ argument: String) -> String {
+    if
+      var components = URLComponents(string: argument),
+      components.scheme != nil,
+      components.user != nil || components.password != nil
+    {
+      components.user = nil
+      components.password = nil
+      return components.string ?? "<redacted-url>"
+    }
     guard let separator = argument.firstIndex(of: "=") else { return argument }
     let key = argument[..<separator].lowercased()
     if key.contains("token") || key.contains("password") || key.contains("authorization") {
@@ -198,7 +216,12 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
             standardError: result.standardError,
             duration: started.duration(to: clock.now)
           )
+        } catch is CancellationError {
+          throw CancellationError()
         } catch {
+          if Task.isCancelled {
+            throw CancellationError()
+          }
           throw GitProcessError.launchFailed(String(describing: error))
         }
       }
