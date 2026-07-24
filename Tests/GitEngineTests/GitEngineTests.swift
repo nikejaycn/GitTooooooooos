@@ -99,6 +99,31 @@ struct GitEngineTests {
     #expect(status.changes[0].path.displayString == "README.md")
   }
 
+  @Test("History pages use bounded skip and max-count arguments")
+  func historyPageArguments() async throws {
+    let oid = String(repeating: "a", count: 40)
+    let output =
+      "\u{1e}\(oid)\0\0A\0a@example.com\0"
+      + "1700000000\0paged\0"
+    let runner = StubRunner(results: [.success(output)])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let commits = try await engine.history(
+      at: location,
+      offset: 200,
+      limit: 201
+    )
+
+    #expect(commits.map(\.oid) == [oid])
+    let command = try #require(await runner.commands().first)
+    #expect(command.redactedDescription.contains("--skip=200"))
+    #expect(command.redactedDescription.contains("--max-count=201"))
+  }
+
   @Test("Identifies a standard repository")
   func standardRepositoryIdentity() async throws {
     let runner = StubRunner(

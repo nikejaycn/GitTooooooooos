@@ -113,6 +113,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     limit: Int
   ) async throws -> [CommitSummary]
+  func history(
+    at location: RepositoryLocation,
+    offset: Int,
+    limit: Int
+  ) async throws -> [CommitSummary]
   func references(at location: RepositoryLocation) async throws -> [GitReference]
   func mutateWorkingCopy(
     at location: RepositoryLocation,
@@ -161,6 +166,20 @@ public protocol GitEngineProtocol: Sendable {
 }
 
 extension GitEngineProtocol {
+  public func history(
+    at location: RepositoryLocation,
+    offset: Int,
+    limit: Int
+  ) async throws -> [CommitSummary] {
+    let boundedOffset = min(max(0, offset), 1_000_000)
+    let boundedLimit = min(max(1, limit), 10_000)
+    let loaded = try await history(
+      at: location,
+      limit: boundedOffset + boundedLimit
+    )
+    return Array(loaded.dropFirst(boundedOffset).prefix(boundedLimit))
+  }
+
   public func lfsVersion() async throws -> String {
     throw GitEngineError.invalidOutput("Git LFS capability checking is not implemented.")
   }
@@ -401,6 +420,15 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     at location: RepositoryLocation,
     limit: Int = 500
   ) async throws -> [CommitSummary] {
+    try await history(at: location, offset: 0, limit: limit)
+  }
+
+  public func history(
+    at location: RepositoryLocation,
+    offset: Int,
+    limit: Int
+  ) async throws -> [CommitSummary] {
+    let boundedOffset = min(max(offset, 0), 1_000_000)
     let boundedLimit = min(max(limit, 1), 10_000)
     let result = try await execute(
       GitCommand(
@@ -409,6 +437,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           "--all",
           "--topo-order",
           "--date-order",
+          "--skip=\(boundedOffset)",
           "--max-count=\(boundedLimit)",
           "--format=%x1e%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00",
         ],

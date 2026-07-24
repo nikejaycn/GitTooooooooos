@@ -71,6 +71,7 @@ public struct CommitGraphView: NSViewRepresentable {
     scrollView.hasHorizontalScroller = true
     scrollView.autohidesScrollers = true
     scrollView.documentView = table
+    context.coordinator.observeScrolling(in: scrollView)
     return scrollView
   }
 
@@ -136,7 +137,6 @@ public struct CommitGraphView: NSViewRepresentable {
       row: Int
     ) -> NSView? {
       guard rows.indices.contains(row), let tableColumn else { return nil }
-      requestMoreRowsIfNeeded(visibleRow: row)
       let item = rows[row]
       let identifier = tableColumn.identifier
 
@@ -177,6 +177,28 @@ public struct CommitGraphView: NSViewRepresentable {
           rows.indices.contains(index) ? rows[index] : nil
         }
       )
+    }
+
+    func observeScrolling(in scrollView: NSScrollView) {
+      scrollView.contentView.postsBoundsChangedNotifications = true
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(visibleBoundsDidChange(_:)),
+        name: NSView.boundsDidChangeNotification,
+        object: scrollView.contentView
+      )
+    }
+
+    @objc private func visibleBoundsDidChange(_ notification: Notification) {
+      guard
+        let clipView = notification.object as? NSClipView,
+        let tableView = clipView.documentView as? NSTableView
+      else {
+        return
+      }
+      let visibleRows = tableView.rows(in: clipView.documentVisibleRect)
+      guard visibleRows.length > 0 else { return }
+      requestMoreRowsIfNeeded(visibleRow: NSMaxRange(visibleRows) - 1)
     }
 
     private func requestMoreRowsIfNeeded(visibleRow: Int) {

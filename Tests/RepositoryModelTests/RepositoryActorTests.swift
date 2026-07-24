@@ -54,6 +54,55 @@ struct RepositoryActorTests {
     #expect(await repository.snapshot() == snapshot)
   }
 
+  @Test("History pages are bounded to the snapshot generation")
+  func historyPages() async throws {
+    let history = (0..<5).map { index in
+      CommitSummary(
+        oid: "c\(index)",
+        parentOIDs: index == 4 ? [] : ["c\(index + 1)"],
+        authorName: "A",
+        authorEmail: "a@example.com",
+        authoredAt: Date(timeIntervalSince1970: TimeInterval(index)),
+        subject: "commit \(index)"
+      )
+    }
+    let engine = StubGitEngine(history: history)
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let snapshot = try await repository.refreshSnapshot(historyLimit: 2)
+
+    let firstPage = try #require(
+      try await repository.historyPage(
+        after: HistoryCursor(offset: 2),
+        limit: 2,
+        generation: snapshot.generation
+      )
+    )
+    #expect(firstPage.commits.map(\.oid) == ["c2", "c3"])
+    #expect(firstPage.nextCursor == HistoryCursor(offset: 4))
+
+    let lastPage = try #require(
+      try await repository.historyPage(
+        after: HistoryCursor(offset: 4),
+        limit: 2,
+        generation: snapshot.generation
+      )
+    )
+    #expect(lastPage.commits.map(\.oid) == ["c4"])
+    #expect(lastPage.nextCursor == nil)
+
+    await repository.invalidate()
+    #expect(
+      try await repository.historyPage(
+        after: HistoryCursor(offset: 2),
+        limit: 2,
+        generation: snapshot.generation
+      ) == nil
+    )
+  }
+
   @Test("Working-copy mutation is followed by an authoritative status refresh")
   func mutationRefresh() async throws {
     let engine = StubGitEngine()
@@ -125,9 +174,14 @@ private actor StubGitEngine: GitEngineProtocol {
   private var receivedMutations: [WorkingCopyMutation] = []
   private var receivedCommits: [CommitRequest] = []
   private let statusDelays: [UInt64: Duration]
+  private let historyCommits: [CommitSummary]
 
-  init(statusDelays: [UInt64: Duration] = [:]) {
+  init(
+    statusDelays: [UInt64: Duration] = [:],
+    history: [CommitSummary] = []
+  ) {
     self.statusDelays = statusDelays
+    historyCommits = history
   }
 
   func version() async throws -> String {
@@ -159,7 +213,7 @@ private actor StubGitEngine: GitEngineProtocol {
     at location: RepositoryLocation,
     limit: Int
   ) async throws -> [CommitSummary] {
-    []
+    Array(historyCommits.prefix(limit))
   }
 
   func references(at location: RepositoryLocation) async throws -> [GitReference] {

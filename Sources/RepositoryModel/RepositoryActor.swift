@@ -46,7 +46,7 @@ public actor RepositoryActor {
   }
 
   @discardableResult
-  public func refreshSnapshot(historyLimit: Int = 500) async throws -> RepositorySnapshot {
+  public func refreshSnapshot(historyLimit: Int = 200) async throws -> RepositorySnapshot {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
 
@@ -84,6 +84,32 @@ public actor RepositoryActor {
 
   public func snapshot() -> RepositorySnapshot? {
     cachedSnapshot
+  }
+
+  public func historyPage(
+    after cursor: HistoryCursor,
+    limit: Int,
+    generation requestedGeneration: RepositoryGeneration
+  ) async throws -> HistoryPage? {
+    guard requestedGeneration == generation else { return nil }
+    let boundedLimit = min(max(limit, 1), 1_000)
+    let loaded = try await engine.history(
+      at: location,
+      offset: cursor.offset,
+      limit: boundedLimit + 1
+    )
+    guard requestedGeneration == generation else { return nil }
+
+    let commits = Array(loaded.prefix(boundedLimit))
+    let nextCursor =
+      loaded.count > boundedLimit
+      ? HistoryCursor(offset: cursor.offset + commits.count)
+      : nil
+    return HistoryPage(
+      generation: requestedGeneration,
+      commits: commits,
+      nextCursor: nextCursor
+    )
   }
 
   public func diff(
@@ -141,7 +167,7 @@ public actor RepositoryActor {
   @discardableResult
   public func createCommit(
     _ request: CommitRequest,
-    historyLimit: Int = 500
+    historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
@@ -187,7 +213,7 @@ public actor RepositoryActor {
   @discardableResult
   public func applyBranchMutation(
     _ mutation: BranchMutation,
-    historyLimit: Int = 500
+    historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
@@ -233,7 +259,7 @@ public actor RepositoryActor {
   @discardableResult
   public func applyStashMutation(
     _ mutation: StashMutation,
-    historyLimit: Int = 500
+    historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
       try await engine.mutateStash(at: location, mutation: mutation)
@@ -243,7 +269,7 @@ public actor RepositoryActor {
   @discardableResult
   public func applyRemoteMutation(
     _ mutation: RemoteMutation,
-    historyLimit: Int = 500
+    historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
       try await engine.mutateRemote(at: location, mutation: mutation)
@@ -253,7 +279,7 @@ public actor RepositoryActor {
   @discardableResult
   public func applyMergeMutation(
     _ mutation: MergeMutation,
-    historyLimit: Int = 500
+    historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
       try await engine.mutateMerge(at: location, mutation: mutation)
@@ -263,7 +289,7 @@ public actor RepositoryActor {
   @discardableResult
   public func applyHistoryMutation(
     _ mutation: HistoryMutation,
-    historyLimit: Int = 500
+    historyLimit: Int = 200
   ) async throws -> HistoryMutationResult {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
@@ -314,7 +340,7 @@ public actor RepositoryActor {
   public func applyHunk(
     _ hunk: DiffHunk,
     source: DiffSource,
-    historyLimit: Int = 500
+    historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
       try await engine.applyHunk(at: location, hunk: hunk, source: source)

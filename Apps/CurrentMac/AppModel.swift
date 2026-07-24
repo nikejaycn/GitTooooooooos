@@ -11,6 +11,8 @@ import RepositoryModel
 @Observable
 final class AppModel {
   private static let recentRepositoriesKey = "Current.recentRepositories.v1"
+  private static let historyPageSize = 200
+  private static let maximumLoadedCommitCount = 10_000
 
   private(set) var repositoryName: String?
   private(set) var gitVersion: String?
@@ -20,6 +22,8 @@ final class AppModel {
   private(set) var repositoryStatus: RepositoryStatus?
   private(set) var commits: [CommitSummary] = []
   private(set) var graphRows: [GraphRow] = []
+  private(set) var isHistoryPageLoading = false
+  private(set) var hasMoreHistory = false
   private(set) var references: [GitReference] = []
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
@@ -39,6 +43,8 @@ final class AppModel {
   private var repositorySessionID = UUID()
   private var graphLayoutTask: Task<Void, Never>?
   private var graphLayoutRequestID: UUID?
+  private var historyPageTask: Task<Void, Never>?
+  private var nextHistoryCursor: HistoryCursor?
   private var diffRequestID: UUID?
   private var repositoryOperationTask: Task<Void, Never>?
 
@@ -149,6 +155,66 @@ final class AppModel {
     guard repository != nil else { return }
     Task {
       await refreshRepository()
+    }
+  }
+
+  func loadNextHistoryPage() {
+    guard
+      !isHistoryPageLoading,
+      let repository,
+      let generation = repositoryStatus?.generation,
+      let cursor = nextHistoryCursor,
+      commits.count < Self.maximumLoadedCommitCount
+    else {
+      return
+    }
+
+    let sessionID = repositorySessionID
+    isHistoryPageLoading = true
+    historyPageTask = Task {
+      defer {
+        if repositorySessionID == sessionID {
+          isHistoryPageLoading = false
+          historyPageTask = nil
+        }
+      }
+      do {
+        guard
+          let page = try await repository.historyPage(
+            after: cursor,
+            limit: Self.historyPageSize,
+            generation: generation
+          ),
+          page.generation == generation,
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+
+        let existingOIDs = Set(commits.map(\.oid))
+        let remainingCapacity = Self.maximumLoadedCommitCount - commits.count
+        let newCommits = page.commits
+          .filter { !existingOIDs.contains($0.oid) }
+          .prefix(remainingCapacity)
+        commits.append(contentsOf: newCommits)
+        nextHistoryCursor =
+          commits.count < Self.maximumLoadedCommitCount
+          ? page.nextCursor
+          : nil
+        hasMoreHistory = nextHistoryCursor != nil
+        rebuildGraphRows(generation: generation)
+      } catch is CancellationError {
+        return
+      } catch {
+        guard
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+        errorMessage = error.localizedDescription
+      }
     }
   }
 
@@ -432,6 +498,11 @@ final class AppModel {
     graphLayoutTask = nil
     graphLayoutRequestID = nil
     graphRows = []
+    historyPageTask?.cancel()
+    historyPageTask = nil
+    nextHistoryCursor = nil
+    isHistoryPageLoading = false
+    hasMoreHistory = false
     references = []
     stashes = []
     remotes = []
@@ -666,8 +737,16 @@ final class AppModel {
     else {
       return
     }
+    historyPageTask?.cancel()
+    historyPageTask = nil
+    isHistoryPageLoading = false
     repositoryStatus = snapshot.status
-    commits = snapshot.commits
+    commits = Array(snapshot.commits.prefix(Self.maximumLoadedCommitCount))
+    nextHistoryCursor =
+      commits.count == Self.historyPageSize
+      ? HistoryCursor(offset: commits.count)
+      : nil
+    hasMoreHistory = nextHistoryCursor != nil
     references = snapshot.references
     stashes = snapshot.stashes
     remotes = snapshot.remotes

@@ -16,6 +16,8 @@ public struct CurrentRootView: View {
   private let status: RepositoryStatus?
   private let commits: [CommitSummary]
   private let graphRows: [GraphRow]
+  private let isHistoryPageLoading: Bool
+  private let hasMoreHistory: Bool
   private let references: [GitReference]
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
@@ -35,6 +37,7 @@ public struct CurrentRootView: View {
   private let removeRecentRepository: (RecentRepository) -> Void
   private let cancelRepositoryOperation: () -> Void
   private let refresh: () -> Void
+  private let loadNextHistoryPage: () -> Void
   private let stage: (GitPath) -> Void
   private let unstage: (GitPath) -> Void
   private let discard: (GitPath) -> Void
@@ -81,6 +84,8 @@ public struct CurrentRootView: View {
     status: RepositoryStatus?,
     commits: [CommitSummary],
     graphRows: [GraphRow],
+    isHistoryPageLoading: Bool,
+    hasMoreHistory: Bool,
     references: [GitReference],
     stashes: [StashEntry],
     remotes: [GitRemote],
@@ -100,6 +105,7 @@ public struct CurrentRootView: View {
     removeRecentRepository: @escaping (RecentRepository) -> Void,
     cancelRepositoryOperation: @escaping () -> Void,
     refresh: @escaping () -> Void,
+    loadNextHistoryPage: @escaping () -> Void,
     stage: @escaping (GitPath) -> Void,
     unstage: @escaping (GitPath) -> Void,
     discard: @escaping (GitPath) -> Void,
@@ -133,6 +139,8 @@ public struct CurrentRootView: View {
     self.status = status
     self.commits = commits
     self.graphRows = graphRows
+    self.isHistoryPageLoading = isHistoryPageLoading
+    self.hasMoreHistory = hasMoreHistory
     self.references = references
     self.stashes = stashes
     self.remotes = remotes
@@ -152,6 +160,7 @@ public struct CurrentRootView: View {
     self.removeRecentRepository = removeRecentRepository
     self.cancelRepositoryOperation = cancelRepositoryOperation
     self.refresh = refresh
+    self.loadNextHistoryPage = loadNextHistoryPage
     self.stage = stage
     self.unstage = unstage
     self.discard = discard
@@ -862,15 +871,32 @@ public struct CurrentRootView: View {
         }
         .padding(10)
         Divider()
-        CommitGraphView(
-          rows: graphRows,
-          onSelection: { rows in
-            let commitOIDs = rows.compactMap(\.commitOID)
-            selectedCommitCount = commitOIDs.count
-            isWorkingCopySelected = rows.contains(where: \.isWorkingCopy)
-            selectedCommitOID = commitOIDs.count == 1 ? commitOIDs[0] : nil
+        ZStack(alignment: .bottomTrailing) {
+          CommitGraphView(
+            rows: graphRows,
+            onSelection: { rows in
+              let commitOIDs = rows.compactMap(\.commitOID)
+              selectedCommitCount = commitOIDs.count
+              isWorkingCopySelected = rows.contains(where: \.isWorkingCopy)
+              selectedCommitOID = commitOIDs.count == 1 ? commitOIDs[0] : nil
+            },
+            onApproachingEnd: loadNextHistoryPage
+          )
+          if isHistoryPageLoading {
+            ProgressView()
+              .controlSize(.small)
+              .padding(8)
+              .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+              .padding(10)
+              .allowsHitTesting(false)
+          } else if !hasMoreHistory, commits.count >= 200 {
+            Text("\(commits.count) commits loaded")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .padding(8)
+              .allowsHitTesting(false)
           }
-        )
+        }
       }
     }
   }

@@ -27,6 +27,30 @@ public struct CommitSummary: Hashable, Sendable, Codable, Identifiable {
   public var id: String { oid }
 }
 
+public struct HistoryCursor: Hashable, Sendable, Codable {
+  public let offset: Int
+
+  public init(offset: Int) {
+    self.offset = max(0, offset)
+  }
+}
+
+public struct HistoryPage: Hashable, Sendable {
+  public let generation: RepositoryGeneration
+  public let commits: [CommitSummary]
+  public let nextCursor: HistoryCursor?
+
+  public init(
+    generation: RepositoryGeneration,
+    commits: [CommitSummary],
+    nextCursor: HistoryCursor?
+  ) {
+    self.generation = generation
+    self.commits = commits
+    self.nextCursor = nextCursor
+  }
+}
+
 public enum GitReferenceKind: String, Hashable, Sendable, Codable {
   case localBranch
   case remoteBranch
