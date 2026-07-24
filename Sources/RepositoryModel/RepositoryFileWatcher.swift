@@ -183,7 +183,6 @@ public final class RepositoryFileWatcher: @unchecked Sendable {
     let roots = Self.watchRoots(for: location)
     let flags =
       FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
-      | FSEventStreamCreateFlags(kFSEventStreamCreateFlagWatchRoot)
       | FSEventStreamCreateFlags(kFSEventStreamCreateFlagNoDefer)
 
     guard

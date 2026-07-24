@@ -17,6 +17,11 @@
 - Git 子进程设置 `GIT_OPTIONAL_LOCKS=0`，防止只读 `status` 刷新 index 后再次触发
   watcher，形成自激刷新循环。
 - mutation 成功后立即主动刷新；不等待 FSEvents。
+- 不启用 `kFSEventStreamCreateFlagWatchRoot`：该 flag 会在创建 stream 时同步
+  `watch_all_parents`，异常卷或父目录可能让主线程阻塞；根目录移动由后续 Git
+  读取失败和全量刷新处理。
+- stream 的创建和启动在 utility detached task 中完成。即使底层文件系统调用异常
+  变慢，仓库首屏和主线程仍可继续响应；创建结果回到 MainActor 时必须匹配 session ID。
 
 ## 一致性约束
 

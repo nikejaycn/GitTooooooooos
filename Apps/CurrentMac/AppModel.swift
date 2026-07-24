@@ -45,6 +45,7 @@ final class AppModel {
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
   private var repositoryWatchSession: RepositoryWatchSession?
+  private var repositoryWatchStartTask: Task<Void, Never>?
   private var repositoryRefreshTask: Task<Void, Never>?
   private var repositorySessionID = UUID()
   private var graphLayoutTask: Task<Void, Never>?
@@ -669,6 +670,8 @@ final class AppModel {
   private func clearRepository() {
     repositoryRefreshTask?.cancel()
     repositoryRefreshTask = nil
+    repositoryWatchStartTask?.cancel()
+    repositoryWatchStartTask = nil
     repositoryWatchSession = nil
     repositorySessionID = UUID()
     repository = nil
@@ -984,18 +987,45 @@ final class AppModel {
   }
 
   private func startWatchingRepository(_ opened: RepositoryActor) {
+    repositoryWatchStartTask?.cancel()
+    repositoryWatchStartTask = nil
     repositoryWatchSession = nil
     let sessionID = repositorySessionID
-    do {
-      repositoryWatchSession = try RepositoryWatchSession(
-        location: opened.location
-      ) { [weak self] events in
-        Task { @MainActor [weak self] in
-          self?.repositoryFilesDidChange(events, sessionID: sessionID)
-        }
+    let location = opened.location
+    let handler: @Sendable ([RepositoryWatchEvent]) -> Void = {
+      [weak self] events in
+      Task { @MainActor [weak self] in
+        self?.repositoryFilesDidChange(events, sessionID: sessionID)
       }
-    } catch {
-      errorMessage = "Repository monitoring is unavailable: \(error.localizedDescription)"
+    }
+    repositoryWatchStartTask = Task {
+      do {
+        let session = try await Task.detached(priority: .utility) {
+          try RepositoryWatchSession(
+            location: location,
+            handler: handler
+          )
+        }.value
+        guard
+          !Task.isCancelled,
+          repositorySessionID == sessionID
+        else {
+          return
+        }
+        repositoryWatchSession = session
+      } catch {
+        guard
+          !Task.isCancelled,
+          repositorySessionID == sessionID
+        else {
+          return
+        }
+        errorMessage =
+          "Repository monitoring is unavailable: \(error.localizedDescription)"
+      }
+      if repositorySessionID == sessionID {
+        repositoryWatchStartTask = nil
+      }
     }
   }
 
