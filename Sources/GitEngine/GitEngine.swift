@@ -104,8 +104,10 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         arguments: [
           "rev-parse",
           "--path-format=absolute",
-          "--show-toplevel",
+          "--git-dir",
           "--git-common-dir",
+          "--is-bare-repository",
+          "--is-inside-work-tree",
         ],
         workingDirectory: url
       )
@@ -114,15 +116,52 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     let lines = String(decoding: result.standardOutput, as: UTF8.self)
       .split(separator: "\n", omittingEmptySubsequences: true)
       .map(String.init)
-    guard lines.count == 2 else {
+    guard lines.count == 4 else {
       throw GitEngineError.invalidRepository(
-        "Expected worktree and common Git directory, got \(lines.count) fields."
+        "Expected Git directory, common directory, bare flag, and worktree flag; got \(lines.count) fields."
       )
     }
 
+    let gitDirectory = URL(fileURLWithPath: lines[0], isDirectory: true)
+    let commonDirectory = URL(fileURLWithPath: lines[1], isDirectory: true)
+    let isBare = lines[2] == "true"
+    let isInsideWorktree = lines[3] == "true"
+    guard isBare || isInsideWorktree else {
+      throw GitEngineError.invalidRepository("The selected path has no usable worktree.")
+    }
+
+    let worktree: URL
+    if isInsideWorktree {
+      let topLevel = try await execute(
+        GitCommand(
+          arguments: ["rev-parse", "--path-format=absolute", "--show-toplevel"],
+          workingDirectory: url
+        )
+      )
+      let path = String(decoding: topLevel.standardOutput, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !path.isEmpty else {
+        throw GitEngineError.invalidOutput("Git returned an empty worktree path.")
+      }
+      worktree = URL(fileURLWithPath: path, isDirectory: true)
+    } else {
+      worktree = commonDirectory
+    }
+
+    let kind: RepositoryKind
+    if isBare {
+      kind = .bare
+    } else if gitDirectory.standardizedFileURL != commonDirectory.standardizedFileURL {
+      kind = .linkedWorktree
+    } else {
+      kind = .standard
+    }
+
     return RepositoryLocation(
-      worktreeURL: URL(fileURLWithPath: lines[0], isDirectory: true),
-      commonGitDirectoryURL: URL(fileURLWithPath: lines[1], isDirectory: true)
+      worktreeURL: worktree,
+      gitDirectoryURL: gitDirectory,
+      commonGitDirectoryURL: commonDirectory,
+      kind: kind
     )
   }
 
@@ -130,6 +169,10 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     at location: RepositoryLocation,
     generation: RepositoryGeneration
   ) async throws -> RepositoryStatus {
+    if location.kind == .bare {
+      return try await bareStatus(at: location, generation: generation)
+    }
+
     let result = try await execute(
       GitCommand(
         arguments: [
@@ -157,6 +200,48 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       ahead: parsed.ahead,
       behind: parsed.behind,
       changes: parsed.records.map(mapRecord)
+    )
+  }
+
+  private func bareStatus(
+    at location: RepositoryLocation,
+    generation: RepositoryGeneration
+  ) async throws -> RepositoryStatus {
+    let symbolic = try await runner.run(
+      GitCommand(
+        arguments: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        workingDirectory: location.commonGitDirectoryURL
+      )
+    )
+    if symbolic.succeeded {
+      let branch = String(decoding: symbolic.standardOutput, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      return RepositoryStatus(
+        generation: generation,
+        head: .branch(branch),
+        upstream: nil,
+        ahead: 0,
+        behind: 0,
+        changes: []
+      )
+    }
+
+    let oid = try await execute(
+      GitCommand(
+        arguments: ["rev-parse", "--verify", "HEAD"],
+        workingDirectory: location.commonGitDirectoryURL
+      )
+    )
+    return RepositoryStatus(
+      generation: generation,
+      head: .detached(
+        oid: String(decoding: oid.standardOutput, as: UTF8.self)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+      ),
+      upstream: nil,
+      ahead: 0,
+      behind: 0,
+      changes: []
     )
   }
 

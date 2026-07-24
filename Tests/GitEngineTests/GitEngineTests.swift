@@ -59,6 +59,63 @@ struct GitEngineTests {
     #expect(status.changes[0].path.displayString == "README.md")
   }
 
+  @Test("Identifies a standard repository")
+  func standardRepositoryIdentity() async throws {
+    let runner = StubRunner(
+      results: [
+        .success("/tmp/repo/.git\n/tmp/repo/.git\nfalse\ntrue\n"),
+        .success("/tmp/repo\n"),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+
+    let location = try await engine.locateRepository(
+      at: URL(fileURLWithPath: "/tmp/repo/subdirectory")
+    )
+
+    #expect(location.kind == .standard)
+    #expect(location.worktreeURL.path == "/tmp/repo")
+    #expect(location.gitDirectoryURL.path == "/tmp/repo/.git")
+  }
+
+  @Test("Identifies a bare repository without asking for a worktree")
+  func bareRepositoryIdentity() async throws {
+    let runner = StubRunner(
+      results: [
+        .success("/tmp/project.git\n/tmp/project.git\ntrue\nfalse\n")
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+
+    let location = try await engine.locateRepository(
+      at: URL(fileURLWithPath: "/tmp/project.git")
+    )
+
+    #expect(location.kind == .bare)
+    #expect(location.worktreeURL.path == "/tmp/project.git")
+    #expect(await runner.commands().count == 1)
+  }
+
+  @Test("Identifies a linked worktree by its distinct Git directory")
+  func linkedWorktreeIdentity() async throws {
+    let runner = StubRunner(
+      results: [
+        .success(
+          "/tmp/main/.git/worktrees/topic\n/tmp/main/.git\nfalse\ntrue\n"
+        ),
+        .success("/tmp/topic\n"),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+
+    let location = try await engine.locateRepository(
+      at: URL(fileURLWithPath: "/tmp/topic")
+    )
+
+    #expect(location.kind == .linkedWorktree)
+    #expect(location.commonGitDirectoryURL.path == "/tmp/main/.git")
+  }
+
   @Test("Does not leak token-like arguments in diagnostics")
   func redaction() {
     let command = GitCommand(arguments: [
@@ -105,5 +162,16 @@ private actor StubRunner: GitProcessRunning {
 
   func commands() -> [GitCommand] {
     receivedCommands
+  }
+}
+
+extension GitProcessResult {
+  fileprivate static func success(_ output: String) -> Self {
+    GitProcessResult(
+      termination: .exited(0),
+      standardOutput: Array(output.utf8),
+      standardError: [],
+      duration: .milliseconds(1)
+    )
   }
 }

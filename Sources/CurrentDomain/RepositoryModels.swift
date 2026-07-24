@@ -16,13 +16,28 @@ public struct RepositoryGeneration: Hashable, Sendable, Codable, Comparable {
   }
 }
 
+public enum RepositoryKind: String, Hashable, Sendable, Codable {
+  case standard
+  case bare
+  case linkedWorktree
+}
+
 public struct RepositoryLocation: Hashable, Sendable {
   public let worktreeURL: URL
+  public let gitDirectoryURL: URL
   public let commonGitDirectoryURL: URL
+  public let kind: RepositoryKind
 
-  public init(worktreeURL: URL, commonGitDirectoryURL: URL) {
+  public init(
+    worktreeURL: URL,
+    gitDirectoryURL: URL? = nil,
+    commonGitDirectoryURL: URL,
+    kind: RepositoryKind = .standard
+  ) {
     self.worktreeURL = worktreeURL.standardizedFileURL
+    self.gitDirectoryURL = (gitDirectoryURL ?? commonGitDirectoryURL).standardizedFileURL
     self.commonGitDirectoryURL = commonGitDirectoryURL.standardizedFileURL
+    self.kind = kind
   }
 }
 
