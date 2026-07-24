@@ -11,8 +11,9 @@ import RepositoryModel
 @Observable
 final class AppModel {
   private static let recentRepositoriesKey = "Current.recentRepositories.v1"
+  private static let maximumLoadedCommitCountKey = "Current.maximumLoadedCommitCount.v1"
   private static let historyPageSize = 200
-  private static let maximumLoadedCommitCount = 10_000
+  static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
   private(set) var repositoryName: String?
   private(set) var gitVersion: String?
@@ -24,6 +25,7 @@ final class AppModel {
   private(set) var graphRows: [GraphRow] = []
   private(set) var isHistoryPageLoading = false
   private(set) var hasMoreHistory = false
+  private(set) var maximumLoadedCommitCount = 10_000
   private(set) var commitComparison: CommitComparison?
   private(set) var isCommitComparisonLoading = false
   private(set) var references: [GitReference] = []
@@ -54,6 +56,12 @@ final class AppModel {
 
   init() {
     recentRepositories = Self.loadRecentRepositories()
+    let savedCommitLimit = UserDefaults.standard.integer(
+      forKey: Self.maximumLoadedCommitCountKey
+    )
+    if Self.supportedCommitLimits.contains(savedCommitLimit) {
+      maximumLoadedCommitCount = savedCommitLimit
+    }
     do {
       let executable = try GitExecutableResolver().resolve()
       let liveEngine = LiveGitEngine(
@@ -168,7 +176,7 @@ final class AppModel {
       let repository,
       let generation = repositoryStatus?.generation,
       let cursor = nextHistoryCursor,
-      commits.count < Self.maximumLoadedCommitCount
+      commits.count < maximumLoadedCommitCount
     else {
       return
     }
@@ -197,13 +205,13 @@ final class AppModel {
         }
 
         let existingOIDs = Set(commits.map(\.oid))
-        let remainingCapacity = Self.maximumLoadedCommitCount - commits.count
+        let remainingCapacity = maximumLoadedCommitCount - commits.count
         let newCommits = page.commits
           .filter { !existingOIDs.contains($0.oid) }
           .prefix(remainingCapacity)
         commits.append(contentsOf: newCommits)
         nextHistoryCursor =
-          commits.count < Self.maximumLoadedCommitCount
+          commits.count < maximumLoadedCommitCount
           ? page.nextCursor
           : nil
         hasMoreHistory = nextHistoryCursor != nil
@@ -219,6 +227,36 @@ final class AppModel {
         }
         errorMessage = error.localizedDescription
       }
+    }
+  }
+
+  func setMaximumLoadedCommitCount(_ newLimit: Int) {
+    guard
+      Self.supportedCommitLimits.contains(newLimit),
+      newLimit != maximumLoadedCommitCount
+    else {
+      return
+    }
+    let previousLimit = maximumLoadedCommitCount
+    maximumLoadedCommitCount = newLimit
+    UserDefaults.standard.set(
+      newLimit,
+      forKey: Self.maximumLoadedCommitCountKey
+    )
+
+    if commits.count > newLimit {
+      commits = Array(commits.prefix(newLimit))
+      nextHistoryCursor = nil
+      hasMoreHistory = false
+      if let generation = repositoryStatus?.generation {
+        rebuildGraphRows(generation: generation)
+      }
+    } else if newLimit > previousLimit,
+      commits.count == previousLimit,
+      nextHistoryCursor == nil
+    {
+      nextHistoryCursor = HistoryCursor(offset: commits.count)
+      hasMoreHistory = true
     }
   }
 
@@ -805,7 +843,7 @@ final class AppModel {
     isHistoryPageLoading = false
     clearCommitComparison()
     repositoryStatus = snapshot.status
-    commits = Array(snapshot.commits.prefix(Self.maximumLoadedCommitCount))
+    commits = Array(snapshot.commits.prefix(maximumLoadedCommitCount))
     nextHistoryCursor =
       commits.count == Self.historyPageSize
       ? HistoryCursor(offset: commits.count)

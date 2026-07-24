@@ -80,17 +80,37 @@ struct CurrentMacApp: App {
 
     Settings {
       Form {
-        LabeledContent("Git", value: model.gitVersion ?? "Checking…")
-        LabeledContent("Git LFS", value: model.gitLFSVersion ?? "Unavailable")
-        LabeledContent("Source", value: model.gitSourceDescription ?? "Unavailable")
-        if let reason = model.gitFallbackReason {
-          Text(reason)
+        Section("Git Toolchain") {
+          LabeledContent("Git", value: model.gitVersion ?? "Checking…")
+          LabeledContent("Git LFS", value: model.gitLFSVersion ?? "Unavailable")
+          LabeledContent("Source", value: model.gitSourceDescription ?? "Unavailable")
+          if let reason = model.gitFallbackReason {
+            Label(reason, systemImage: "exclamationmark.triangle.fill")
+              .font(.caption)
+              .foregroundStyle(.orange)
+          }
+        }
+
+        Section("History") {
+          Picker(
+            "Maximum graph commits",
+            selection: Binding(
+              get: { model.maximumLoadedCommitCount },
+              set: { model.setMaximumLoadedCommitCount($0) }
+            )
+          ) {
+            ForEach(AppModel.supportedCommitLimits, id: \.self) { limit in
+              Text(limit.formatted())
+                .tag(limit)
+            }
+          }
+          Text("History is loaded in 200-commit pages up to this in-memory limit.")
             .font(.caption)
-            .foregroundStyle(.orange)
+            .foregroundStyle(.secondary)
         }
       }
-      .padding(24)
-      .frame(width: 480)
+      .formStyle(.grouped)
+      .frame(width: 520, height: 320)
     }
   }
 }
