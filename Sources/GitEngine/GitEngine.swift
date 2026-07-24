@@ -115,6 +115,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: RemoteMutation
   ) async throws
+  func mutateMerge(
+    at location: RepositoryLocation,
+    mutation: MergeMutation
+  ) async throws
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -227,13 +231,15 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       throw GitEngineError.invalidOutput(String(describing: error))
     }
 
+    let changes = parsed.records.map(mapRecord)
     return RepositoryStatus(
       generation: generation,
       head: headState(from: parsed),
       upstream: parsed.upstream,
       ahead: parsed.ahead,
       behind: parsed.behind,
-      changes: parsed.records.map(mapRecord)
+      changes: changes,
+      operation: operationState(at: location, changes: changes)
     )
   }
 
@@ -599,6 +605,103 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  public func mutateMerge(
+    at location: RepositoryLocation,
+    mutation: MergeMutation
+  ) async throws {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository cannot perform a merge.")
+    }
+
+    let arguments: [String]
+    switch mutation {
+    case .start(let branch, let squash, let noFastForward):
+      arguments =
+        ["merge", "--no-edit"]
+        + (squash ? ["--squash"] : [])
+        + (noFastForward ? ["--no-ff"] : [])
+        + [branch]
+    case .resolve(let path, let side):
+      guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
+        throw GitEngineError.invalidOutput("A conflict path was empty or contained a NUL byte.")
+      }
+      let checkout = GitCommand(
+        rawArguments: [
+          Array("checkout".utf8),
+          Array("--\(side.rawValue)".utf8),
+          Array("--".utf8),
+          path.rawBytes,
+        ],
+        workingDirectory: location.worktreeURL
+      )
+      let checkoutResult = try await runner.run(checkout)
+      if checkoutResult.succeeded {
+        _ = try await execute(
+          GitCommand(
+            rawArguments: [
+              Array("add".utf8),
+              Array("--".utf8),
+              path.rawBytes,
+            ],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      } else {
+        _ = try await execute(
+          GitCommand(
+            rawArguments: [
+              Array("rm".utf8),
+              Array("-f".utf8),
+              Array("--ignore-unmatch".utf8),
+              Array("--".utf8),
+              path.rawBytes,
+            ],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      }
+      return
+    case .continueOperation:
+      switch operationKind(at: location) {
+      case .merge: arguments = ["merge", "--continue"]
+      case .rebase: arguments = ["rebase", "--continue"]
+      case .cherryPick: arguments = ["cherry-pick", "--continue"]
+      case .revert: arguments = ["revert", "--continue"]
+      case .none:
+        throw GitEngineError.invalidRepository("No Git operation is waiting to continue.")
+      }
+    case .abortOperation:
+      switch operationKind(at: location) {
+      case .merge: arguments = ["merge", "--abort"]
+      case .rebase: arguments = ["rebase", "--abort"]
+      case .cherryPick: arguments = ["cherry-pick", "--abort"]
+      case .revert: arguments = ["revert", "--abort"]
+      case .none:
+        throw GitEngineError.invalidRepository("No Git operation is available to abort.")
+      }
+    }
+
+    let command = GitCommand(
+      arguments: arguments,
+      workingDirectory: location.worktreeURL,
+      environmentOverrides: ["GIT_EDITOR": "true"],
+      outputLimit: 32 * 1024 * 1024,
+      timeout: .seconds(600)
+    )
+    let result = try await runner.run(command)
+    if result.succeeded { return }
+
+    // A merge that stopped on conflicts is a valid state transition. The
+    // conflicted index and MERGE_HEAD are the authoritative result.
+    if case .start = mutation, operationKind(at: location) == .merge {
+      return
+    }
+    throw GitEngineError.commandFailed(
+      arguments: command.redactedDescription,
+      message: result.errorDescription
+    )
+  }
+
   private func validateBranchName(
     _ name: String,
     at location: RepositoryLocation
@@ -620,6 +723,51 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     else {
       throw GitEngineError.invalidOutput("Invalid stash selector.")
     }
+  }
+
+  private func operationState(
+    at location: RepositoryLocation,
+    changes: [FileChange]
+  ) -> RepositoryOperationState {
+    RepositoryOperationState(
+      kind: operationKind(at: location),
+      conflictedPaths:
+        changes
+        .filter { $0.kind == .unmerged }
+        .map(\.path)
+    )
+  }
+
+  private func operationKind(
+    at location: RepositoryLocation
+  ) -> RepositoryOperationKind {
+    let gitDirectory = location.gitDirectoryURL
+    let fileManager = FileManager.default
+    if fileManager.fileExists(
+      atPath: gitDirectory.appendingPathComponent("rebase-merge").path
+    )
+      || fileManager.fileExists(
+        atPath: gitDirectory.appendingPathComponent("rebase-apply").path
+      )
+    {
+      return .rebase
+    }
+    if fileManager.fileExists(
+      atPath: gitDirectory.appendingPathComponent("MERGE_HEAD").path
+    ) {
+      return .merge
+    }
+    if fileManager.fileExists(
+      atPath: gitDirectory.appendingPathComponent("CHERRY_PICK_HEAD").path
+    ) {
+      return .cherryPick
+    }
+    if fileManager.fileExists(
+      atPath: gitDirectory.appendingPathComponent("REVERT_HEAD").path
+    ) {
+      return .revert
+    }
+    return .none
   }
 
   private func appendIgnoreRules(

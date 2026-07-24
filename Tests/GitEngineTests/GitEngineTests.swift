@@ -397,6 +397,84 @@ struct GitEngineTests {
     )
     #expect(ignoreContents.contains("/\\[draft\\]\\ note.txt"))
   }
+
+  @Test(
+    "Live merge conflict supports abort, side resolution, and continue",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveMergeConflict() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-merge-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("conflict.txt")
+    try Data("base\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "conflict.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try runGit(["-C", root.path, "switch", "-c", "topic"])
+    try Data("topic\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "commit", "-am", "topic"])
+    try runGit(["-C", root.path, "switch", "main"])
+    try Data("main\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "commit", "-am", "main"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateMerge(
+      at: location,
+      mutation: .start(branch: "topic", squash: false, noFastForward: false)
+    )
+
+    var status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.operation.kind == .merge)
+    #expect(status.operation.conflictedPaths == [GitPath("conflict.txt")])
+    #expect(!status.operation.canContinue)
+    #expect(status.operation.canAbort)
+
+    try await engine.mutateMerge(at: location, mutation: .abortOperation)
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(2)
+    )
+    #expect(status.operation == .none)
+    #expect(status.changes.isEmpty)
+    #expect(try String(contentsOf: file, encoding: .utf8) == "main\n")
+
+    try await engine.mutateMerge(
+      at: location,
+      mutation: .start(branch: "topic", squash: false, noFastForward: false)
+    )
+    try await engine.mutateMerge(
+      at: location,
+      mutation: .resolve(path: GitPath("conflict.txt"), side: .ours)
+    )
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(3)
+    )
+    #expect(status.operation.kind == .merge)
+    #expect(status.operation.conflictedPaths.isEmpty)
+    #expect(status.operation.canContinue)
+
+    try await engine.mutateMerge(at: location, mutation: .continueOperation)
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(4)
+    )
+    #expect(status.operation == .none)
+    #expect(status.changes.isEmpty)
+    #expect(try String(contentsOf: file, encoding: .utf8) == "main\n")
+  }
 }
 
 private func runGit(_ arguments: [String]) throws {

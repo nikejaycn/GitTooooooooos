@@ -180,6 +180,11 @@ private actor StubGitEngine: GitEngineProtocol {
     mutation: RemoteMutation
   ) async throws {}
 
+  func mutateMerge(
+    at location: RepositoryLocation,
+    mutation: MergeMutation
+  ) async throws {}
+
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations
   }

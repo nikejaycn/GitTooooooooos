@@ -104,6 +104,33 @@ public struct FileChange: Hashable, Sendable, Codable, Identifiable {
   }
 }
 
+public enum RepositoryOperationKind: String, Hashable, Sendable, Codable {
+  case none
+  case merge
+  case rebase
+  case cherryPick
+  case revert
+}
+
+public struct RepositoryOperationState: Hashable, Sendable, Codable {
+  public let kind: RepositoryOperationKind
+  public let conflictedPaths: [GitPath]
+
+  public init(
+    kind: RepositoryOperationKind,
+    conflictedPaths: [GitPath] = []
+  ) {
+    self.kind = kind
+    self.conflictedPaths = conflictedPaths
+  }
+
+  public var isInProgress: Bool { kind != .none }
+  public var canContinue: Bool { isInProgress && conflictedPaths.isEmpty }
+  public var canAbort: Bool { isInProgress }
+
+  public static let none = Self(kind: .none)
+}
+
 public struct RepositoryStatus: Hashable, Sendable {
   public let generation: RepositoryGeneration
   public let head: HeadState
@@ -111,6 +138,7 @@ public struct RepositoryStatus: Hashable, Sendable {
   public let ahead: Int
   public let behind: Int
   public let changes: [FileChange]
+  public let operation: RepositoryOperationState
 
   public init(
     generation: RepositoryGeneration,
@@ -118,7 +146,8 @@ public struct RepositoryStatus: Hashable, Sendable {
     upstream: String?,
     ahead: Int,
     behind: Int,
-    changes: [FileChange]
+    changes: [FileChange],
+    operation: RepositoryOperationState = .none
   ) {
     self.generation = generation
     self.head = head
@@ -126,6 +155,7 @@ public struct RepositoryStatus: Hashable, Sendable {
     self.ahead = ahead
     self.behind = behind
     self.changes = changes
+    self.operation = operation
   }
 }
 
@@ -184,4 +214,16 @@ public enum BranchMutation: Hashable, Sendable {
   case checkout(name: String)
   case rename(oldName: String, newName: String)
   case delete(name: String, force: Bool)
+}
+
+public enum MergeMutation: Hashable, Sendable {
+  case start(branch: String, squash: Bool, noFastForward: Bool)
+  case resolve(path: GitPath, side: ConflictSide)
+  case continueOperation
+  case abortOperation
+}
+
+public enum ConflictSide: String, Hashable, Sendable, Codable {
+  case ours
+  case theirs
 }

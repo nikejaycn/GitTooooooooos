@@ -33,6 +33,10 @@ public struct CurrentRootView: View {
   private let loadDiff: (FileChange) -> Void
   private let createBranch: (String) -> Void
   private let checkoutBranch: (String) -> Void
+  private let mergeBranch: (String) -> Void
+  private let continueOperation: () -> Void
+  private let abortOperation: () -> Void
+  private let resolveConflict: (GitPath, ConflictSide) -> Void
   private let saveStash: (String?) -> Void
   private let popStash: (String) -> Void
   private let dropStash: (String) -> Void
@@ -68,6 +72,10 @@ public struct CurrentRootView: View {
     loadDiff: @escaping (FileChange) -> Void,
     createBranch: @escaping (String) -> Void,
     checkoutBranch: @escaping (String) -> Void,
+    mergeBranch: @escaping (String) -> Void,
+    continueOperation: @escaping () -> Void,
+    abortOperation: @escaping () -> Void,
+    resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
     saveStash: @escaping (String?) -> Void,
     popStash: @escaping (String) -> Void,
     dropStash: @escaping (String) -> Void,
@@ -97,6 +105,10 @@ public struct CurrentRootView: View {
     self.loadDiff = loadDiff
     self.createBranch = createBranch
     self.checkoutBranch = checkoutBranch
+    self.mergeBranch = mergeBranch
+    self.continueOperation = continueOperation
+    self.abortOperation = abortOperation
+    self.resolveConflict = resolveConflict
     self.saveStash = saveStash
     self.popStash = popStash
     self.dropStash = dropStash
@@ -133,6 +145,12 @@ public struct CurrentRootView: View {
                 .buttonStyle(.plain)
                 .disabled(reference.isHEAD || isLoading)
                 .help(reference.isHEAD ? "Current branch" : "Check out \(reference.shortName)")
+                .contextMenu {
+                  Button("Merge into Current Branch") {
+                    mergeBranch(reference.shortName)
+                  }
+                  .disabled(reference.isHEAD || isLoading)
+                }
               } else {
                 Label(reference.shortName, systemImage: referenceIcon(reference.kind))
                   .help(reference.fullName)
@@ -247,6 +265,10 @@ public struct CurrentRootView: View {
         }
         .padding()
 
+        if status.operation.isInProgress {
+          operationBanner(status.operation)
+        }
+
         Divider()
 
         switch workspace {
@@ -281,6 +303,48 @@ public struct CurrentRootView: View {
         description: Text("Choose a local repository to inspect its working copy.")
       )
     }
+  }
+
+  private func operationBanner(_ operation: RepositoryOperationState) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 12) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("\(operation.kind.rawValue.capitalized) in Progress")
+            .fontWeight(.semibold)
+          if operation.conflictedPaths.isEmpty {
+            Text("All conflicts are resolved. Continue or abort the operation.")
+              .foregroundStyle(.secondary)
+          } else {
+            Text("\(operation.conflictedPaths.count) conflicted files must be resolved and staged.")
+              .foregroundStyle(.secondary)
+          }
+        }
+        Spacer()
+        Button("Continue", action: continueOperation)
+          .disabled(!operation.canContinue || isLoading)
+        Button("Abort", role: .destructive, action: abortOperation)
+          .disabled(!operation.canAbort || isLoading)
+      }
+      ForEach(operation.conflictedPaths, id: \.self) { path in
+        HStack {
+          Image(systemName: "doc.badge.ellipsis")
+          Text(path.displayString)
+            .lineLimit(1)
+          Spacer()
+          Button("Use Ours") {
+            resolveConflict(path, .ours)
+          }
+          Button("Use Theirs") {
+            resolveConflict(path, .theirs)
+          }
+        }
+        .padding(.leading, 30)
+      }
+    }
+    .padding(10)
+    .background(Color.orange.opacity(0.08))
   }
 
   @ViewBuilder

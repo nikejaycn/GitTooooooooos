@@ -246,6 +246,16 @@ public actor RepositoryActor {
     }
   }
 
+  @discardableResult
+  public func applyMergeMutation(
+    _ mutation: MergeMutation,
+    historyLimit: Int = 500
+  ) async throws -> RepositorySnapshot {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.mutateMerge(at: location, mutation: mutation)
+    }
+  }
+
   private func applyRepositoryMutation(
     historyLimit: Int,
     operation mutation:

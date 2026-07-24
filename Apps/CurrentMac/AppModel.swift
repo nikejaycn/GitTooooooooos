@@ -137,6 +137,22 @@ final class AppModel {
     applyBranch(.checkout(name: name))
   }
 
+  func mergeBranch(_ name: String) {
+    applyMerge(.start(branch: name, squash: false, noFastForward: false))
+  }
+
+  func continueOperation() {
+    applyMerge(.continueOperation)
+  }
+
+  func abortOperation() {
+    applyMerge(.abortOperation)
+  }
+
+  func resolveConflict(_ path: GitPath, side: ConflictSide) {
+    applyMerge(.resolve(path: path, side: side))
+  }
+
   private func loadGitVersion() async {
     guard let engine else { return }
     do {
@@ -298,6 +314,23 @@ final class AppModel {
     }
   }
 
+  private func applyMerge(_ mutation: MergeMutation) {
+    guard let repository else { return }
+    let activityID = beginActivity(mergeTitle(mutation))
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        apply(try await repository.applyMergeMutation(mutation))
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   private func apply(_ snapshot: RepositorySnapshot) {
     repositoryStatus = snapshot.status
     commits = snapshot.commits
@@ -364,6 +397,15 @@ final class AppModel {
     case .fetch(let remote, _): "Fetch \(remote ?? "all remotes")"
     case .pull(let remote, _, _): "Pull \(remote ?? "upstream")"
     case .push(let remote, let branch, _): "Push \(branch) to \(remote)"
+    }
+  }
+
+  private func mergeTitle(_ mutation: MergeMutation) -> String {
+    switch mutation {
+    case .start(let branch, _, _): "Merge \(branch)"
+    case .resolve(let path, let side): "Resolve \(path.displayString) using \(side.rawValue)"
+    case .continueOperation: "Continue Git operation"
+    case .abortOperation: "Abort Git operation"
     }
   }
 }
