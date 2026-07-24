@@ -104,7 +104,7 @@ D07 只描述当前阶段。Developer ID、Hardened Runtime、notarization、Spa
 
 ```text
 Current/
-├── Current.xcworkspace
+├── Current.xcodeproj
 ├── Apps/
 │   └── CurrentMac/
 │       ├── App

@@ -1,0 +1,245 @@
+import CurrentDomain
+import Foundation
+import GitParsers
+
+public enum GitEngineError: Error, Sendable, Equatable, LocalizedError {
+  case executableNotFound
+  case commandFailed(arguments: String, message: String)
+  case invalidRepository(String)
+  case invalidOutput(String)
+
+  public var errorDescription: String? {
+    switch self {
+    case .executableNotFound:
+      "No usable Git executable was found."
+    case .commandFailed(let arguments, let message):
+      "git \(arguments) failed: \(message)"
+    case .invalidRepository(let message):
+      "Invalid Git repository: \(message)"
+    case .invalidOutput(let message):
+      "Git returned invalid machine output: \(message)"
+    }
+  }
+}
+
+public struct GitExecutable: Hashable, Sendable {
+  public enum Source: Hashable, Sendable {
+    case bundled
+    case custom
+    case developmentSystemFallback
+  }
+
+  public let url: URL
+  public let source: Source
+
+  public init(url: URL, source: Source) {
+    self.url = url
+    self.source = source
+  }
+}
+
+public struct GitExecutableResolver: Sendable {
+  public init() {}
+
+  public func resolve(
+    bundle: Bundle = .main,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) throws -> GitExecutable {
+    if let override = environment["CURRENT_GIT_EXECUTABLE"], !override.isEmpty {
+      return GitExecutable(
+        url: URL(fileURLWithPath: override),
+        source: .custom
+      )
+    }
+
+    if let resources = bundle.resourceURL {
+      let bundled =
+        resources
+        .appendingPathComponent("Git", isDirectory: true)
+        .appendingPathComponent("bin", isDirectory: true)
+        .appendingPathComponent("git")
+      if FileManager.default.isExecutableFile(atPath: bundled.path) {
+        return GitExecutable(url: bundled, source: .bundled)
+      }
+    }
+
+    #if DEBUG
+      let systemGit = URL(fileURLWithPath: "/usr/bin/git")
+      if FileManager.default.isExecutableFile(atPath: systemGit.path) {
+        return GitExecutable(url: systemGit, source: .developmentSystemFallback)
+      }
+    #endif
+
+    throw GitEngineError.executableNotFound
+  }
+}
+
+public protocol GitEngineProtocol: Sendable {
+  func version() async throws -> String
+  func locateRepository(at url: URL) async throws -> RepositoryLocation
+  func status(
+    at location: RepositoryLocation,
+    generation: RepositoryGeneration
+  ) async throws -> RepositoryStatus
+}
+
+public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
+  private let runner: Runner
+  private let parser: PorcelainV2Parser
+
+  public init(runner: Runner, parser: PorcelainV2Parser = .init()) {
+    self.runner = runner
+    self.parser = parser
+  }
+
+  public func version() async throws -> String {
+    let result = try await execute(GitCommand(arguments: ["--version"]))
+    return String(decoding: result.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  public func locateRepository(at url: URL) async throws -> RepositoryLocation {
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "rev-parse",
+          "--path-format=absolute",
+          "--show-toplevel",
+          "--git-common-dir",
+        ],
+        workingDirectory: url
+      )
+    )
+
+    let lines = String(decoding: result.standardOutput, as: UTF8.self)
+      .split(separator: "\n", omittingEmptySubsequences: true)
+      .map(String.init)
+    guard lines.count == 2 else {
+      throw GitEngineError.invalidRepository(
+        "Expected worktree and common Git directory, got \(lines.count) fields."
+      )
+    }
+
+    return RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: lines[0], isDirectory: true),
+      commonGitDirectoryURL: URL(fileURLWithPath: lines[1], isDirectory: true)
+    )
+  }
+
+  public func status(
+    at location: RepositoryLocation,
+    generation: RepositoryGeneration
+  ) async throws -> RepositoryStatus {
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "status",
+          "--porcelain=v2",
+          "--branch",
+          "-z",
+          "--untracked-files=all",
+        ],
+        workingDirectory: location.worktreeURL
+      )
+    )
+
+    let parsed: PorcelainV2Status
+    do {
+      parsed = try parser.parse(result.standardOutput)
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+
+    return RepositoryStatus(
+      generation: generation,
+      head: headState(from: parsed),
+      upstream: parsed.upstream,
+      ahead: parsed.ahead,
+      behind: parsed.behind,
+      changes: parsed.records.map(mapRecord)
+    )
+  }
+
+  private func execute(_ command: GitCommand) async throws -> GitProcessResult {
+    let result = try await runner.run(command)
+    guard result.succeeded else {
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: result.errorDescription
+      )
+    }
+    return result
+  }
+
+  private func headState(from status: PorcelainV2Status) -> HeadState {
+    if status.branchOID == "(initial)" {
+      return .unborn(branch: status.branchHead ?? "HEAD")
+    }
+    if status.branchHead == "(detached)" {
+      return .detached(oid: status.branchOID ?? "")
+    }
+    if let head = status.branchHead {
+      return .branch(head)
+    }
+    return .unknown
+  }
+
+  private func mapRecord(_ record: PorcelainV2Record) -> FileChange {
+    switch record {
+    case .ordinary(let entry):
+      return FileChange(
+        path: GitPath(rawBytes: entry.path),
+        indexStatus: entry.indexStatus,
+        worktreeStatus: entry.worktreeStatus,
+        kind: kind(index: entry.indexStatus, worktree: entry.worktreeStatus)
+      )
+    case .renamedOrCopied(let entry):
+      return FileChange(
+        path: GitPath(rawBytes: entry.tracked.path),
+        originalPath: GitPath(rawBytes: entry.originalPath),
+        indexStatus: entry.tracked.indexStatus,
+        worktreeStatus: entry.tracked.worktreeStatus,
+        kind: entry.score.first == "C" ? .copied : .renamed
+      )
+    case .unmerged(let entry):
+      return FileChange(
+        path: GitPath(rawBytes: entry.path),
+        indexStatus: entry.indexStatus,
+        worktreeStatus: entry.worktreeStatus,
+        kind: .unmerged
+      )
+    case .untracked(let path):
+      return FileChange(
+        path: GitPath(rawBytes: path),
+        indexStatus: Character("?").asciiValue!,
+        worktreeStatus: Character("?").asciiValue!,
+        kind: .untracked
+      )
+    case .ignored(let path):
+      return FileChange(
+        path: GitPath(rawBytes: path),
+        indexStatus: Character("!").asciiValue!,
+        worktreeStatus: Character("!").asciiValue!,
+        kind: .ignored
+      )
+    }
+  }
+
+  private func kind(index: UInt8, worktree: UInt8) -> FileChangeKind {
+    for byte in [index, worktree] where byte != Character(".").asciiValue {
+      switch byte {
+      case Character("A").asciiValue: return .added
+      case Character("M").asciiValue: return .modified
+      case Character("D").asciiValue: return .deleted
+      case Character("R").asciiValue: return .renamed
+      case Character("C").asciiValue: return .copied
+      case Character("T").asciiValue: return .typeChanged
+      case Character("U").asciiValue: return .unmerged
+      default: continue
+      }
+    }
+    return .unknown
+  }
+}
+
+public typealias LiveGitEngine = BundledGitCLIEngine<SwiftSubprocessRunner>
