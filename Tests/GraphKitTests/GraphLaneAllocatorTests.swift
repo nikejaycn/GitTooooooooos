@@ -81,6 +81,40 @@ struct GraphLaneAllocatorTests {
     #expect(rows[1].layout.hasIncomingEdge)
   }
 
+  @Test("Search matches multiple commit metadata fields")
+  func searchMetadata() {
+    let rows = GraphRowBuilder().build(
+      commits: [
+        CommitSummary(
+          oid: "abcdef1234567890",
+          parentOIDs: ["parent123"],
+          authorName: "Grace Hopper",
+          authorEmail: "grace@example.com",
+          authoredAt: Date(timeIntervalSince1970: 1_700_000_000),
+          subject: "Improve parser speed"
+        )
+      ],
+      references: [
+        reference(
+          "refs/heads/performance",
+          short: "performance",
+          oid: "abcdef1234567890",
+          kind: .localBranch,
+          head: true
+        )
+      ],
+      workingCopyChangeCount: 0,
+      generation: RepositoryGeneration(1)
+    )
+    let row = rows[0]
+
+    #expect(row.matches(searchQuery: "parser grace"))
+    #expect(row.matches(searchQuery: "abcdef performance"))
+    #expect(row.matches(searchQuery: "parent123 example.com"))
+    #expect(row.matches(searchQuery: "2023"))
+    #expect(!row.matches(searchQuery: "missing"))
+  }
+
   @Test("Allocates fifty thousand linear commits with bounded state")
   func largeLinearHistory() {
     let count = 50_000

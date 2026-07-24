@@ -3,15 +3,18 @@ import SwiftUI
 
 public struct CommitGraphView: NSViewRepresentable {
   private let rows: [GraphRow]
+  private let searchQuery: String
   private let onSelection: ([GraphRow]) -> Void
   private let onApproachingEnd: () -> Void
 
   public init(
     rows: [GraphRow],
+    searchQuery: String = "",
     onSelection: @escaping ([GraphRow]) -> Void = { _ in },
     onApproachingEnd: @escaping () -> Void = {}
   ) {
     self.rows = rows
+    self.searchQuery = searchQuery
     self.onSelection = onSelection
     self.onApproachingEnd = onApproachingEnd
   }
@@ -80,6 +83,7 @@ public struct CommitGraphView: NSViewRepresentable {
     context.coordinator.onSelection = onSelection
     context.coordinator.onApproachingEnd = onApproachingEnd
     context.coordinator.apply(rows: rows, to: table)
+    context.coordinator.apply(searchQuery: searchQuery, to: table)
     table.tableColumn(withIdentifier: .graph)?.width =
       Self.graphColumnWidth(for: rows)
     scrollView.toolTip = "\(rows.filter { !$0.isWorkingCopy }.count) commits"
@@ -96,6 +100,8 @@ public struct CommitGraphView: NSViewRepresentable {
     var onSelection: ([GraphRow]) -> Void
     var onApproachingEnd: () -> Void
     private var requestedEndForRowCount: Int?
+    private var searchQuery = ""
+    private var searchedRowCount = 0
     private let dateFormatter: DateFormatter
 
     init(
@@ -148,6 +154,7 @@ public struct CommitGraphView: NSViewRepresentable {
         view.identifier = identifier
         view.layout = item.layout
         view.isWorkingCopy = item.isWorkingCopy
+        view.isSearchMatch = item.matches(searchQuery: searchQuery)
         return view
       }
 
@@ -157,10 +164,11 @@ public struct CommitGraphView: NSViewRepresentable {
         ?? makeTextCell(identifier: identifier)
       let text = text(for: item, column: identifier)
       cell.textField?.stringValue = text
+      let isSearchMatch = item.matches(searchQuery: searchQuery)
       cell.textField?.font =
         identifier == .sha
         ? NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        : item.isWorkingCopy
+        : item.isWorkingCopy || isSearchMatch
           ? NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
           : NSFont.systemFont(ofSize: NSFont.systemFontSize)
       cell.toolTip = text
@@ -177,6 +185,37 @@ public struct CommitGraphView: NSViewRepresentable {
           rows.indices.contains(index) ? rows[index] : nil
         }
       )
+    }
+
+    func apply(searchQuery newQuery: String, to tableView: NSTableView) {
+      let normalizedQuery = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+      let queryChanged = normalizedQuery != searchQuery
+      guard queryChanged || searchedRowCount != rows.count else { return }
+      searchQuery = normalizedQuery
+      searchedRowCount = rows.count
+      let visibleRows = tableView.rows(in: tableView.visibleRect)
+      if visibleRows.length > 0 {
+        tableView.reloadData(
+          forRowIndexes: IndexSet(
+            integersIn: visibleRows.location..<NSMaxRange(visibleRows)
+          ),
+          columnIndexes: IndexSet(integersIn: tableView.tableColumns.indices)
+        )
+      }
+      guard
+        !normalizedQuery.isEmpty,
+        queryChanged || tableView.selectedRowIndexes.isEmpty,
+        let firstMatch = rows.firstIndex(where: {
+          $0.matches(searchQuery: normalizedQuery)
+        })
+      else {
+        return
+      }
+      tableView.selectRowIndexes(
+        IndexSet(integer: firstMatch),
+        byExtendingSelection: false
+      )
+      tableView.scrollRowToVisible(firstMatch)
     }
 
     func observeScrolling(in scrollView: NSScrollView) {
@@ -271,6 +310,9 @@ private final class GraphLaneCellView: NSView {
   var isWorkingCopy = false {
     didSet { needsDisplay = true }
   }
+  var isSearchMatch = false {
+    didSet { needsDisplay = true }
+  }
 
   override var isFlipped: Bool { true }
 
@@ -346,6 +388,11 @@ private final class GraphLaneCellView: NSView {
     context.setLineWidth(isWorkingCopy ? 2.2 : 1.2)
     context.fillEllipse(in: nodeRect)
     context.strokeEllipse(in: nodeRect)
+    if isSearchMatch {
+      context.setStrokeColor(NSColor.systemYellow.cgColor)
+      context.setLineWidth(2)
+      context.strokeEllipse(in: nodeRect.insetBy(dx: -3, dy: -3))
+    }
     context.restoreGState()
   }
 

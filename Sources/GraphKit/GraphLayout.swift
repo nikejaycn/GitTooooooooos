@@ -193,6 +193,26 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
     self.layout = layout
     self.isWorkingCopy = isWorkingCopy
   }
+
+  public func matches(searchQuery: String) -> Bool {
+    let tokens =
+      searchQuery
+      .lowercased()
+      .split(whereSeparator: \.isWhitespace)
+    guard !tokens.isEmpty else { return true }
+    let searchableText = [
+      subject,
+      author,
+      authorEmail,
+      commitOID ?? "",
+      parentOIDs.joined(separator: " "),
+      decorations.map(\.label).joined(separator: " "),
+      authoredAt?.ISO8601Format() ?? "",
+    ]
+    .joined(separator: "\n")
+    .lowercased()
+    return tokens.allSatisfy(searchableText.contains)
+  }
 }
 
 public struct GraphRowBuilder: Sendable {

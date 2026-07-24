@@ -77,6 +77,7 @@ public struct CurrentRootView: View {
   @State private var selectedCommitCount = 0
   @State private var isWorkingCopySelected = false
   @State private var selectedGraphRows: [GraphRow] = []
+  @State private var graphSearchText = ""
   @State private var pendingHardResetOID: String?
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
@@ -854,6 +855,31 @@ public struct CurrentRootView: View {
             .font(.system(.body, design: .monospaced))
             .foregroundStyle(.secondary)
           Spacer()
+          HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+              .foregroundStyle(.secondary)
+            TextField("Search loaded history", text: $graphSearchText)
+              .textFieldStyle(.plain)
+            if !graphSearchText.isEmpty {
+              Button {
+                graphSearchText = ""
+              } label: {
+                Image(systemName: "xmark.circle.fill")
+              }
+              .buttonStyle(.plain)
+              .foregroundStyle(.secondary)
+              .help("Clear Search")
+            }
+          }
+          .padding(.horizontal, 8)
+          .padding(.vertical, 5)
+          .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+          .frame(width: 220)
+          if !graphSearchText.isEmpty {
+            Text("\(graphSearchMatchCount)/\(commits.count)")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(.secondary)
+          }
           Button("Cherry-pick") {
             if let selectedCommitOID { cherryPick(selectedCommitOID) }
           }
@@ -885,6 +911,7 @@ public struct CurrentRootView: View {
           ZStack(alignment: .bottomTrailing) {
             CommitGraphView(
               rows: graphRows,
+              searchQuery: graphSearchText,
               onSelection: { rows in
                 let commitOIDs = rows.compactMap(\.commitOID)
                 selectedGraphRows = rows
@@ -1104,6 +1131,12 @@ public struct CurrentRootView: View {
       return "Working Copy"
     }
     return "Select a commit"
+  }
+
+  private var graphSearchMatchCount: Int {
+    graphRows.lazy.filter {
+      !$0.isWorkingCopy && $0.matches(searchQuery: graphSearchText)
+    }.count
   }
 
   private func headTitle(_ head: HeadState) -> String {
