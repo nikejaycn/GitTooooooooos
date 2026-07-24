@@ -37,6 +37,8 @@ struct UnifiedDiffParserTests {
     #expect(hunk.lines[2].newLineNumber == 11)
     #expect(hunk.lines.last?.kind == .noNewlineMarker)
     #expect(document.changedLineCount == 3)
+    #expect(hunk.patchText.hasPrefix("diff --git a/file.txt b/file.txt\n"))
+    #expect(hunk.patchText.contains("@@ -10,3 +10,4 @@ function\n"))
   }
 
   @Test("Recognizes binary diffs")

@@ -574,6 +574,70 @@ struct GitEngineTests {
     ])
     #expect(recoveryRefs.split(separator: "\n").count >= 3)
   }
+
+  @Test(
+    "Live hunk stage and unstage affect only the selected hunk",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveHunkMutation() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-hunk-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("lines.txt")
+    let original = (1...24).map { "line \($0)" }
+    try Data((original.joined(separator: "\n") + "\n").utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "lines.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+
+    var changed = original
+    changed[1] = "changed near start"
+    changed[21] = "changed near end"
+    try Data((changed.joined(separator: "\n") + "\n").utf8).write(to: file)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    let path = GitPath("lines.txt")
+    let unstaged = try await engine.diff(
+      at: location,
+      path: path,
+      source: .unstaged
+    )
+    #expect(unstaged.hunks.count == 2)
+
+    try await engine.applyHunk(
+      at: location,
+      hunk: unstaged.hunks[0],
+      source: .unstaged
+    )
+    var status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.changes.first?.isStaged == true)
+    #expect(status.changes.first?.isUnstaged == true)
+    let staged = try await engine.diff(at: location, path: path, source: .staged)
+    #expect(staged.hunks.count == 1)
+
+    try await engine.applyHunk(
+      at: location,
+      hunk: staged.hunks[0],
+      source: .staged
+    )
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(2)
+    )
+    #expect(status.changes.first?.isStaged == false)
+    #expect(status.changes.first?.isUnstaged == true)
+  }
 }
 
 private func runGit(_ arguments: [String]) throws {

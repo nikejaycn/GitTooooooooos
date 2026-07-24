@@ -19,6 +19,7 @@ public struct UnifiedDiffParser: Sendable {
     var hunks: [DiffHunk] = []
     var current: HunkBuilder?
     var binary = false
+    var fileHeader: [String] = []
 
     for row in rows {
       if row.hasPrefix("Binary files ") || row == "GIT binary patch" {
@@ -28,10 +29,13 @@ public struct UnifiedDiffParser: Sendable {
         if let current {
           hunks.append(current.build())
         }
-        current = try parseHeader(row)
+        current = try parseHeader(row, fileHeader: fileHeader)
         continue
       }
-      guard var builder = current else { continue }
+      guard var builder = current else {
+        fileHeader.append(row)
+        continue
+      }
       if row.hasPrefix("+") && !row.hasPrefix("+++") {
         builder.append(.addition, text: String(row.dropFirst()))
       } else if row.hasPrefix("-") && !row.hasPrefix("---") {
@@ -58,7 +62,10 @@ public struct UnifiedDiffParser: Sendable {
     )
   }
 
-  private func parseHeader(_ row: String) throws -> HunkBuilder {
+  private func parseHeader(
+    _ row: String,
+    fileHeader: [String]
+  ) throws -> HunkBuilder {
     guard let closing = row.dropFirst(3).range(of: " @@") else {
       throw UnifiedDiffParserError.malformedHunkHeader(row)
     }
@@ -76,7 +83,9 @@ public struct UnifiedDiffParser: Sendable {
       oldCount: oldRange.1,
       newStart: newRange.0,
       newCount: newRange.1,
-      heading: heading
+      heading: heading,
+      fileHeader: fileHeader,
+      rawHeader: row
     )
   }
 
@@ -99,7 +108,10 @@ private struct HunkBuilder {
   let newStart: Int
   let newCount: Int
   let heading: String
+  let fileHeader: [String]
+  let rawHeader: String
   var lines: [DiffLine] = []
+  var rawLines: [String] = []
   var oldLine: Int
   var newLine: Int
 
@@ -108,13 +120,17 @@ private struct HunkBuilder {
     oldCount: Int,
     newStart: Int,
     newCount: Int,
-    heading: String
+    heading: String,
+    fileHeader: [String],
+    rawHeader: String
   ) {
     self.oldStart = oldStart
     self.oldCount = oldCount
     self.newStart = newStart
     self.newCount = newCount
     self.heading = heading
+    self.fileHeader = fileHeader
+    self.rawHeader = rawHeader
     self.oldLine = oldStart
     self.newLine = newStart
   }
@@ -148,6 +164,11 @@ private struct HunkBuilder {
         text: text
       )
     )
+    rawLines.append(
+      kind == .noNewlineMarker
+        ? text
+        : "\(kind == .addition ? "+" : kind == .deletion ? "-" : " ")\(text)"
+    )
   }
 
   func build() -> DiffHunk {
@@ -157,7 +178,8 @@ private struct HunkBuilder {
       newStart: newStart,
       newCount: newCount,
       heading: heading,
-      lines: lines
+      lines: lines,
+      patchText: (fileHeader + [rawHeader] + rawLines).joined(separator: "\n") + "\n"
     )
   }
 }

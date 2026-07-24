@@ -5,6 +5,7 @@ public struct GitCommand: Hashable, Sendable {
   public let arguments: [[UInt8]]
   public let workingDirectory: URL?
   public let environmentOverrides: [String: String?]
+  public let standardInput: [UInt8]?
   public let outputLimit: Int
   public let timeout: Duration
 
@@ -12,6 +13,7 @@ public struct GitCommand: Hashable, Sendable {
     arguments: [String],
     workingDirectory: URL? = nil,
     environmentOverrides: [String: String?] = [:],
+    standardInput: [UInt8]? = nil,
     outputLimit: Int = 16 * 1024 * 1024,
     timeout: Duration = .seconds(60)
   ) {
@@ -19,6 +21,7 @@ public struct GitCommand: Hashable, Sendable {
       rawArguments: arguments.map { Array($0.utf8) },
       workingDirectory: workingDirectory,
       environmentOverrides: environmentOverrides,
+      standardInput: standardInput,
       outputLimit: outputLimit,
       timeout: timeout
     )
@@ -28,12 +31,14 @@ public struct GitCommand: Hashable, Sendable {
     rawArguments: [[UInt8]],
     workingDirectory: URL? = nil,
     environmentOverrides: [String: String?] = [:],
+    standardInput: [UInt8]? = nil,
     outputLimit: Int = 16 * 1024 * 1024,
     timeout: Duration = .seconds(60)
   ) {
     self.arguments = rawArguments
     self.workingDirectory = workingDirectory
     self.environmentOverrides = environmentOverrides
+    self.standardInput = standardInput
     self.outputLimit = outputLimit
     self.timeout = timeout
   }
@@ -150,6 +155,7 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
             environment: environment,
             workingDirectory: command.workingDirectory.map { .init($0.path) },
             platformOptions: platformOptions,
+            input: .array(command.standardInput ?? []),
             output: .bytes(limit: command.outputLimit),
             error: .bytes(limit: command.outputLimit)
           )

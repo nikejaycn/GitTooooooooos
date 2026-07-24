@@ -192,6 +192,12 @@ private actor StubGitEngine: GitEngineProtocol {
     nil
   }
 
+  func applyHunk(
+    at location: RepositoryLocation,
+    hunk: DiffHunk,
+    source: DiffSource
+  ) async throws {}
+
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations
   }

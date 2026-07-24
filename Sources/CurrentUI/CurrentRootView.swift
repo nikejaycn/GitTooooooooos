@@ -43,6 +43,7 @@ public struct CurrentRootView: View {
   private let reset: (String, ResetMode) -> Void
   private let rebase: (String) -> Void
   private let undoLastOperation: () -> Void
+  private let applyHunk: (DiffDocument, DiffHunk) -> Void
   private let saveStash: (String?) -> Void
   private let popStash: (String) -> Void
   private let dropStash: (String) -> Void
@@ -90,6 +91,7 @@ public struct CurrentRootView: View {
     reset: @escaping (String, ResetMode) -> Void,
     rebase: @escaping (String) -> Void,
     undoLastOperation: @escaping () -> Void,
+    applyHunk: @escaping (DiffDocument, DiffHunk) -> Void,
     saveStash: @escaping (String?) -> Void,
     popStash: @escaping (String) -> Void,
     dropStash: @escaping (String) -> Void,
@@ -129,6 +131,7 @@ public struct CurrentRootView: View {
     self.reset = reset
     self.rebase = rebase
     self.undoLastOperation = undoLastOperation
+    self.applyHunk = applyHunk
     self.saveStash = saveStash
     self.popStash = popStash
     self.dropStash = dropStash
@@ -591,6 +594,28 @@ public struct CurrentRootView: View {
         }
         .padding(10)
         Divider()
+        if !selectedDiff.hunks.isEmpty {
+          ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+              ForEach(Array(selectedDiff.hunks.enumerated()), id: \.element.id) {
+                index,
+                hunk in
+                Button(
+                  "\(selectedDiff.source == .staged ? "Unstage" : "Stage") Hunk \(index + 1)"
+                ) {
+                  applyHunk(selectedDiff, hunk)
+                }
+                .disabled(isLoading)
+                .help(
+                  "@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@"
+                )
+              }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+          }
+          Divider()
+        }
         DiffTextView(document: selectedDiff)
       }
     } else {

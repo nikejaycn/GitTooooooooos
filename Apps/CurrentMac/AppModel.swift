@@ -175,6 +175,32 @@ final class AppModel {
     applyHistory(.undo(reference: reference.name))
   }
 
+  func applyHunk(_ document: DiffDocument, hunk: DiffHunk) {
+    guard let repository else { return }
+    let verb = document.source == .staged ? "Unstage" : "Stage"
+    let activityID = beginActivity("\(verb) hunk in \(document.path.displayString)")
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        let snapshot = try await repository.applyHunk(
+          hunk,
+          source: document.source
+        )
+        apply(snapshot)
+        selectedDiff = nil
+        if let change = snapshot.status.changes.first(where: { $0.path == document.path }) {
+          loadDiff(change)
+        }
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   private func loadGitVersion() async {
     guard let engine else { return }
     do {

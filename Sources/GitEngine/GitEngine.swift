@@ -123,6 +123,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: HistoryMutation
   ) async throws -> RecoveryReference?
+  func applyHunk(
+    at location: RepositoryLocation,
+    hunk: DiffHunk,
+    source: DiffSource
+  ) async throws
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -812,6 +817,32 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
       return inverse
     }
+  }
+
+  public func applyHunk(
+    at location: RepositoryLocation,
+    hunk: DiffHunk,
+    source: DiffSource
+  ) async throws {
+    let patch = Array(hunk.patchText.utf8)
+    guard !patch.isEmpty, patch.count <= 16 * 1024 * 1024,
+      hunk.patchText.hasPrefix("diff --git ")
+    else {
+      throw GitEngineError.invalidOutput("The selected hunk did not contain a valid patch.")
+    }
+    let arguments =
+      ["apply", "--cached", "--recount", "--whitespace=nowarn"]
+      + (source == .staged ? ["--reverse"] : [])
+      + ["-"]
+    _ = try await execute(
+      GitCommand(
+        arguments: arguments,
+        workingDirectory: location.worktreeURL,
+        standardInput: patch,
+        outputLimit: 4 * 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
   }
 
   private func validateBranchName(

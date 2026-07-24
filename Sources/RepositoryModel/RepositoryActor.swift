@@ -306,6 +306,17 @@ public actor RepositoryActor {
     return result
   }
 
+  @discardableResult
+  public func applyHunk(
+    _ hunk: DiffHunk,
+    source: DiffSource,
+    historyLimit: Int = 500
+  ) async throws -> RepositorySnapshot {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.applyHunk(at: location, hunk: hunk, source: source)
+    }
+  }
+
   private func applyRepositoryMutation(
     historyLimit: Int,
     operation mutation:
