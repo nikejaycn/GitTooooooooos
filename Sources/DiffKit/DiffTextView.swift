@@ -8,7 +8,107 @@ public struct DiffTextView: NSViewRepresentable {
     self.document = document
   }
 
-  public func makeNSView(context: Context) -> NSScrollView {
+  public func makeNSView(context: Context) -> SyntaxDiffScrollView {
+    SyntaxDiffScrollView()
+  }
+
+  public func updateNSView(
+    _ scrollView: SyntaxDiffScrollView,
+    context: Context
+  ) {
+    scrollView.update(document)
+  }
+
+  public static func dismantleNSView(
+    _ scrollView: SyntaxDiffScrollView,
+    coordinator: Void
+  ) {
+    scrollView.cancelHighlighting()
+  }
+}
+
+public final class SyntaxDiffScrollView: NSScrollView {
+  private struct RenderedDocument {
+    let attributedText: NSAttributedString
+    let oldProjection: SyntaxHighlightProjection
+    let newProjection: SyntaxHighlightProjection
+  }
+
+  private let diffTextView = SyntaxDiffScrollView.makeTextView()
+  private let highlightSession = SyntaxHighlightSession()
+  private var highlightDebounceTask: Task<Void, Never>?
+  private var renderedDocument: DiffDocument?
+
+  override public init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    hasVerticalScroller = true
+    hasHorizontalScroller = true
+    autohidesScrollers = true
+    documentView = diffTextView
+    contentView.postsBoundsChangedNotifications = true
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(visibleBoundsChanged(_:)),
+      name: NSView.boundsDidChangeNotification,
+      object: contentView
+    )
+  }
+
+  @available(*, unavailable)
+  public required init?(coder: NSCoder) {
+    nil
+  }
+
+  deinit {
+    highlightDebounceTask?.cancel()
+    NotificationCenter.default.removeObserver(self)
+  }
+
+  public func update(_ document: DiffDocument) {
+    guard renderedDocument != document else { return }
+    renderedDocument = document
+    let rendered = render(document)
+    diffTextView.textStorage?.setAttributedString(rendered.attributedText)
+    highlightSession.update(
+      path: document.path,
+      targets: [
+        SyntaxHighlightTarget(
+          textView: diffTextView,
+          projection: rendered.oldProjection
+        ),
+        SyntaxHighlightTarget(
+          textView: diffTextView,
+          projection: rendered.newProjection
+        ),
+      ]
+    )
+    scheduleHighlight(after: .zero)
+  }
+
+  public func cancelHighlighting() {
+    highlightDebounceTask?.cancel()
+    highlightSession.cancel()
+  }
+
+  @objc
+  private func visibleBoundsChanged(_ notification: Notification) {
+    scheduleHighlight(after: .milliseconds(80))
+  }
+
+  private func scheduleHighlight(after delay: Duration) {
+    highlightDebounceTask?.cancel()
+    highlightDebounceTask = Task { [weak self] in
+      if delay > .zero {
+        try? await Task.sleep(for: delay)
+      } else {
+        await Task.yield()
+      }
+      guard !Task.isCancelled else { return }
+      self?.highlightSession.highlightVisibleRanges()
+    }
+  }
+
+  private static func makeTextView() -> NSTextView {
     let contentStorage = NSTextContentStorage()
     let layoutManager = NSTextLayoutManager()
     let container = NSTextContainer(
@@ -31,24 +131,13 @@ public struct DiffTextView: NSViewRepresentable {
     textView.textContainerInset = NSSize(width: 12, height: 10)
     textView.autoresizingMask = [.width]
     textView.textContainer?.widthTracksTextView = false
-
-    let scrollView = NSScrollView()
-    scrollView.hasVerticalScroller = true
-    scrollView.hasHorizontalScroller = true
-    scrollView.autohidesScrollers = true
-    scrollView.documentView = textView
-    return scrollView
+    return textView
   }
 
-  public func updateNSView(_ scrollView: NSScrollView, context: Context) {
-    guard let textView = scrollView.documentView as? NSTextView else { return }
-    let rendered = render(document)
-    guard textView.textStorage?.isEqual(to: rendered) != true else { return }
-    textView.textStorage?.setAttributedString(rendered)
-  }
-
-  private func render(_ document: DiffDocument) -> NSAttributedString {
+  private func render(_ document: DiffDocument) -> RenderedDocument {
     let output = NSMutableAttributedString()
+    var oldProjection = SyntaxHighlightProjectionBuilder()
+    var newProjection = SyntaxHighlightProjectionBuilder()
     let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = 2
@@ -65,7 +154,11 @@ public struct DiffTextView: NSViewRepresentable {
           attributes: base
         )
       )
-      return output
+      return RenderedDocument(
+        attributedText: output,
+        oldProjection: oldProjection.build(),
+        newProjection: newProjection.build()
+      )
     }
 
     for hunk in document.hunks {
@@ -100,14 +193,34 @@ public struct DiffTextView: NSViewRepresentable {
         if let background {
           attributes[.backgroundColor] = background
         }
+        let renderedLocation = output.length + prefix.utf16.count
         output.append(
           NSAttributedString(
             string: "\(prefix)\(line.text)\n",
             attributes: attributes
           )
         )
+        let renderedRange = NSRange(
+          location: renderedLocation,
+          length: line.text.utf16.count
+        )
+        switch line.kind {
+        case .context:
+          oldProjection.append(line.text, renderedRange: renderedRange)
+          newProjection.append(line.text, renderedRange: nil)
+        case .deletion:
+          oldProjection.append(line.text, renderedRange: renderedRange)
+        case .addition:
+          newProjection.append(line.text, renderedRange: renderedRange)
+        case .noNewlineMarker:
+          break
+        }
       }
     }
-    return output
+    return RenderedDocument(
+      attributedText: output,
+      oldProjection: oldProjection.build(),
+      newProjection: newProjection.build()
+    )
   }
 }

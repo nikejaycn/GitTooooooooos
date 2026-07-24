@@ -15,6 +15,13 @@ public struct SplitDiffTextView: NSViewRepresentable {
   public func updateNSView(_ view: SyncedSplitDiffView, context: Context) {
     view.update(document)
   }
+
+  public static func dismantleNSView(
+    _ view: SyncedSplitDiffView,
+    coordinator: Void
+  ) {
+    view.cancelHighlighting()
+  }
 }
 
 public final class SyncedSplitDiffView: NSView {
@@ -23,11 +30,25 @@ public final class SyncedSplitDiffView: NSView {
     case new
   }
 
+  private struct RenderedDocument {
+    let old: NSAttributedString
+    let new: NSAttributedString
+    let oldProjection: SyntaxHighlightProjection
+    let newProjection: SyntaxHighlightProjection
+  }
+
+  private struct RenderedLine {
+    let attributedText: NSAttributedString
+    let codeRangeOffset: Int?
+  }
+
   private let splitView = NSSplitView()
   private let oldScrollView = NSScrollView()
   private let newScrollView = NSScrollView()
   private let oldTextView = SyncedSplitDiffView.makeTextView()
   private let newTextView = SyncedSplitDiffView.makeTextView()
+  private let highlightSession = SyntaxHighlightSession()
+  private var highlightDebounceTask: Task<Void, Never>?
   private var isSynchronizingScroll = false
   private var renderedDocument: DiffDocument?
   private var didSetInitialDividerPosition = false
@@ -66,6 +87,7 @@ public final class SyncedSplitDiffView: NSView {
   }
 
   deinit {
+    highlightDebounceTask?.cancel()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -87,6 +109,25 @@ public final class SyncedSplitDiffView: NSView {
     let rendered = render(document)
     oldTextView.textStorage?.setAttributedString(rendered.old)
     newTextView.textStorage?.setAttributedString(rendered.new)
+    highlightSession.update(
+      path: document.path,
+      targets: [
+        SyntaxHighlightTarget(
+          textView: oldTextView,
+          projection: rendered.oldProjection
+        ),
+        SyntaxHighlightTarget(
+          textView: newTextView,
+          projection: rendered.newProjection
+        ),
+      ]
+    )
+    scheduleHighlight(after: .zero)
+  }
+
+  public func cancelHighlighting() {
+    highlightDebounceTask?.cancel()
+    highlightSession.cancel()
   }
 
   @objc
@@ -111,6 +152,20 @@ public final class SyncedSplitDiffView: NSView {
     )
     target.enclosingScrollView?.reflectScrolledClipView(target)
     isSynchronizingScroll = false
+    scheduleHighlight(after: .milliseconds(80))
+  }
+
+  private func scheduleHighlight(after delay: Duration) {
+    highlightDebounceTask?.cancel()
+    highlightDebounceTask = Task { [weak self] in
+      if delay > .zero {
+        try? await Task.sleep(for: delay)
+      } else {
+        await Task.yield()
+      }
+      guard !Task.isCancelled else { return }
+      self?.highlightSession.highlightVisibleRanges()
+    }
   }
 
   private static func makeTextView() -> NSTextView {
@@ -148,9 +203,11 @@ public final class SyncedSplitDiffView: NSView {
 
   private func render(
     _ document: DiffDocument
-  ) -> (old: NSAttributedString, new: NSAttributedString) {
+  ) -> RenderedDocument {
     let oldOutput = NSMutableAttributedString()
     let newOutput = NSMutableAttributedString()
+    var oldProjection = SyntaxHighlightProjectionBuilder()
+    var newProjection = SyntaxHighlightProjectionBuilder()
     let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = 2
@@ -167,7 +224,12 @@ public final class SyncedSplitDiffView: NSView {
       )
       oldOutput.append(message)
       newOutput.append(message)
-      return (oldOutput, newOutput)
+      return RenderedDocument(
+        old: oldOutput,
+        new: newOutput,
+        oldProjection: oldProjection.build(),
+        newProjection: newProjection.build()
+      )
     }
 
     for row in SplitDiffLayout().rows(for: document) {
@@ -184,18 +246,59 @@ public final class SyncedSplitDiffView: NSView {
         oldOutput.append(header)
         newOutput.append(header)
       case .content:
-        oldOutput.append(render(row.oldLine, side: .old, base: base))
-        newOutput.append(render(row.newLine, side: .new, base: base))
+        let oldLine = render(row.oldLine, side: .old, base: base)
+        let newLine = render(row.newLine, side: .new, base: base)
+        appendProjection(
+          line: row.oldLine,
+          renderedLine: oldLine,
+          renderedLocation: oldOutput.length,
+          builder: &oldProjection
+        )
+        appendProjection(
+          line: row.newLine,
+          renderedLine: newLine,
+          renderedLocation: newOutput.length,
+          builder: &newProjection
+        )
+        oldOutput.append(oldLine.attributedText)
+        newOutput.append(newLine.attributedText)
       }
     }
-    return (oldOutput, newOutput)
+    return RenderedDocument(
+      old: oldOutput,
+      new: newOutput,
+      oldProjection: oldProjection.build(),
+      newProjection: newProjection.build()
+    )
+  }
+
+  private func appendProjection(
+    line: DiffLine?,
+    renderedLine: RenderedLine,
+    renderedLocation: Int,
+    builder: inout SyntaxHighlightProjectionBuilder
+  ) {
+    guard
+      let line,
+      line.kind != .noNewlineMarker,
+      let codeRangeOffset = renderedLine.codeRangeOffset
+    else {
+      return
+    }
+    builder.append(
+      line.text,
+      renderedRange: NSRange(
+        location: renderedLocation + codeRangeOffset,
+        length: line.text.utf16.count
+      )
+    )
   }
 
   private func render(
     _ line: DiffLine?,
     side: Side,
     base: [NSAttributedString.Key: Any]
-  ) -> NSAttributedString {
+  ) -> RenderedLine {
     var attributes = base
     let number: Int?
     let marker: String
@@ -234,9 +337,12 @@ public final class SyncedSplitDiffView: NSView {
         repeating: " ",
         count: max(1, 6 - numberText.count)
       ) + numberText
-    return NSAttributedString(
-      string: "\(gutter) \(marker)\(line?.text ?? "")\n",
-      attributes: attributes
+    return RenderedLine(
+      attributedText: NSAttributedString(
+        string: "\(gutter) \(marker)\(line?.text ?? "")\n",
+        attributes: attributes
+      ),
+      codeRangeOffset: line.map { _ in gutter.utf16.count + 2 }
     )
   }
 }

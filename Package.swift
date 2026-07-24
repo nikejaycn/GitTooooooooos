@@ -23,7 +23,59 @@ let package = Package(
     .package(
       url: "https://github.com/swiftlang/swift-subprocess.git",
       exact: "0.5.0"
-    )
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/swift-tree-sitter.git",
+      exact: "0.25.0"
+    ),
+    .package(
+      url: "https://github.com/alex-pinkus/tree-sitter-swift.git",
+      revision: "0.7.3-with-generated-files"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-c.git",
+      exact: "0.24.2"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-cpp.git",
+      exact: "0.23.4"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter-grammars/tree-sitter-objc.git",
+      exact: "3.0.2"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-javascript.git",
+      exact: "0.23.1"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-typescript.git",
+      exact: "0.23.2"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-python.git",
+      exact: "0.23.6"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-go.git",
+      exact: "0.25.0"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-rust.git",
+      exact: "0.24.2"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-java.git",
+      exact: "0.23.5"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter/tree-sitter-json.git",
+      exact: "0.24.8"
+    ),
+    .package(
+      url: "https://github.com/tree-sitter-grammars/tree-sitter-yaml.git",
+      exact: "0.7.0"
+    ),
   ],
   targets: [
     .target(name: "CurrentDomain"),
@@ -54,7 +106,22 @@ let package = Package(
     ),
     .target(
       name: "DiffKit",
-      dependencies: ["CurrentDomain"]
+      dependencies: [
+        "CurrentDomain",
+        .product(name: "SwiftTreeSitter", package: "swift-tree-sitter"),
+        .product(name: "TreeSitterSwift", package: "tree-sitter-swift"),
+        .product(name: "TreeSitterC", package: "tree-sitter-c"),
+        .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
+        .product(name: "TreeSitterObjc", package: "tree-sitter-objc"),
+        .product(name: "TreeSitterJavaScript", package: "tree-sitter-javascript"),
+        .product(name: "TreeSitterTypeScript", package: "tree-sitter-typescript"),
+        .product(name: "TreeSitterPython", package: "tree-sitter-python"),
+        .product(name: "TreeSitterGo", package: "tree-sitter-go"),
+        .product(name: "TreeSitterRust", package: "tree-sitter-rust"),
+        .product(name: "TreeSitterJava", package: "tree-sitter-java"),
+        .product(name: "TreeSitterJSON", package: "tree-sitter-json"),
+        .product(name: "TreeSitterYAML", package: "tree-sitter-yaml"),
+      ]
     ),
     .target(
       name: "MergeKit",
