@@ -35,6 +35,23 @@ struct RepositoryActorTests {
 
     #expect(status.generation == RepositoryGeneration(2))
   }
+
+  @Test("Snapshot publishes status, history, and refs at one generation")
+  func snapshot() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    let snapshot = try await repository.refreshSnapshot(historyLimit: 25)
+
+    #expect(snapshot.generation == RepositoryGeneration(1))
+    #expect(snapshot.status.generation == snapshot.generation)
+    #expect(snapshot.commits.isEmpty)
+    #expect(snapshot.references.isEmpty)
+    #expect(await repository.snapshot() == snapshot)
+  }
 }
 
 private actor StubGitEngine: GitEngineProtocol {
@@ -63,5 +80,16 @@ private actor StubGitEngine: GitEngineProtocol {
       behind: 0,
       changes: []
     )
+  }
+
+  func history(
+    at location: RepositoryLocation,
+    limit: Int
+  ) async throws -> [CommitSummary] {
+    []
+  }
+
+  func references(at location: RepositoryLocation) async throws -> [GitReference] {
+    []
   }
 }

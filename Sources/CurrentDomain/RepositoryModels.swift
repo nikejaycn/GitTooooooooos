@@ -128,3 +128,22 @@ public struct RepositoryStatus: Hashable, Sendable {
     self.changes = changes
   }
 }
+
+public struct RepositorySnapshot: Hashable, Sendable {
+  public let generation: RepositoryGeneration
+  public let status: RepositoryStatus
+  public let commits: [CommitSummary]
+  public let references: [GitReference]
+
+  public init(
+    generation: RepositoryGeneration,
+    status: RepositoryStatus,
+    commits: [CommitSummary],
+    references: [GitReference]
+  ) {
+    self.generation = generation
+    self.status = status
+    self.commits = commits
+    self.references = references
+  }
+}

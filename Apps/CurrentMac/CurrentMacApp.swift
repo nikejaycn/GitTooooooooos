@@ -11,6 +11,8 @@ struct CurrentMacApp: App {
         repositoryName: model.repositoryName,
         gitVersion: model.gitVersion,
         status: model.repositoryStatus,
+        commits: model.commits,
+        references: model.references,
         isLoading: model.isLoading,
         errorMessage: model.errorMessage,
         openRepository: model.chooseRepository,

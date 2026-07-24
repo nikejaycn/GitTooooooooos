@@ -12,6 +12,14 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
     self.subject = subject
     self.author = author
   }
+
+  public init(commit: CommitSummary) {
+    self.init(
+      id: commit.oid,
+      subject: commit.subject,
+      author: commit.authorName
+    )
+  }
 }
 
 public struct CommitGraphView: NSViewRepresentable {
@@ -21,19 +29,86 @@ public struct CommitGraphView: NSViewRepresentable {
     self.rows = rows
   }
 
+  public func makeCoordinator() -> Coordinator {
+    Coordinator(rows: rows)
+  }
+
   public func makeNSView(context: Context) -> NSScrollView {
     let table = NSTableView()
-    table.headerView = nil
     table.usesAlternatingRowBackgroundColors = true
-    table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("commit")))
+    table.allowsMultipleSelection = true
+    table.rowHeight = 26
+    table.delegate = context.coordinator
+    table.dataSource = context.coordinator
+
+    let commit = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("commit"))
+    commit.title = "Commit"
+    commit.minWidth = 360
+    commit.resizingMask = .autoresizingMask
+    table.addTableColumn(commit)
+
+    let author = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("author"))
+    author.title = "Author"
+    author.width = 160
+    author.minWidth = 100
+    table.addTableColumn(author)
+
     let scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
     scrollView.documentView = table
     return scrollView
   }
 
   public func updateNSView(_ scrollView: NSScrollView, context: Context) {
-    // Data source and CALayer lane overlay are introduced in E05.
+    context.coordinator.rows = rows
+    (scrollView.documentView as? NSTableView)?.reloadData()
     scrollView.toolTip = "\(rows.count) commits"
+  }
+
+  public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    var rows: [GraphRow]
+
+    init(rows: [GraphRow]) {
+      self.rows = rows
+    }
+
+    public func numberOfRows(in tableView: NSTableView) -> Int {
+      rows.count
+    }
+
+    public func tableView(
+      _ tableView: NSTableView,
+      viewFor tableColumn: NSTableColumn?,
+      row: Int
+    ) -> NSView? {
+      guard rows.indices.contains(row), let tableColumn else { return nil }
+      let item = rows[row]
+      let identifier = tableColumn.identifier
+      let text = identifier.rawValue == "author" ? item.author : item.subject
+
+      if let reused = tableView.makeView(withIdentifier: identifier, owner: self)
+        as? NSTableCellView
+      {
+        reused.textField?.stringValue = text
+        reused.toolTip = text
+        return reused
+      }
+
+      let cell = NSTableCellView()
+      cell.identifier = identifier
+      let field = NSTextField(labelWithString: text)
+      field.lineBreakMode = .byTruncatingTail
+      field.translatesAutoresizingMaskIntoConstraints = false
+      cell.addSubview(field)
+      cell.textField = field
+      NSLayoutConstraint.activate([
+        field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+        field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+        field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      ])
+      cell.toolTip = text
+      return cell
+    }
   }
 }

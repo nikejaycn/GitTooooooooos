@@ -11,6 +11,8 @@ final class AppModel {
   private(set) var repositoryName: String?
   private(set) var gitVersion: String?
   private(set) var repositoryStatus: RepositoryStatus?
+  private(set) var commits: [CommitSummary] = []
+  private(set) var references: [GitReference] = []
   private(set) var isLoading = false
   private(set) var errorMessage: String?
 
@@ -27,6 +29,11 @@ final class AppModel {
 
       Task {
         await loadGitVersion()
+      }
+      if let path = CommandLine.arguments.dropFirst().first, !path.isEmpty {
+        Task {
+          await openRepository(at: URL(fileURLWithPath: path))
+        }
       }
     } catch {
       errorMessage = error.localizedDescription
@@ -73,11 +80,16 @@ final class AppModel {
       let opened = try await RepositoryActor.open(at: url, engine: engine)
       repository = opened
       repositoryName = opened.location.worktreeURL.lastPathComponent
-      repositoryStatus = try await opened.refresh()
+      let snapshot = try await opened.refreshSnapshot()
+      repositoryStatus = snapshot.status
+      commits = snapshot.commits
+      references = snapshot.references
     } catch {
       repository = nil
       repositoryName = nil
       repositoryStatus = nil
+      commits = []
+      references = []
       errorMessage = error.localizedDescription
     }
     isLoading = false
@@ -88,7 +100,10 @@ final class AppModel {
     isLoading = true
     errorMessage = nil
     do {
-      repositoryStatus = try await repository.refresh()
+      let snapshot = try await repository.refreshSnapshot()
+      repositoryStatus = snapshot.status
+      commits = snapshot.commits
+      references = snapshot.references
     } catch {
       errorMessage = error.localizedDescription
     }

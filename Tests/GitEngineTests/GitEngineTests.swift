@@ -141,9 +141,14 @@ struct GitEngineTests {
       at: location,
       generation: RepositoryGeneration(1)
     )
+    let history = try await engine.history(at: location, limit: 2)
+    let references = try await engine.references(at: location)
 
     #expect(location.worktreeURL == repositoryURL.standardizedFileURL)
     #expect(status.generation == RepositoryGeneration(1))
+    #expect(history.count == 2)
+    #expect(history.allSatisfy { $0.oid.count == 40 })
+    #expect(references.contains { $0.fullName == "refs/heads/main" })
   }
 }
 

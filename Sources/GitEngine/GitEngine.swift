@@ -81,6 +81,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     generation: RepositoryGeneration
   ) async throws -> RepositoryStatus
+  func history(
+    at location: RepositoryLocation,
+    limit: Int
+  ) async throws -> [CommitSummary]
+  func references(at location: RepositoryLocation) async throws -> [GitReference]
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -201,6 +206,75 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       behind: parsed.behind,
       changes: parsed.records.map(mapRecord)
     )
+  }
+
+  public func history(
+    at location: RepositoryLocation,
+    limit: Int = 500
+  ) async throws -> [CommitSummary] {
+    let boundedLimit = min(max(limit, 1), 10_000)
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "log",
+          "--all",
+          "--topo-order",
+          "--date-order",
+          "--max-count=\(boundedLimit)",
+          "--format=%x1e%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00",
+        ],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024
+      )
+    )
+
+    do {
+      return try HistoryParser().parse(result.standardOutput).map { commit in
+        CommitSummary(
+          oid: commit.oid,
+          parentOIDs: commit.parentOIDs,
+          authorName: commit.authorName,
+          authorEmail: commit.authorEmail,
+          authoredAt: Date(timeIntervalSince1970: TimeInterval(commit.authoredAtUnixSeconds)),
+          subject: commit.subject
+        )
+      }
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+  }
+
+  public func references(
+    at location: RepositoryLocation
+  ) async throws -> [GitReference] {
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "for-each-ref",
+          "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(upstream:short)%00%(HEAD)%1e",
+          "refs/heads",
+          "refs/remotes",
+          "refs/tags",
+          "refs/notes",
+        ],
+        workingDirectory: location.worktreeURL
+      )
+    )
+
+    do {
+      return try ReferenceParser().parse(result.standardOutput).map { reference in
+        GitReference(
+          fullName: reference.fullName,
+          shortName: reference.shortName,
+          targetOID: reference.targetOID,
+          upstream: reference.upstream,
+          kind: referenceKind(reference.fullName),
+          isHEAD: reference.headMarker == "*"
+        )
+      }
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
   }
 
   private func bareStatus(
@@ -324,6 +398,22 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
     }
     return .unknown
+  }
+
+  private func referenceKind(_ fullName: String) -> GitReferenceKind {
+    if fullName.hasPrefix("refs/heads/") {
+      return .localBranch
+    }
+    if fullName.hasPrefix("refs/remotes/") {
+      return .remoteBranch
+    }
+    if fullName.hasPrefix("refs/tags/") {
+      return .tag
+    }
+    if fullName.hasPrefix("refs/notes/") {
+      return .note
+    }
+    return .other
   }
 }
 
