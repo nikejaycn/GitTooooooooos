@@ -72,6 +72,10 @@ public struct CurrentRootView: View {
   private let createBranch: (String) -> Void
   private let checkoutBranch: (String) -> Void
   private let mergeBranch: (String) -> Void
+  private let createTag: (String, String?, String?) -> Void
+  private let deleteTag: (GitReference) -> Void
+  private let pushTag: (GitReference, GitRemote) -> Void
+  private let deleteRemoteTag: (GitReference, GitRemote) -> Void
   private let createWorktree: (String, String?) -> Void
   private let openWorktree: (GitWorktree) -> Void
   private let lockWorktree: (GitWorktree) -> Void
@@ -114,6 +118,12 @@ public struct CurrentRootView: View {
   @State private var commitMessage = ""
   @State private var newBranchName = ""
   @State private var isCreatingBranch = false
+  @State private var isCreatingTag = false
+  @State private var newTagName = ""
+  @State private var newTagTarget = ""
+  @State private var newTagMessage = ""
+  @State private var pendingTagDeletion: GitReference?
+  @State private var pendingRemoteTagDeletion: PendingRemoteTagDeletion?
   @State private var isCreatingWorktree = false
   @State private var newWorktreeBranch = ""
   @State private var newWorktreeStartPoint = ""
@@ -198,6 +208,10 @@ public struct CurrentRootView: View {
     createBranch: @escaping (String) -> Void,
     checkoutBranch: @escaping (String) -> Void,
     mergeBranch: @escaping (String) -> Void,
+    createTag: @escaping (String, String?, String?) -> Void,
+    deleteTag: @escaping (GitReference) -> Void,
+    pushTag: @escaping (GitReference, GitRemote) -> Void,
+    deleteRemoteTag: @escaping (GitReference, GitRemote) -> Void,
     createWorktree: @escaping (String, String?) -> Void,
     openWorktree: @escaping (GitWorktree) -> Void,
     lockWorktree: @escaping (GitWorktree) -> Void,
@@ -289,6 +303,10 @@ public struct CurrentRootView: View {
     self.createBranch = createBranch
     self.checkoutBranch = checkoutBranch
     self.mergeBranch = mergeBranch
+    self.createTag = createTag
+    self.deleteTag = deleteTag
+    self.pushTag = pushTag
+    self.deleteRemoteTag = deleteRemoteTag
     self.createWorktree = createWorktree
     self.openWorktree = openWorktree
     self.lockWorktree = lockWorktree
@@ -346,9 +364,9 @@ public struct CurrentRootView: View {
           Label("Operations", systemImage: "list.bullet.rectangle")
             .tag(Workspace.operations)
         }
-        if !references.isEmpty {
+        if references.contains(where: { $0.kind != .tag }) {
           Section("References") {
-            ForEach(references.prefix(20)) { reference in
+            ForEach(references.filter { $0.kind != .tag }.prefix(20)) { reference in
               if reference.kind == .localBranch {
                 Button {
                   checkoutBranch(reference.shortName)
@@ -371,6 +389,7 @@ public struct CurrentRootView: View {
             }
           }
         }
+        tagSidebarSection
         if !remotes.isEmpty {
           Section("Remotes") {
             ForEach(remotes) { remote in
@@ -718,6 +737,23 @@ public struct CurrentRootView: View {
               : "Git refuses removal when the submodule contains uncommitted or untracked changes."
           )
         }
+        .modifier(
+          TagCreationDialogModifier(
+            isPresented: $isCreatingTag,
+            name: $newTagName,
+            target: $newTagTarget,
+            message: $newTagMessage,
+            create: createTag
+          )
+        )
+        .modifier(
+          TagDialogsModifier(
+            pendingLocalDeletion: $pendingTagDeletion,
+            pendingRemoteDeletion: $pendingRemoteTagDeletion,
+            deleteLocal: deleteTag,
+            deleteRemote: deleteRemoteTag
+          )
+        )
         .modifier(
           LFSDialogsModifier(
             isTracking: $isTrackingLFS,
@@ -1982,6 +2018,109 @@ public struct CurrentRootView: View {
     }
   }
 
+  private func prepareNewTag() {
+    newTagName = ""
+    newTagTarget = selectedCommitOID ?? ""
+    newTagMessage = ""
+    isCreatingTag = true
+  }
+
+  @ViewBuilder
+  private var tagSidebarSection: some View {
+    if status != nil {
+      Section {
+        ForEach(references.filter { $0.kind == .tag }) { reference in
+          HStack(spacing: 6) {
+            Image(systemName: "tag")
+            VStack(alignment: .leading, spacing: 1) {
+              Text(reference.shortName)
+                .lineLimit(1)
+              Text(tagSummary(reference))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+          }
+          .help(tagHelp(reference))
+          .contextMenu {
+            tagContextMenu(reference)
+          }
+        }
+      } header: {
+        HStack {
+          Text("Tags")
+          Spacer()
+          Button {
+            prepareNewTag()
+          } label: {
+            Image(systemName: "plus")
+          }
+          .buttonStyle(.borderless)
+          .help("Create Tag")
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func tagContextMenu(_ reference: GitReference) -> some View {
+    if !remotes.isEmpty {
+      Menu("Push to Remote") {
+        ForEach(remotes) { remote in
+          Button(remote.name) {
+            pushTag(reference, remote)
+          }
+        }
+      }
+      Menu("Delete from Remote") {
+        ForEach(remotes) { remote in
+          Button(remote.name, role: .destructive) {
+            pendingRemoteTagDeletion = PendingRemoteTagDeletion(
+              reference: reference,
+              remote: remote
+            )
+          }
+        }
+      }
+      Divider()
+    }
+    Button("Delete Local Tag…", role: .destructive) {
+      pendingTagDeletion = reference
+    }
+  }
+
+  private func tagSummary(_ reference: GitReference) -> String {
+    guard let metadata = reference.tagMetadata else {
+      return String(reference.targetOID.prefix(12))
+    }
+    let kind = metadata.kind == .annotated ? "Annotated" : "Lightweight"
+    if let subject = metadata.subject, !subject.isEmpty {
+      return "\(kind) · \(subject)"
+    }
+    return "\(kind) · \(metadata.targetOID.prefix(12))"
+  }
+
+  private func tagHelp(_ reference: GitReference) -> String {
+    guard let metadata = reference.tagMetadata else {
+      return "\(reference.fullName)\nObject: \(reference.targetOID)"
+    }
+    var details = [
+      reference.fullName,
+      metadata.kind == .annotated ? "Annotated tag" : "Lightweight tag",
+      "Target: \(metadata.targetOID)",
+    ]
+    if let subject = metadata.subject {
+      details.append("Message: \(subject)")
+    }
+    if let taggerName = metadata.taggerName {
+      details.append("Tagger: \(taggerName)")
+    }
+    if let taggedAt = metadata.taggedAt {
+      details.append("Date: \(taggedAt.formatted())")
+    }
+    return details.joined(separator: "\n")
+  }
+
   private func worktreeHelp(_ worktree: GitWorktree) -> String {
     var details = [
       worktree.path.displayString,
@@ -2054,6 +2193,103 @@ public struct CurrentRootView: View {
     ]
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
+  }
+}
+
+private struct PendingRemoteTagDeletion {
+  let reference: GitReference
+  let remote: GitRemote
+}
+
+private struct TagCreationDialogModifier: ViewModifier {
+  @Binding var isPresented: Bool
+  @Binding var name: String
+  @Binding var target: String
+  @Binding var message: String
+  let create: (String, String?, String?) -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .alert("Create Tag", isPresented: $isPresented) {
+        TextField("Tag name", text: $name)
+        TextField("Target (optional, defaults to HEAD)", text: $target)
+        TextField("Annotation message", text: $message)
+        Button("Create Annotated") {
+          create(
+            name, trimmedOrNil(target), message.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        .disabled(
+          name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        )
+        Button("Create Lightweight") {
+          create(name, trimmedOrNil(target), nil)
+        }
+        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          "Annotated tags store the message, tagger, and date. Lightweight tags are only a named commit reference."
+        )
+      }
+  }
+
+  private func trimmedOrNil(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+}
+
+private struct TagDialogsModifier: ViewModifier {
+  @Binding var pendingLocalDeletion: GitReference?
+  @Binding var pendingRemoteDeletion: PendingRemoteTagDeletion?
+  let deleteLocal: (GitReference) -> Void
+  let deleteRemote: (GitReference, GitRemote) -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .confirmationDialog(
+        "Delete local tag \(pendingLocalDeletion?.shortName ?? "")?",
+        isPresented: Binding(
+          get: { pendingLocalDeletion != nil },
+          set: { if !$0 { pendingLocalDeletion = nil } }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button("Delete Local Tag", role: .destructive) {
+          if let pendingLocalDeletion {
+            deleteLocal(pendingLocalDeletion)
+          }
+          pendingLocalDeletion = nil
+        }
+        Button("Cancel", role: .cancel) {
+          pendingLocalDeletion = nil
+        }
+      } message: {
+        Text("This removes only the local reference. Existing remote tags are unchanged.")
+      }
+      .confirmationDialog(
+        "Delete remote tag \(pendingRemoteDeletion?.reference.shortName ?? "")?",
+        isPresented: Binding(
+          get: { pendingRemoteDeletion != nil },
+          set: { if !$0 { pendingRemoteDeletion = nil } }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button("Delete from Remote", role: .destructive) {
+          if let pendingRemoteDeletion {
+            deleteRemote(pendingRemoteDeletion.reference, pendingRemoteDeletion.remote)
+          }
+          pendingRemoteDeletion = nil
+        }
+        Button("Cancel", role: .cancel) {
+          pendingRemoteDeletion = nil
+        }
+      } message: {
+        Text(
+          "This updates \(pendingRemoteDeletion?.remote.name ?? "the remote") immediately and cannot be undone locally."
+        )
+      }
   }
 }
 

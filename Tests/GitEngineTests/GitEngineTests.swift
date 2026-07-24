@@ -827,6 +827,95 @@ struct GitEngineTests {
     #expect(commands[1].redactedDescription == "switch -c topic main")
   }
 
+  @Test("Annotated tag creation validates the ref and resolves the target")
+  func createAnnotatedTag() async throws {
+    let oid = String(repeating: "a", count: 40)
+    let runner = StubRunner(results: [.success(""), .success("\(oid)\n"), .success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateTag(
+      at: location,
+      mutation: .create(name: "v1.0", target: "main", message: "Version 1")
+    )
+
+    let commands = await runner.commands().map(\.redactedDescription)
+    #expect(commands[0] == "check-ref-format refs/tags/v1.0")
+    #expect(commands[1] == "rev-parse --verify --end-of-options main^{commit}")
+    #expect(
+      commands[2]
+        == "tag --annotate --message Version 1 -- v1.0 \(oid)"
+    )
+  }
+
+  @Test(
+    "Live tag management distinguishes kinds and synchronizes a selected remote",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveTagManagement() async throws {
+    let fixture = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-tag-\(UUID().uuidString)", isDirectory: true)
+    let root = fixture.appendingPathComponent("work", isDirectory: true)
+    let remote = fixture.appendingPathComponent("remote.git", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: fixture) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["init", "--bare", remote.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Tests"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.com"])
+    try Data("base\n".utf8).write(to: root.appendingPathComponent("README.md"))
+    try runGit(["-C", root.path, "add", "README.md"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try runGit(["-C", root.path, "remote", "add", "origin", remote.path])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(executableURL: URL(fileURLWithPath: "/usr/bin/git"))
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateTag(
+      at: location,
+      mutation: .create(name: "v1-light", target: nil, message: nil)
+    )
+    try await engine.mutateTag(
+      at: location,
+      mutation: .create(name: "v2-annotated", target: nil, message: "Version 2")
+    )
+
+    let tags = try await engine.references(at: location)
+      .filter { $0.kind == .tag }
+    #expect(tags.map(\.shortName).sorted() == ["v1-light", "v2-annotated"])
+    #expect(tags.first { $0.shortName == "v1-light" }?.tagMetadata?.kind == .lightweight)
+    let annotated = try #require(tags.first { $0.shortName == "v2-annotated" })
+    #expect(annotated.tagMetadata?.kind == .annotated)
+    #expect(annotated.tagMetadata?.subject == "Version 2")
+    #expect(annotated.tagMetadata?.taggerName == "Current Tests")
+
+    try await engine.mutateTag(
+      at: location,
+      mutation: .push(name: annotated.shortName, remote: "origin")
+    )
+    #expect(
+      try runGitOutput([
+        "--git-dir", remote.path, "show-ref", "--verify", "refs/tags/v2-annotated",
+      ]).isEmpty == false
+    )
+    try await engine.mutateTag(
+      at: location,
+      mutation: .deleteRemote(name: annotated.shortName, remote: "origin")
+    )
+    try await engine.mutateTag(
+      at: location,
+      mutation: .deleteLocal(name: annotated.shortName)
+    )
+    #expect(
+      try await engine.references(at: location)
+        .contains { $0.fullName == "refs/tags/v2-annotated" } == false
+    )
+  }
+
   @Test(
     "Live runner reads a real repository",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))

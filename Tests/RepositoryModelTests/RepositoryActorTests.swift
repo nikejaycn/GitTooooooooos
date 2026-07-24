@@ -362,6 +362,22 @@ struct RepositoryActorTests {
     #expect(snapshot.generation == RepositoryGeneration(1))
   }
 
+  @Test("Tag mutation uses the repository queue and refreshes references")
+  func tagMutationRefresh() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let mutation = TagMutation.create(name: "v1", target: nil, message: "Version 1")
+
+    let snapshot = try await repository.applyTagMutation(mutation)
+
+    #expect(await engine.tagMutations() == [mutation])
+    #expect(snapshot.generation == RepositoryGeneration(1))
+    #expect(await repository.snapshot() == snapshot)
+  }
+
   @Test("Commit runs through the mutation queue and refreshes the full snapshot")
   func commitRefresh() async throws {
     let engine = StubGitEngine()
@@ -417,6 +433,7 @@ private actor StubGitEngine: GitEngineProtocol {
   private var receivedWorktreeMutations: [WorktreeMutation] = []
   private var receivedSubmoduleMutations: [SubmoduleMutation] = []
   private var receivedLFSMutations: [GitLFSMutation] = []
+  private var receivedTagMutations: [TagMutation] = []
   private var receivedCommits: [CommitRequest] = []
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
@@ -589,6 +606,13 @@ private actor StubGitEngine: GitEngineProtocol {
     mutation: BranchMutation
   ) async throws {}
 
+  func mutateTag(
+    at location: RepositoryLocation,
+    mutation: TagMutation
+  ) async throws {
+    receivedTagMutations.append(mutation)
+  }
+
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry] {
     []
   }
@@ -639,6 +663,10 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func lfsMutations() -> [GitLFSMutation] {
     receivedLFSMutations
+  }
+
+  func tagMutations() -> [TagMutation] {
+    receivedTagMutations
   }
 
   func commits() -> [CommitRequest] {

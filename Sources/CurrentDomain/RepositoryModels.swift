@@ -280,6 +280,13 @@ public enum BranchMutation: Hashable, Sendable {
   case delete(name: String, force: Bool)
 }
 
+public enum TagMutation: Hashable, Sendable {
+  case create(name: String, target: String?, message: String?)
+  case deleteLocal(name: String)
+  case push(name: String, remote: String)
+  case deleteRemote(name: String, remote: String)
+}
+
 public struct GitWorktree: Hashable, Sendable, Identifiable {
   public let path: GitPath
   public let headOID: String?

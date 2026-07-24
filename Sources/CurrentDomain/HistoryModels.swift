@@ -334,6 +334,36 @@ public enum GitReferenceKind: String, Hashable, Sendable, Codable {
   case other
 }
 
+public enum GitTagKind: String, Hashable, Sendable, Codable {
+  case lightweight
+  case annotated
+}
+
+public struct GitTagMetadata: Hashable, Sendable, Codable {
+  public let kind: GitTagKind
+  public let targetOID: String
+  public let taggerName: String?
+  public let taggerEmail: String?
+  public let taggedAt: Date?
+  public let subject: String?
+
+  public init(
+    kind: GitTagKind,
+    targetOID: String,
+    taggerName: String? = nil,
+    taggerEmail: String? = nil,
+    taggedAt: Date? = nil,
+    subject: String? = nil
+  ) {
+    self.kind = kind
+    self.targetOID = targetOID
+    self.taggerName = taggerName
+    self.taggerEmail = taggerEmail
+    self.taggedAt = taggedAt
+    self.subject = subject
+  }
+}
+
 public struct GitReference: Hashable, Sendable, Codable, Identifiable {
   public let fullName: String
   public let shortName: String
@@ -341,6 +371,7 @@ public struct GitReference: Hashable, Sendable, Codable, Identifiable {
   public let upstream: String?
   public let kind: GitReferenceKind
   public let isHEAD: Bool
+  public let tagMetadata: GitTagMetadata?
 
   public init(
     fullName: String,
@@ -348,7 +379,8 @@ public struct GitReference: Hashable, Sendable, Codable, Identifiable {
     targetOID: String,
     upstream: String?,
     kind: GitReferenceKind,
-    isHEAD: Bool
+    isHEAD: Bool,
+    tagMetadata: GitTagMetadata? = nil
   ) {
     self.fullName = fullName
     self.shortName = shortName
@@ -356,6 +388,7 @@ public struct GitReference: Hashable, Sendable, Codable, Identifiable {
     self.upstream = upstream
     self.kind = kind
     self.isHEAD = isHEAD
+    self.tagMetadata = tagMetadata
   }
 
   public var id: String { fullName }

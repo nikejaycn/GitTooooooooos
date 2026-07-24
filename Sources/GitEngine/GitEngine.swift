@@ -158,6 +158,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: BranchMutation
   ) async throws
+  func mutateTag(
+    at location: RepositoryLocation,
+    mutation: TagMutation
+  ) async throws
   func worktrees(at location: RepositoryLocation) async throws -> [GitWorktree]
   func mutateWorktree(
     at location: RepositoryLocation,
@@ -297,6 +301,13 @@ extension GitEngineProtocol {
     mutation: GitLFSMutation
   ) async throws {
     throw GitEngineError.invalidOutput("Git LFS mutation is not implemented.")
+  }
+
+  public func mutateTag(
+    at location: RepositoryLocation,
+    mutation: TagMutation
+  ) async throws {
+    throw GitEngineError.invalidOutput("Tag mutation is not implemented.")
   }
 
   public func initializeRepository(
@@ -626,7 +637,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
   public func references(
     at location: RepositoryLocation
   ) async throws -> [GitReference] {
-    let result = try await execute(
+    async let referencesResult = execute(
       GitCommand(
         arguments: [
           "for-each-ref",
@@ -639,16 +650,46 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         workingDirectory: location.worktreeURL
       )
     )
+    async let tagsResult = execute(
+      GitCommand(
+        arguments: [
+          "for-each-ref",
+          "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(taggername)%00%(taggeremail:trim)%00%(taggerdate:unix)%00%(subject)%1e",
+          "refs/tags",
+        ],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 16 * 1024 * 1024
+      )
+    )
 
     do {
-      return try ReferenceParser().parse(result.standardOutput).map { reference in
+      let loaded = try await (referencesResult, tagsResult)
+      let tags = try TagReferenceParser().parse(loaded.1.standardOutput)
+      let metadataByName = Dictionary(
+        uniqueKeysWithValues: tags.map { tag in
+          let annotated = tag.objectType == "tag" && tag.peeledOID != nil
+          let metadata = GitTagMetadata(
+            kind: annotated ? .annotated : .lightweight,
+            targetOID: tag.peeledOID ?? tag.objectOID,
+            taggerName: annotated ? tag.taggerName : nil,
+            taggerEmail: annotated ? tag.taggerEmail : nil,
+            taggedAt: annotated
+              ? tag.taggerUnixSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+              : nil,
+            subject: annotated ? tag.subject : nil
+          )
+          return (tag.fullName, metadata)
+        }
+      )
+      return try ReferenceParser().parse(loaded.0.standardOutput).map { reference in
         GitReference(
           fullName: reference.fullName,
           shortName: reference.shortName,
           targetOID: reference.targetOID,
           upstream: reference.upstream,
           kind: referenceKind(reference.fullName),
-          isHEAD: reference.headMarker == "*"
+          isHEAD: reference.headMarker == "*",
+          tagMetadata: metadataByName[reference.fullName]
         )
       }
     } catch {
@@ -941,6 +982,50 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         arguments: arguments,
         workingDirectory: location.worktreeURL,
         timeout: .seconds(120)
+      )
+    )
+  }
+
+  public func mutateTag(
+    at location: RepositoryLocation,
+    mutation: TagMutation
+  ) async throws {
+    let arguments: [String]
+    switch mutation {
+    case .create(let name, let target, let message):
+      try await validateTagName(name, at: location)
+      let resolvedTarget = try await resolveCommit(target ?? "HEAD", at: location)
+      if let message {
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+          throw GitEngineError.invalidOutput("An annotated tag message cannot be empty.")
+        }
+        guard trimmedMessage.utf8.count <= 1024 * 1024 && !trimmedMessage.contains("\0") else {
+          throw GitEngineError.invalidOutput("The annotated tag message is too large or unsafe.")
+        }
+        arguments = ["tag", "--annotate", "--message", trimmedMessage, "--", name, resolvedTarget]
+      } else {
+        arguments = ["tag", "--", name, resolvedTarget]
+      }
+    case .deleteLocal(let name):
+      try await validateTagName(name, at: location)
+      arguments = ["tag", "--delete", "--", name]
+    case .push(let name, let remote):
+      try await validateTagName(name, at: location)
+      try await validateRemoteName(remote, at: location)
+      arguments = ["push", "--", remote, "refs/tags/\(name):refs/tags/\(name)"]
+    case .deleteRemote(let name, let remote):
+      try await validateTagName(name, at: location)
+      try await validateRemoteName(remote, at: location)
+      arguments = ["push", "--delete", remote, "refs/tags/\(name)"]
+    }
+
+    _ = try await execute(
+      GitCommand(
+        arguments: arguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: .seconds(600)
       )
     )
   }
@@ -1791,6 +1876,39 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         workingDirectory: location.worktreeURL
       )
     )
+  }
+
+  private func validateTagName(
+    _ name: String,
+    at location: RepositoryLocation
+  ) async throws {
+    guard !name.isEmpty, name.utf8.count <= 16 * 1024, !name.utf8.contains(0) else {
+      throw GitEngineError.invalidOutput("A valid tag name is required.")
+    }
+    _ = try await execute(
+      GitCommand(
+        arguments: ["check-ref-format", "refs/tags/\(name)"],
+        workingDirectory: location.worktreeURL
+      )
+    )
+  }
+
+  private func validateRemoteName(
+    _ name: String,
+    at location: RepositoryLocation
+  ) async throws {
+    guard
+      !name.isEmpty,
+      name.utf8.count <= 16 * 1024,
+      !name.utf8.contains(0),
+      !name.hasPrefix("-")
+    else {
+      throw GitEngineError.invalidOutput("A valid remote name is required.")
+    }
+    let knownRemotes = try await remotes(at: location)
+    guard knownRemotes.contains(where: { $0.name == name }) else {
+      throw GitEngineError.invalidOutput("The selected remote no longer exists.")
+    }
   }
 
   private func validateAbsoluteWorktreePath(_ path: GitPath) throws {

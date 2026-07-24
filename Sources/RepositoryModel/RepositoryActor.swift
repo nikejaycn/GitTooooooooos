@@ -373,6 +373,16 @@ public actor RepositoryActor {
   }
 
   @discardableResult
+  public func applyTagMutation(
+    _ mutation: TagMutation,
+    historyLimit: Int = 200
+  ) async throws -> RepositorySnapshot {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.mutateTag(at: location, mutation: mutation)
+    }
+  }
+
+  @discardableResult
   public func applyStashMutation(
     _ mutation: StashMutation,
     historyLimit: Int = 200

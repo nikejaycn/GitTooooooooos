@@ -564,6 +564,22 @@ final class AppModel {
     applyMerge(.start(branch: name, squash: false, noFastForward: false))
   }
 
+  func createTag(name: String, target: String?, message: String?) {
+    applyTag(.create(name: name, target: target, message: message))
+  }
+
+  func deleteTag(_ reference: GitReference) {
+    applyTag(.deleteLocal(name: reference.shortName))
+  }
+
+  func pushTag(_ reference: GitReference, remote: GitRemote) {
+    applyTag(.push(name: reference.shortName, remote: remote.name))
+  }
+
+  func deleteRemoteTag(_ reference: GitReference, remote: GitRemote) {
+    applyTag(.deleteRemote(name: reference.shortName, remote: remote.name))
+  }
+
   func chooseWorktreeDestination(branch: String, startPoint: String?) {
     let trimmedBranch = branch.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedBranch.isEmpty else {
@@ -1036,6 +1052,23 @@ final class AppModel {
     }
   }
 
+  private func applyTag(_ mutation: TagMutation) {
+    guard let repository else { return }
+    let activityID = beginActivity(tagTitle(mutation))
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        apply(try await repository.applyTagMutation(mutation))
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   func saveStash(_ message: String?) {
     applyStash(.save(message: message, includeUntracked: true))
   }
@@ -1473,6 +1506,16 @@ final class AppModel {
     case .checkout(let name): "Check out \(name)"
     case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
     case .delete(let name, _): "Delete branch \(name)"
+    }
+  }
+
+  private func tagTitle(_ mutation: TagMutation) -> String {
+    switch mutation {
+    case .create(let name, _, let message):
+      "Create \(message == nil ? "lightweight" : "annotated") tag \(name)"
+    case .deleteLocal(let name): "Delete local tag \(name)"
+    case .push(let name, let remote): "Push tag \(name) to \(remote)"
+    case .deleteRemote(let name, let remote): "Delete tag \(name) from \(remote)"
     }
   }
 
