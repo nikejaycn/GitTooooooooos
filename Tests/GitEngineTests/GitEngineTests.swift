@@ -943,6 +943,107 @@ struct GitEngineTests {
   }
 
   @Test(
+    "Live remote management rejects stale force-with-lease and supports CRUD",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveRemoteManagement() async throws {
+    let fixture = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-remote-\(UUID().uuidString)", isDirectory: true)
+    let root = fixture.appendingPathComponent("work", isDirectory: true)
+    let other = fixture.appendingPathComponent("other", isDirectory: true)
+    let remote = fixture.appendingPathComponent("remote.git", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: fixture) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["init", "--bare", remote.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Tests"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.com"])
+    try Data("base\n".utf8).write(to: root.appendingPathComponent("README.md"))
+    try runGit(["-C", root.path, "add", "README.md"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(executableURL: URL(fileURLWithPath: "/usr/bin/git"))
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .add(name: "origin", fetchURL: remote.path, pushURL: nil)
+    )
+    #expect(try await engine.remotes(at: location).map(\.name) == ["origin"])
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .rename(oldName: "origin", newName: "upstream")
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .update(name: "upstream", fetchURL: remote.path, pushURL: remote.path)
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .push(
+        remote: "upstream",
+        branch: "main",
+        setUpstream: true,
+        forceWithLease: false
+      )
+    )
+
+    try runGit(["clone", remote.path, other.path])
+    try runGit(["-C", other.path, "config", "user.name", "Other Writer"])
+    try runGit(["-C", other.path, "config", "user.email", "other@example.com"])
+    try Data("remote advance\n".utf8).write(to: other.appendingPathComponent("remote.txt"))
+    try runGit(["-C", other.path, "add", "remote.txt"])
+    try runGit(["-C", other.path, "commit", "-m", "remote advance"])
+    try runGit(["-C", other.path, "push", "origin", "main"])
+    let remoteAdvancedOID = try runGitOutput([
+      "--git-dir", remote.path, "rev-parse", "refs/heads/main",
+    ])
+
+    try Data("local rewrite\n".utf8).write(to: root.appendingPathComponent("local.txt"))
+    try runGit(["-C", root.path, "add", "local.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "local rewrite"])
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateRemote(
+        at: location,
+        mutation: .push(
+          remote: "upstream",
+          branch: "main",
+          setUpstream: false,
+          forceWithLease: true
+        )
+      )
+    }
+    #expect(
+      try runGitOutput(["--git-dir", remote.path, "rev-parse", "refs/heads/main"])
+        == remoteAdvancedOID
+    )
+
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .fetch(remote: "upstream", prune: true)
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .push(
+        remote: "upstream",
+        branch: "main",
+        setUpstream: false,
+        forceWithLease: true
+      )
+    )
+    #expect(
+      try runGitOutput(["--git-dir", remote.path, "rev-parse", "refs/heads/main"])
+        == runGitOutput(["-C", root.path, "rev-parse", "main"])
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .remove(name: "upstream")
+    )
+    #expect(try await engine.remotes(at: location).isEmpty)
+  }
+
+  @Test(
     "Live runner reads a real repository",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
   func liveRepository() async throws {
@@ -1048,7 +1149,12 @@ struct GitEngineTests {
       remotes == [GitRemote(name: "origin", fetchURL: remoteRoot.path, pushURL: remoteRoot.path)])
     try await engine.mutateRemote(
       at: location,
-      mutation: .push(remote: "origin", branch: "main", setUpstream: true)
+      mutation: .push(
+        remote: "origin",
+        branch: "main",
+        setUpstream: true,
+        forceWithLease: false
+      )
     )
     try await engine.mutateRemote(
       at: location,

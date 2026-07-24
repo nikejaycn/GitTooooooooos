@@ -1157,6 +1157,34 @@ final class AppModel {
     applyRemote(.fetch(remote: nil, prune: true))
   }
 
+  func fetchRemote(_ remote: GitRemote) {
+    applyRemote(.fetch(remote: remote.name, prune: true))
+  }
+
+  func addRemote(name: String, fetchURL: String, pushURL: String?) {
+    applyRemote(.add(name: name, fetchURL: fetchURL, pushURL: pushURL))
+  }
+
+  func updateRemote(
+    _ remote: GitRemote,
+    name: String,
+    fetchURL: String,
+    pushURL: String
+  ) {
+    if name != remote.name {
+      applyRemoteSequence([
+        .rename(oldName: remote.name, newName: name),
+        .update(name: name, fetchURL: fetchURL, pushURL: pushURL),
+      ])
+    } else {
+      applyRemote(.update(name: name, fetchURL: fetchURL, pushURL: pushURL))
+    }
+  }
+
+  func removeRemote(_ remote: GitRemote) {
+    applyRemote(.remove(name: remote.name))
+  }
+
   func pull() {
     applyRemote(.pull(remote: nil, branch: nil, rebase: false))
   }
@@ -1175,7 +1203,25 @@ final class AppModel {
       .push(
         remote: remote,
         branch: branch,
-        setUpstream: repositoryStatus?.upstream == nil
+        setUpstream: repositoryStatus?.upstream == nil,
+        forceWithLease: false
+      )
+    )
+  }
+
+  func forcePushWithLease() {
+    guard let branch = currentBranch,
+      let remote = repositoryStatus?.upstream?.split(separator: "/").first.map(String.init)
+    else {
+      errorMessage = "An upstream branch is required for a force-with-lease push."
+      return
+    }
+    applyRemote(
+      .push(
+        remote: remote,
+        branch: branch,
+        setUpstream: false,
+        forceWithLease: true
       )
     )
   }
@@ -1263,6 +1309,32 @@ final class AppModel {
         apply(try await repository.applyRemoteMutation(mutation))
         finishActivity(activityID, state: .succeeded)
       } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
+  private func applyRemoteSequence(_ mutations: [RemoteMutation]) {
+    guard let repository else { return }
+    let activityID = beginActivity("Update remote")
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        var snapshot: RepositorySnapshot?
+        for mutation in mutations {
+          snapshot = try await repository.applyRemoteMutation(mutation)
+        }
+        if let snapshot {
+          apply(snapshot)
+        }
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        if let snapshot = try? await repository.refreshSnapshot() {
+          apply(snapshot)
+        }
         errorMessage = error.localizedDescription
         finishActivity(activityID, error: error)
       }
@@ -1635,9 +1707,14 @@ final class AppModel {
 
   private func remoteTitle(_ mutation: RemoteMutation) -> String {
     switch mutation {
+    case .add(let name, _, _): "Add remote \(name)"
+    case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
+    case .update(let name, _, _): "Update remote \(name)"
+    case .remove(let name): "Remove remote \(name)"
     case .fetch(let remote, _): "Fetch \(remote ?? "all remotes")"
     case .pull(let remote, _, _): "Pull \(remote ?? "upstream")"
-    case .push(let remote, let branch, _): "Push \(branch) to \(remote)"
+    case .push(let remote, let branch, _, let forceWithLease):
+      "\(forceWithLease ? "Force-with-lease push" : "Push") \(branch) to \(remote)"
     }
   }
 

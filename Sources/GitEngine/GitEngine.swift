@@ -1541,20 +1541,99 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
   ) async throws {
     let arguments: [String]
     switch mutation {
+    case .add(let name, let fetchURL, let pushURL):
+      try validateNewRemoteName(name)
+      try validateRemoteURL(fetchURL)
+      if let pushURL {
+        try validateRemoteURL(pushURL)
+      }
+      _ = try await execute(
+        GitCommand(
+          arguments: ["remote", "add", "--", name, fetchURL],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      if let pushURL, pushURL != fetchURL {
+        do {
+          _ = try await execute(
+            GitCommand(
+              arguments: ["remote", "set-url", "--push", "--", name, pushURL],
+              workingDirectory: location.worktreeURL
+            )
+          )
+        } catch {
+          _ = try? await execute(
+            GitCommand(
+              arguments: ["remote", "remove", name],
+              workingDirectory: location.worktreeURL
+            )
+          )
+          throw error
+        }
+      }
+      return
+    case .rename(let oldName, let newName):
+      try await validateRemoteName(oldName, at: location)
+      try validateNewRemoteName(newName)
+      arguments = ["remote", "rename", oldName, newName]
+    case .update(let name, let fetchURL, let pushURL):
+      try await validateRemoteName(name, at: location)
+      try validateRemoteURL(fetchURL)
+      try validateRemoteURL(pushURL)
+      _ = try await execute(
+        GitCommand(
+          arguments: ["remote", "set-url", "--", name, fetchURL],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      _ = try await execute(
+        GitCommand(
+          arguments: ["remote", "set-url", "--push", "--", name, pushURL],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      return
+    case .remove(let name):
+      try await validateRemoteName(name, at: location)
+      arguments = ["remote", "remove", name]
     case .fetch(let remote, let prune):
+      if let remote {
+        try await validateRemoteName(remote, at: location)
+      }
       arguments =
         ["fetch"]
         + (prune ? ["--prune"] : [])
         + (remote.map { [$0] } ?? ["--all"])
     case .pull(let remote, let branch, let rebase):
+      if let remote {
+        try await validateRemoteName(remote, at: location)
+      }
+      if let branch {
+        try await validateBranchName(branch, at: location)
+      }
       arguments =
         ["pull", rebase ? "--rebase" : "--ff-only"]
         + (remote.map { [$0] } ?? [])
         + (branch.map { [$0] } ?? [])
-    case .push(let remote, let branch, let setUpstream):
+    case .push(let remote, let branch, let setUpstream, let forceWithLease):
+      try await validateRemoteName(remote, at: location)
+      try await validateBranchName(branch, at: location)
+      let leaseArgument: [String]
+      if forceWithLease {
+        let baseline = try await resolveCommit(
+          "refs/remotes/\(remote)/\(branch)",
+          at: location
+        )
+        leaseArgument = [
+          "--force-with-lease=refs/heads/\(branch):\(baseline)"
+        ]
+      } else {
+        leaseArgument = []
+      }
       arguments =
         ["push"]
         + (setUpstream ? ["--set-upstream"] : [])
+        + leaseArgument
         + [remote, branch]
     }
     _ = try await execute(
@@ -1908,6 +1987,32 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     let knownRemotes = try await remotes(at: location)
     guard knownRemotes.contains(where: { $0.name == name }) else {
       throw GitEngineError.invalidOutput("The selected remote no longer exists.")
+    }
+  }
+
+  private func validateNewRemoteName(_ name: String) throws {
+    guard
+      !name.isEmpty,
+      name.utf8.count <= 16 * 1024,
+      !name.utf8.contains(0),
+      !name.contains("\n"),
+      !name.contains("\r"),
+      !name.hasPrefix("-"),
+      !name.contains("/")
+    else {
+      throw GitEngineError.invalidOutput("A valid remote name is required.")
+    }
+  }
+
+  private func validateRemoteURL(_ url: String) throws {
+    guard
+      !url.isEmpty,
+      url.utf8.count <= 1024 * 1024,
+      !url.utf8.contains(0),
+      !url.contains("\n"),
+      !url.contains("\r")
+    else {
+      throw GitEngineError.invalidOutput("A remote URL was empty, too large, or unsafe.")
     }
   }
 

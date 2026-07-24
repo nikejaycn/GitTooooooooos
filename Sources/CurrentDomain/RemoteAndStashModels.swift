@@ -38,9 +38,13 @@ public struct GitRemote: Hashable, Sendable, Codable, Identifiable {
 }
 
 public enum RemoteMutation: Hashable, Sendable {
+  case add(name: String, fetchURL: String, pushURL: String?)
+  case rename(oldName: String, newName: String)
+  case update(name: String, fetchURL: String, pushURL: String)
+  case remove(name: String)
   case fetch(remote: String?, prune: Bool)
   case pull(remote: String?, branch: String?, rebase: Bool)
-  case push(remote: String, branch: String, setUpstream: Bool)
+  case push(remote: String, branch: String, setUpstream: Bool, forceWithLease: Bool)
 }
 
 public enum OperationActivityState: String, Hashable, Sendable, Codable {

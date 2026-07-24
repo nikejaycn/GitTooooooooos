@@ -100,8 +100,13 @@ struct CurrentMacApp: App {
         popStash: model.popStash,
         dropStash: model.dropStash,
         fetch: model.fetch,
+        fetchRemote: model.fetchRemote,
         pull: model.pull,
-        push: model.push
+        push: model.push,
+        addRemote: model.addRemote,
+        updateRemote: model.updateRemote,
+        removeRemote: model.removeRemote,
+        forcePushWithLease: model.forcePushWithLease
       )
       .frame(minWidth: 880, minHeight: 560)
       .preferredColorScheme(model.appearance.colorScheme)

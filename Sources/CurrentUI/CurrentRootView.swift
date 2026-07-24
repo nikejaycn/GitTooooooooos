@@ -111,8 +111,13 @@ public struct CurrentRootView: View {
   private let popStash: (String) -> Void
   private let dropStash: (String) -> Void
   private let fetch: () -> Void
+  private let fetchRemote: (GitRemote) -> Void
   private let pull: () -> Void
   private let push: () -> Void
+  private let addRemote: (String, String, String?) -> Void
+  private let updateRemote: (GitRemote, String, String, String) -> Void
+  private let removeRemote: (GitRemote) -> Void
+  private let forcePushWithLease: () -> Void
   @State private var workspace: Workspace = .changes
   @State private var pendingDiscard: GitPath?
   @State private var commitMessage = ""
@@ -154,6 +159,13 @@ public struct CurrentRootView: View {
   @State private var isCloningRepository = false
   @State private var cloneURL = ""
   @State private var isShowingCommandPalette = false
+  @State private var isEditingRemote = false
+  @State private var editingRemote: GitRemote?
+  @State private var remoteName = ""
+  @State private var remoteFetchURL = ""
+  @State private var remotePushURL = ""
+  @State private var pendingRemoteRemoval: GitRemote?
+  @State private var isConfirmingForcePush = false
 
   public init(
     repositoryName: String?,
@@ -248,8 +260,13 @@ public struct CurrentRootView: View {
     popStash: @escaping (String) -> Void,
     dropStash: @escaping (String) -> Void,
     fetch: @escaping () -> Void,
+    fetchRemote: @escaping (GitRemote) -> Void,
     pull: @escaping () -> Void,
-    push: @escaping () -> Void
+    push: @escaping () -> Void,
+    addRemote: @escaping (String, String, String?) -> Void,
+    updateRemote: @escaping (GitRemote, String, String, String) -> Void,
+    removeRemote: @escaping (GitRemote) -> Void,
+    forcePushWithLease: @escaping () -> Void
   ) {
     self.repositoryName = repositoryName
     self.gitVersion = gitVersion
@@ -343,8 +360,13 @@ public struct CurrentRootView: View {
     self.popStash = popStash
     self.dropStash = dropStash
     self.fetch = fetch
+    self.fetchRemote = fetchRemote
     self.pull = pull
     self.push = push
+    self.addRemote = addRemote
+    self.updateRemote = updateRemote
+    self.removeRemote = removeRemote
+    self.forcePushWithLease = forcePushWithLease
   }
 
   public var body: some View {
@@ -391,11 +413,44 @@ public struct CurrentRootView: View {
           }
         }
         tagSidebarSection
-        if !remotes.isEmpty {
-          Section("Remotes") {
+        if status != nil {
+          Section {
             ForEach(remotes) { remote in
-              Label(remote.name, systemImage: "cloud")
-                .help(remote.fetchURL)
+              HStack(spacing: 6) {
+                Image(systemName: "cloud")
+                VStack(alignment: .leading, spacing: 1) {
+                  Text(remote.name)
+                  Text(remote.fetchURL)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                }
+              }
+              .help("Fetch: \(remote.fetchURL)\nPush: \(remote.pushURL)")
+              .contextMenu {
+                Button("Edit…") {
+                  beginEditingRemote(remote)
+                }
+                Button("Fetch with Prune") {
+                  fetchRemote(remote)
+                }
+                Divider()
+                Button("Remove…", role: .destructive) {
+                  pendingRemoteRemoval = remote
+                }
+              }
+            }
+          } header: {
+            HStack {
+              Text("Remotes")
+              Spacer()
+              Button {
+                beginEditingRemote(nil)
+              } label: {
+                Image(systemName: "plus")
+              }
+              .buttonStyle(.borderless)
+              .help("Add Remote")
             }
           }
         }
@@ -572,6 +627,10 @@ public struct CurrentRootView: View {
               Button("Pull (Fast-forward Only)", action: pull)
               Button("Push", action: push)
                 .disabled(remotes.isEmpty)
+              Button("Force Push with Lease…") {
+                isConfirmingForcePush = true
+              }
+              .disabled(status?.upstream == nil)
               Divider()
               Button("Stash All Changes") {
                 saveStash(nil)
@@ -744,6 +803,21 @@ public struct CurrentRootView: View {
               : "Git refuses removal when the submodule contains uncommitted or untracked changes."
           )
         }
+        .modifier(
+          RemoteDialogsModifier(
+            isEditing: $isEditingRemote,
+            editingRemote: $editingRemote,
+            name: $remoteName,
+            fetchURL: $remoteFetchURL,
+            pushURL: $remotePushURL,
+            pendingRemoval: $pendingRemoteRemoval,
+            isConfirmingForcePush: $isConfirmingForcePush,
+            add: addRemote,
+            update: updateRemote,
+            remove: removeRemote,
+            forcePushWithLease: forcePushWithLease
+          )
+        )
         .modifier(
           TagCreationDialogModifier(
             isPresented: $isCreatingTag,
@@ -2038,6 +2112,14 @@ public struct CurrentRootView: View {
     isCreatingTag = true
   }
 
+  private func beginEditingRemote(_ remote: GitRemote?) {
+    editingRemote = remote
+    remoteName = remote?.name ?? ""
+    remoteFetchURL = remote?.fetchURL ?? ""
+    remotePushURL = remote?.pushURL ?? ""
+    isEditingRemote = true
+  }
+
   @ViewBuilder
   private var tagSidebarSection: some View {
     if status != nil {
@@ -2183,6 +2265,25 @@ public struct CurrentRootView: View {
       ) {
         newBranchName = ""
         isCreatingBranch = true
+      },
+      CommandPaletteAction(
+        id: "remote.add",
+        title: "Add Remote…",
+        systemImage: "cloud.badge.plus",
+        keywords: "origin upstream url",
+        isEnabled: status != nil && !isLoading
+      ) {
+        beginEditingRemote(nil)
+      },
+      CommandPaletteAction(
+        id: "remote.force-with-lease",
+        title: "Force Push with Lease…",
+        detail: status?.upstream,
+        systemImage: "exclamationmark.arrow.triangle.2.circlepath",
+        keywords: "safe force push remote expected oid",
+        isEnabled: status?.upstream != nil && !isLoading
+      ) {
+        isConfirmingForcePush = true
       },
       CommandPaletteAction(
         id: "workspace.changes",
@@ -2340,6 +2441,90 @@ public struct CurrentRootView: View {
     ]
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
+  }
+}
+
+private struct RemoteDialogsModifier: ViewModifier {
+  @Binding var isEditing: Bool
+  @Binding var editingRemote: GitRemote?
+  @Binding var name: String
+  @Binding var fetchURL: String
+  @Binding var pushURL: String
+  @Binding var pendingRemoval: GitRemote?
+  @Binding var isConfirmingForcePush: Bool
+  let add: (String, String, String?) -> Void
+  let update: (GitRemote, String, String, String) -> Void
+  let remove: (GitRemote) -> Void
+  let forcePushWithLease: () -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .alert(editingRemote == nil ? "Add Remote" : "Edit Remote", isPresented: $isEditing) {
+        TextField("Name", text: $name)
+        TextField("Fetch URL", text: $fetchURL)
+        TextField("Push URL (optional)", text: $pushURL)
+        Button(editingRemote == nil ? "Add" : "Save") {
+          let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+          let cleanFetchURL = fetchURL.trimmingCharacters(in: .whitespacesAndNewlines)
+          let cleanPushURL = pushURL.trimmingCharacters(in: .whitespacesAndNewlines)
+          if let editingRemote {
+            update(
+              editingRemote,
+              cleanName,
+              cleanFetchURL,
+              cleanPushURL.isEmpty ? cleanFetchURL : cleanPushURL
+            )
+          } else {
+            add(
+              cleanName,
+              cleanFetchURL,
+              cleanPushURL.isEmpty ? nil : cleanPushURL
+            )
+          }
+          self.editingRemote = nil
+        }
+        .disabled(
+          name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || fetchURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        )
+        Button("Cancel", role: .cancel) {
+          editingRemote = nil
+        }
+      } message: {
+        Text("Fetch and push URLs may use HTTPS, SSH, or a local repository path.")
+      }
+      .confirmationDialog(
+        "Remove remote \(pendingRemoval?.name ?? "")?",
+        isPresented: Binding(
+          get: { pendingRemoval != nil },
+          set: { if !$0 { pendingRemoval = nil } }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button("Remove Remote", role: .destructive) {
+          if let pendingRemoval {
+            remove(pendingRemoval)
+          }
+          pendingRemoval = nil
+        }
+        Button("Cancel", role: .cancel) {
+          pendingRemoval = nil
+        }
+      } message: {
+        Text("This removes the local remote configuration and remote-tracking refs.")
+      }
+      .confirmationDialog(
+        "Force push the current branch with lease?",
+        isPresented: $isConfirmingForcePush,
+        titleVisibility: .visible
+      ) {
+        Button("Force Push with Lease", role: .destructive, action: forcePushWithLease)
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          "Current pins the expected remote-tracking OID. Git rejects the push if the remote branch changed since your last fetch."
+        )
+      }
   }
 }
 
