@@ -511,6 +511,26 @@ public actor RepositoryActor {
     )
   }
 
+  public func performMaintenance(
+    _ task: RepositoryMaintenanceTask
+  ) async throws -> String {
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      return try await engine.performMaintenance(
+        at: location,
+        task: task
+      )
+    }
+    mutationTail = Task {
+      _ = try? await operation.value
+    }
+    return try await operation.value
+  }
+
   @discardableResult
   public func applyHunk(
     _ hunk: DiffHunk,

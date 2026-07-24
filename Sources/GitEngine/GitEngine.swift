@@ -179,6 +179,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: GitLFSMutation
   ) async throws
+  func performMaintenance(
+    at location: RepositoryLocation,
+    task: RepositoryMaintenanceTask
+  ) async throws -> String
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry]
   func mutateStash(
     at location: RepositoryLocation,
@@ -314,6 +318,15 @@ extension GitEngineProtocol {
     mutation: GitLFSMutation
   ) async throws {
     throw GitEngineError.invalidOutput("Git LFS mutation is not implemented.")
+  }
+
+  public func performMaintenance(
+    at location: RepositoryLocation,
+    task: RepositoryMaintenanceTask
+  ) async throws -> String {
+    throw GitEngineError.invalidOutput(
+      "Repository maintenance is not implemented."
+    )
   }
 
   public func mutateTag(
@@ -1510,6 +1523,35 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: timeout
       )
     )
+  }
+
+  public func performMaintenance(
+    at location: RepositoryLocation,
+    task: RepositoryMaintenanceTask
+  ) async throws -> String {
+    let arguments: [String]
+    switch task {
+    case .automatic:
+      arguments = ["maintenance", "run", "--auto"]
+    case .optimize:
+      arguments = ["gc"]
+    case .verify:
+      arguments = ["fsck", "--full", "--no-progress"]
+    }
+    let result = try await execute(
+      GitCommand(
+        arguments: arguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 16 * 1024 * 1024,
+        timeout: .seconds(1_800)
+      )
+    )
+    let output = String(
+      decoding: result.standardOutput + result.standardError,
+      as: UTF8.self
+    )
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+    return output.isEmpty ? "Completed successfully." : output
   }
 
   public func stashes(

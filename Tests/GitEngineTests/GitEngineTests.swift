@@ -39,6 +39,41 @@ struct GitEngineTests {
     #expect(await runner.commands().first?.redactedDescription == "lfs version")
   }
 
+  @Test("Repository maintenance uses bounded explicit Git commands")
+  func repositoryMaintenanceCommands() async throws {
+    let runner = StubRunner(
+      results: [
+        .success(""),
+        .success(""),
+        .success("dangling commit abcdef\n"),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    #expect(
+      try await engine.performMaintenance(at: location, task: .automatic)
+        == "Completed successfully."
+    )
+    #expect(
+      try await engine.performMaintenance(at: location, task: .optimize)
+        == "Completed successfully."
+    )
+    #expect(
+      try await engine.performMaintenance(at: location, task: .verify)
+        == "dangling commit abcdef"
+    )
+    #expect(
+      await runner.commands().map(\.redactedDescription) == [
+        "maintenance run --auto",
+        "gc",
+        "fsck --full --no-progress",
+      ])
+  }
+
   @Test("Reads Git LFS repository state without installing hooks")
   func lfsRepositoryState() async throws {
     let json = """

@@ -444,6 +444,12 @@ public enum GitLFSMutation: Hashable, Sendable {
   case pruneVerified
 }
 
+public enum RepositoryMaintenanceTask: String, CaseIterable, Hashable, Sendable, Codable {
+  case automatic
+  case optimize
+  case verify
+}
+
 public enum MergeMutation: Hashable, Sendable {
   case start(branch: String, squash: Bool, noFastForward: Bool, autoStash: Bool)
   case resolve(path: GitPath, side: ConflictSide)

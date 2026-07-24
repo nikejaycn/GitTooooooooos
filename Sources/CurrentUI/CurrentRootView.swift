@@ -100,6 +100,7 @@ public struct CurrentRootView: View {
   private let fetchLFS: (Bool) -> Void
   private let pullLFS: () -> Void
   private let pruneLFS: () -> Void
+  private let performMaintenance: (RepositoryMaintenanceTask) -> Void
   private let continueOperation: () -> Void
   private let abortOperation: () -> Void
   private let resolveConflict: (GitPath, ConflictSide) -> Void
@@ -254,6 +255,7 @@ public struct CurrentRootView: View {
     fetchLFS: @escaping (Bool) -> Void,
     pullLFS: @escaping () -> Void,
     pruneLFS: @escaping () -> Void,
+    performMaintenance: @escaping (RepositoryMaintenanceTask) -> Void,
     continueOperation: @escaping () -> Void,
     abortOperation: @escaping () -> Void,
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
@@ -356,6 +358,7 @@ public struct CurrentRootView: View {
     self.fetchLFS = fetchLFS
     self.pullLFS = pullLFS
     self.pruneLFS = pruneLFS
+    self.performMaintenance = performMaintenance
     self.continueOperation = continueOperation
     self.abortOperation = abortOperation
     self.resolveConflict = resolveConflict
@@ -651,6 +654,17 @@ public struct CurrentRootView: View {
               }
               .disabled(status?.changes.isEmpty != false)
               Button("Prune Stale Worktrees", action: pruneWorktrees)
+              Menu("Repository Maintenance") {
+                Button("Run Recommended Maintenance") {
+                  performMaintenance(.automatic)
+                }
+                Button("Optimize Repository") {
+                  performMaintenance(.optimize)
+                }
+                Button("Verify Object Database") {
+                  performMaintenance(.verify)
+                }
+              }
               Divider()
               Button("Undo Last Recoverable Operation", action: undoLastOperation)
                 .disabled(lastRecoveryReference == nil)
@@ -2364,6 +2378,26 @@ public struct CurrentRootView: View {
         isEnabled: status?.changes.isEmpty == false && !isLoading
       ) {
         beginCreatingStash(paths: Array(activeSelectedStashPaths))
+      },
+      CommandPaletteAction(
+        id: "repository.maintenance",
+        title: "Run Recommended Maintenance",
+        detail: "git maintenance run --auto",
+        systemImage: "wrench.and.screwdriver",
+        keywords: "optimize gc performance repository",
+        isEnabled: status != nil && !isLoading
+      ) {
+        performMaintenance(.automatic)
+      },
+      CommandPaletteAction(
+        id: "repository.verify",
+        title: "Verify Object Database",
+        detail: "git fsck --full",
+        systemImage: "checkmark.shield",
+        keywords: "integrity fsck repository",
+        isEnabled: status != nil && !isLoading
+      ) {
+        performMaintenance(.verify)
       },
       CommandPaletteAction(
         id: "remote.add",

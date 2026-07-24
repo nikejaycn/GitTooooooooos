@@ -779,6 +779,29 @@ final class AppModel {
     applyLFS(.pruneVerified)
   }
 
+  func performMaintenance(_ task: RepositoryMaintenanceTask) {
+    guard let repository else { return }
+    let title: String
+    switch task {
+    case .automatic: title = "Run recommended repository maintenance"
+    case .optimize: title = "Optimize repository"
+    case .verify: title = "Verify object database"
+    }
+    let activityID = beginActivity(title)
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        let output = try await repository.performMaintenance(task)
+        finishActivity(activityID, state: .succeeded, detail: output)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   func continueOperation() {
     applyMerge(.continueOperation)
   }

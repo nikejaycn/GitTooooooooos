@@ -84,6 +84,7 @@ struct CurrentMacApp: App {
         fetchLFS: model.fetchLFS,
         pullLFS: model.pullLFS,
         pruneLFS: model.pruneLFS,
+        performMaintenance: model.performMaintenance,
         continueOperation: model.continueOperation,
         abortOperation: model.abortOperation,
         resolveConflict: model.resolveConflict,
