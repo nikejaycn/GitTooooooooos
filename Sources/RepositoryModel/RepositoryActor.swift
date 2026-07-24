@@ -118,6 +118,48 @@ public actor RepositoryActor {
     return status
   }
 
+  @discardableResult
+  public func createCommit(
+    _ request: CommitRequest,
+    historyLimit: Int = 500
+  ) async throws -> RepositorySnapshot {
+    let requestedGeneration = generation.next()
+    generation = requestedGeneration
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      try await engine.commit(at: location, request: request)
+      async let status = engine.status(
+        at: location,
+        generation: requestedGeneration
+      )
+      async let commits = engine.history(at: location, limit: historyLimit)
+      async let references = engine.references(at: location)
+      let loaded = try await (status, commits, references)
+      return RepositorySnapshot(
+        generation: requestedGeneration,
+        status: loaded.0,
+        commits: loaded.1,
+        references: loaded.2
+      )
+    }
+    mutationTail = Task {
+      _ = try? await operation.value
+    }
+
+    let snapshot = try await operation.value
+    guard requestedGeneration == generation else {
+      return snapshot
+    }
+    cachedStatus = snapshot.status
+    cachedSnapshot = snapshot
+    return snapshot
+  }
+
   public func invalidate() {
     generation = generation.next()
   }

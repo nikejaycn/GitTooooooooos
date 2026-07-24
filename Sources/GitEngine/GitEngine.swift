@@ -91,6 +91,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: WorkingCopyMutation
   ) async throws
+  func commit(
+    at location: RepositoryLocation,
+    request: CommitRequest
+  ) async throws
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -323,6 +327,34 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       GitCommand(
         rawArguments: rawArguments,
         workingDirectory: location.worktreeURL
+      )
+    )
+  }
+
+  public func commit(
+    at location: RepositoryLocation,
+    request: CommitRequest
+  ) async throws {
+    let message = request.message.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !message.isEmpty else {
+      throw GitEngineError.invalidOutput("A commit message is required.")
+    }
+    guard !message.utf8.contains(0) else {
+      throw GitEngineError.invalidOutput("A commit message cannot contain a NUL byte.")
+    }
+
+    var rawArguments = [Array("commit".utf8)]
+    if request.amend {
+      rawArguments.append(Array("--amend".utf8))
+    }
+    rawArguments.append(Array("-m".utf8))
+    rawArguments.append(Array(message.utf8))
+    _ = try await execute(
+      GitCommand(
+        rawArguments: rawArguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 32 * 1024 * 1024,
+        timeout: .seconds(600)
       )
     )
   }

@@ -169,6 +169,31 @@ struct GitEngineTests {
     #expect(commands[1].redactedDescription == "rm --cached -r --ignore-unmatch -- new.txt")
   }
 
+  @Test("Commit message is passed as one raw argument")
+  func commitMessage() async throws {
+    let runner = StubRunner(results: [.success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.commit(
+      at: location,
+      request: CommitRequest(message: "Subject\n\nBody", amend: true)
+    )
+
+    let command = try #require(await runner.commands().first)
+    #expect(
+      command.arguments == [
+        Array("commit".utf8),
+        Array("--amend".utf8),
+        Array("-m".utf8),
+        Array("Subject\n\nBody".utf8),
+      ]
+    )
+  }
+
   @Test(
     "Live runner reads a real repository",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
@@ -233,7 +258,10 @@ struct GitEngineTests {
     #expect(status.changes.first?.kind == .untracked)
 
     try await engine.mutateWorkingCopy(at: location, mutation: .stage([path]))
-    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try await engine.commit(
+      at: location,
+      request: CommitRequest(message: "base")
+    )
     try Data("changed\n".utf8).write(to: file)
     try await engine.mutateWorkingCopy(at: location, mutation: .discardTracked([path]))
     #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")

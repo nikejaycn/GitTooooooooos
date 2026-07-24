@@ -20,7 +20,8 @@ struct CurrentMacApp: App {
         stage: model.stage,
         unstage: model.unstage,
         discard: model.discard,
-        ignore: model.ignore
+        ignore: model.ignore,
+        commit: model.commit
       )
       .frame(minWidth: 880, minHeight: 560)
     }

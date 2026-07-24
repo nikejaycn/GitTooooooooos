@@ -23,8 +23,10 @@ public struct CurrentRootView: View {
   private let unstage: (GitPath) -> Void
   private let discard: (GitPath) -> Void
   private let ignore: (GitPath) -> Void
+  private let commit: (String) async throws -> Void
   @State private var workspace: Workspace = .changes
   @State private var pendingDiscard: GitPath?
+  @State private var commitMessage = ""
 
   public init(
     repositoryName: String?,
@@ -39,7 +41,8 @@ public struct CurrentRootView: View {
     stage: @escaping (GitPath) -> Void,
     unstage: @escaping (GitPath) -> Void,
     discard: @escaping (GitPath) -> Void,
-    ignore: @escaping (GitPath) -> Void
+    ignore: @escaping (GitPath) -> Void,
+    commit: @escaping (String) async throws -> Void
   ) {
     self.repositoryName = repositoryName
     self.gitVersion = gitVersion
@@ -54,6 +57,7 @@ public struct CurrentRootView: View {
     self.unstage = unstage
     self.discard = discard
     self.ignore = ignore
+    self.commit = commit
   }
 
   public var body: some View {
@@ -150,7 +154,11 @@ public struct CurrentRootView: View {
 
         switch workspace {
         case .changes:
-          workingCopy(status)
+          VStack(spacing: 0) {
+            workingCopy(status)
+            Divider()
+            commitPanel(status)
+          }
         case .history:
           history
         case .stashes:
@@ -178,6 +186,32 @@ public struct CurrentRootView: View {
         description: Text("Choose a local repository to inspect its working copy.")
       )
     }
+  }
+
+  private func commitPanel(_ status: RepositoryStatus) -> some View {
+    HStack(alignment: .bottom, spacing: 12) {
+      TextField("Commit message", text: $commitMessage, axis: .vertical)
+        .lineLimit(2...5)
+        .textFieldStyle(.roundedBorder)
+      Button("Commit") {
+        let message = commitMessage
+        Task {
+          do {
+            try await commit(message)
+            commitMessage = ""
+          } catch {
+            // AppModel publishes the actionable Git or hook error.
+          }
+        }
+      }
+      .keyboardShortcut(.return, modifiers: [.command])
+      .disabled(
+        isLoading
+          || !status.changes.contains(where: \.isStaged)
+          || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      )
+    }
+    .padding(12)
   }
 
   @ViewBuilder

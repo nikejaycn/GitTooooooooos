@@ -78,6 +78,24 @@ final class AppModel {
     apply(.ignore([path]))
   }
 
+  func commit(_ message: String) async throws {
+    guard let repository else { return }
+    isLoading = true
+    errorMessage = nil
+    defer { isLoading = false }
+    do {
+      let snapshot = try await repository.createCommit(
+        CommitRequest(message: message)
+      )
+      repositoryStatus = snapshot.status
+      commits = snapshot.commits
+      references = snapshot.references
+    } catch {
+      errorMessage = error.localizedDescription
+      throw error
+    }
+  }
+
   private func loadGitVersion() async {
     guard let engine else { return }
     do {

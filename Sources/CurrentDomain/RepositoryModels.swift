@@ -162,3 +162,13 @@ public enum WorkingCopyMutation: Hashable, Sendable {
     }
   }
 }
+
+public struct CommitRequest: Hashable, Sendable {
+  public let message: String
+  public let amend: Bool
+
+  public init(message: String, amend: Bool = false) {
+    self.message = message
+    self.amend = amend
+  }
+}

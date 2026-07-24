@@ -69,6 +69,22 @@ struct RepositoryActorTests {
     #expect(await repository.status() == status)
     #expect(await engine.mutations() == [.stage([GitPath("README.md")])])
   }
+
+  @Test("Commit runs through the mutation queue and refreshes the full snapshot")
+  func commitRefresh() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let request = CommitRequest(message: "Ship it")
+
+    let snapshot = try await repository.createCommit(request)
+
+    #expect(snapshot.generation == RepositoryGeneration(1))
+    #expect(await repository.snapshot() == snapshot)
+    #expect(await engine.commits() == [request])
+  }
 }
 
 private actor StubGitEngine: GitEngineProtocol {
@@ -77,6 +93,7 @@ private actor StubGitEngine: GitEngineProtocol {
     commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
   )
   private var receivedMutations: [WorkingCopyMutation] = []
+  private var receivedCommits: [CommitRequest] = []
 
   func version() async throws -> String {
     "git version test"
@@ -118,7 +135,18 @@ private actor StubGitEngine: GitEngineProtocol {
     receivedMutations.append(mutation)
   }
 
+  func commit(
+    at location: RepositoryLocation,
+    request: CommitRequest
+  ) async throws {
+    receivedCommits.append(request)
+  }
+
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations
+  }
+
+  func commits() -> [CommitRequest] {
+    receivedCommits
   }
 }
