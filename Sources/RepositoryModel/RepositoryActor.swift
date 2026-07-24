@@ -58,12 +58,14 @@ public actor RepositoryActor {
     async let references = engine.references(at: location)
     async let stashes = engine.stashes(at: location)
     async let remotes = engine.remotes(at: location)
+    async let worktrees = engine.worktrees(at: location)
     let loaded = try await (
       status,
       commits,
       references,
       stashes,
-      remotes
+      remotes,
+      worktrees
     )
     let snapshot = RepositorySnapshot(
       generation: requestedGeneration,
@@ -71,7 +73,8 @@ public actor RepositoryActor {
       commits: loaded.1,
       references: loaded.2,
       stashes: loaded.3,
-      remotes: loaded.4
+      remotes: loaded.4,
+      worktrees: loaded.5
     )
 
     guard requestedGeneration == generation else {
@@ -246,7 +249,8 @@ public actor RepositoryActor {
         commits: cachedSnapshot.commits,
         references: cachedSnapshot.references,
         stashes: cachedSnapshot.stashes,
-        remotes: cachedSnapshot.remotes
+        remotes: cachedSnapshot.remotes,
+        worktrees: cachedSnapshot.worktrees
       )
     }
     return status
@@ -275,14 +279,16 @@ public actor RepositoryActor {
       async let references = engine.references(at: location)
       async let stashes = engine.stashes(at: location)
       async let remotes = engine.remotes(at: location)
-      let loaded = try await (status, commits, references, stashes, remotes)
+      async let worktrees = engine.worktrees(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes, worktrees)
       return RepositorySnapshot(
         generation: requestedGeneration,
         status: loaded.0,
         commits: loaded.1,
         references: loaded.2,
         stashes: loaded.3,
-        remotes: loaded.4
+        remotes: loaded.4,
+        worktrees: loaded.5
       )
     }
     mutationTail = Task {
@@ -321,14 +327,16 @@ public actor RepositoryActor {
       async let references = engine.references(at: location)
       async let stashes = engine.stashes(at: location)
       async let remotes = engine.remotes(at: location)
-      let loaded = try await (status, commits, references, stashes, remotes)
+      async let worktrees = engine.worktrees(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes, worktrees)
       return RepositorySnapshot(
         generation: requestedGeneration,
         status: loaded.0,
         commits: loaded.1,
         references: loaded.2,
         stashes: loaded.3,
-        remotes: loaded.4
+        remotes: loaded.4,
+        worktrees: loaded.5
       )
     }
     mutationTail = Task {
@@ -351,6 +359,16 @@ public actor RepositoryActor {
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
       try await engine.mutateStash(at: location, mutation: mutation)
+    }
+  }
+
+  @discardableResult
+  public func applyWorktreeMutation(
+    _ mutation: WorktreeMutation,
+    historyLimit: Int = 200
+  ) async throws -> RepositorySnapshot {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.mutateWorktree(at: location, mutation: mutation)
     }
   }
 
@@ -400,14 +418,16 @@ public actor RepositoryActor {
       async let references = engine.references(at: location)
       async let stashes = engine.stashes(at: location)
       async let remotes = engine.remotes(at: location)
-      let loaded = try await (status, commits, references, stashes, remotes)
+      async let worktrees = engine.worktrees(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes, worktrees)
       let snapshot = RepositorySnapshot(
         generation: requestedGeneration,
         status: loaded.0,
         commits: loaded.1,
         references: loaded.2,
         stashes: loaded.3,
-        remotes: loaded.4
+        remotes: loaded.4,
+        worktrees: loaded.5
       )
       return HistoryMutationResult(
         snapshot: snapshot,
@@ -461,14 +481,16 @@ public actor RepositoryActor {
       async let references = engine.references(at: location)
       async let stashes = engine.stashes(at: location)
       async let remotes = engine.remotes(at: location)
-      let loaded = try await (status, commits, references, stashes, remotes)
+      async let worktrees = engine.worktrees(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes, worktrees)
       return RepositorySnapshot(
         generation: requestedGeneration,
         status: loaded.0,
         commits: loaded.1,
         references: loaded.2,
         stashes: loaded.3,
-        remotes: loaded.4
+        remotes: loaded.4,
+        worktrees: loaded.5
       )
     }
     mutationTail = Task {

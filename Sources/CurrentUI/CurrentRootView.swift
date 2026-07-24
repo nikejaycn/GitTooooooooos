@@ -33,6 +33,7 @@ public struct CurrentRootView: View {
   private let references: [GitReference]
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
+  private let worktrees: [GitWorktree]
   private let activities: [OperationActivity]
   private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
@@ -69,6 +70,12 @@ public struct CurrentRootView: View {
   private let createBranch: (String) -> Void
   private let checkoutBranch: (String) -> Void
   private let mergeBranch: (String) -> Void
+  private let createWorktree: (String, String?) -> Void
+  private let openWorktree: (GitWorktree) -> Void
+  private let lockWorktree: (GitWorktree) -> Void
+  private let unlockWorktree: (GitWorktree) -> Void
+  private let removeWorktree: (GitWorktree, Bool) -> Void
+  private let pruneWorktrees: () -> Void
   private let continueOperation: () -> Void
   private let abortOperation: () -> Void
   private let resolveConflict: (GitPath, ConflictSide) -> Void
@@ -92,6 +99,11 @@ public struct CurrentRootView: View {
   @State private var commitMessage = ""
   @State private var newBranchName = ""
   @State private var isCreatingBranch = false
+  @State private var isCreatingWorktree = false
+  @State private var newWorktreeBranch = ""
+  @State private var newWorktreeStartPoint = ""
+  @State private var pendingWorktreeRemoval: GitWorktree?
+  @State private var forceWorktreeRemoval = false
   @State private var selectedCommitOID: String?
   @State private var selectedCommitCount = 0
   @State private var isWorkingCopySelected = false
@@ -121,6 +133,7 @@ public struct CurrentRootView: View {
     references: [GitReference],
     stashes: [StashEntry],
     remotes: [GitRemote],
+    worktrees: [GitWorktree],
     activities: [OperationActivity],
     recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
@@ -157,6 +170,12 @@ public struct CurrentRootView: View {
     createBranch: @escaping (String) -> Void,
     checkoutBranch: @escaping (String) -> Void,
     mergeBranch: @escaping (String) -> Void,
+    createWorktree: @escaping (String, String?) -> Void,
+    openWorktree: @escaping (GitWorktree) -> Void,
+    lockWorktree: @escaping (GitWorktree) -> Void,
+    unlockWorktree: @escaping (GitWorktree) -> Void,
+    removeWorktree: @escaping (GitWorktree, Bool) -> Void,
+    pruneWorktrees: @escaping () -> Void,
     continueOperation: @escaping () -> Void,
     abortOperation: @escaping () -> Void,
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
@@ -190,6 +209,7 @@ public struct CurrentRootView: View {
     self.references = references
     self.stashes = stashes
     self.remotes = remotes
+    self.worktrees = worktrees
     self.activities = activities
     self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
@@ -226,6 +246,12 @@ public struct CurrentRootView: View {
     self.createBranch = createBranch
     self.checkoutBranch = checkoutBranch
     self.mergeBranch = mergeBranch
+    self.createWorktree = createWorktree
+    self.openWorktree = openWorktree
+    self.lockWorktree = lockWorktree
+    self.unlockWorktree = unlockWorktree
+    self.removeWorktree = removeWorktree
+    self.pruneWorktrees = pruneWorktrees
     self.continueOperation = continueOperation
     self.abortOperation = abortOperation
     self.resolveConflict = resolveConflict
@@ -297,6 +323,76 @@ public struct CurrentRootView: View {
             }
           }
         }
+        if status != nil {
+          Section {
+            ForEach(worktrees) { worktree in
+              Button {
+                openWorktree(worktree)
+              } label: {
+                HStack(spacing: 6) {
+                  Image(
+                    systemName:
+                      worktree.isLocked
+                      ? "lock.fill"
+                      : worktree.isCurrent ? "location.fill" : "folder"
+                  )
+                  VStack(alignment: .leading, spacing: 1) {
+                    Text(worktree.branch ?? (worktree.isDetached ? "Detached HEAD" : "Bare"))
+                      .lineLimit(1)
+                    Text(worktree.path.displayString)
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(1)
+                  }
+                }
+              }
+              .buttonStyle(.plain)
+              .disabled(worktree.isCurrent || isLoading)
+              .help(worktreeHelp(worktree))
+              .contextMenu {
+                Button("Open") {
+                  openWorktree(worktree)
+                }
+                .disabled(worktree.isCurrent)
+                Divider()
+                if worktree.isLocked {
+                  Button("Unlock") {
+                    unlockWorktree(worktree)
+                  }
+                } else {
+                  Button("Lock") {
+                    lockWorktree(worktree)
+                  }
+                }
+                Divider()
+                Button("Remove…", role: .destructive) {
+                  forceWorktreeRemoval = false
+                  pendingWorktreeRemoval = worktree
+                }
+                .disabled(worktree.isCurrent || worktree.isLocked)
+                Button("Force Remove…", role: .destructive) {
+                  forceWorktreeRemoval = true
+                  pendingWorktreeRemoval = worktree
+                }
+                .disabled(worktree.isCurrent || worktree.isLocked)
+              }
+            }
+          } header: {
+            HStack {
+              Text("Worktrees")
+              Spacer()
+              Button {
+                newWorktreeBranch = ""
+                newWorktreeStartPoint = ""
+                isCreatingWorktree = true
+              } label: {
+                Image(systemName: "plus")
+              }
+              .buttonStyle(.borderless)
+              .help("Create Worktree")
+            }
+          }
+        }
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 220)
     } detail: {
@@ -327,6 +423,7 @@ public struct CurrentRootView: View {
                 saveStash(nil)
               }
               .disabled(status?.changes.isEmpty != false)
+              Button("Prune Stale Worktrees", action: pruneWorktrees)
               Divider()
               Button("Undo Last Recoverable Operation", action: undoLastOperation)
                 .disabled(lastRecoveryReference == nil)
@@ -345,6 +442,23 @@ public struct CurrentRootView: View {
           Button("Cancel", role: .cancel) {}
         } message: {
           Text("The new branch starts at the current HEAD.")
+        }
+        .alert("Create Worktree", isPresented: $isCreatingWorktree) {
+          TextField("New branch name", text: $newWorktreeBranch)
+          TextField("Start point (optional, defaults to HEAD)", text: $newWorktreeStartPoint)
+          Button("Choose Destination…") {
+            createWorktree(
+              newWorktreeBranch,
+              newWorktreeStartPoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil : newWorktreeStartPoint
+            )
+          }
+          .disabled(
+            newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          )
+          Button("Cancel", role: .cancel) {}
+        } message: {
+          Text("Current creates a new branch and checks it out in a separate folder.")
         }
         .alert("Clone Repository", isPresented: $isCloningRepository) {
           TextField("HTTPS, SSH, or local repository URL", text: $cloneURL)
@@ -398,6 +512,33 @@ public struct CurrentRootView: View {
         } message: {
           Text(
             "Current refuses this operation unless the working copy is clean and creates an undo reference first."
+          )
+        }
+        .confirmationDialog(
+          "\(forceWorktreeRemoval ? "Force remove" : "Remove") worktree?",
+          isPresented: Binding(
+            get: { pendingWorktreeRemoval != nil },
+            set: { if !$0 { pendingWorktreeRemoval = nil } }
+          ),
+          titleVisibility: .visible
+        ) {
+          Button(
+            forceWorktreeRemoval ? "Force Remove Worktree" : "Remove Worktree",
+            role: .destructive
+          ) {
+            if let pendingWorktreeRemoval {
+              removeWorktree(pendingWorktreeRemoval, forceWorktreeRemoval)
+            }
+            pendingWorktreeRemoval = nil
+          }
+          Button("Cancel", role: .cancel) {
+            pendingWorktreeRemoval = nil
+          }
+        } message: {
+          Text(
+            forceWorktreeRemoval
+              ? "This can delete uncommitted changes inside the selected worktree. Locked and current worktrees remain protected."
+              : "Git refuses removal when the selected worktree is dirty or locked."
           )
         }
     }
@@ -1544,5 +1685,21 @@ public struct CurrentRootView: View {
     case .note: "note.text"
     case .other: "bookmark"
     }
+  }
+
+  private func worktreeHelp(_ worktree: GitWorktree) -> String {
+    var details = [
+      worktree.path.displayString,
+      worktree.branch.map { "Branch: \($0)" }
+        ?? (worktree.isDetached ? "Detached HEAD" : "Bare worktree"),
+      worktree.headOID.map { "HEAD: \($0)" } ?? "",
+    ]
+    if let lockReason = worktree.lockReason {
+      details.append(lockReason.isEmpty ? "Locked" : "Locked: \(lockReason)")
+    }
+    if let pruneReason = worktree.pruneReason {
+      details.append(pruneReason.isEmpty ? "Prunable" : "Prunable: \(pruneReason)")
+    }
+    return details.filter { !$0.isEmpty }.joined(separator: "\n")
   }
 }

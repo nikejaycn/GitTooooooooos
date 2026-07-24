@@ -33,6 +33,7 @@ final class AppModel {
   private(set) var references: [GitReference] = []
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
+  private(set) var worktrees: [GitWorktree] = []
   private(set) var activities: [OperationActivity] = []
   private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
@@ -561,6 +562,60 @@ final class AppModel {
     applyMerge(.start(branch: name, squash: false, noFastForward: false))
   }
 
+  func chooseWorktreeDestination(branch: String, startPoint: String?) {
+    let trimmedBranch = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedBranch.isEmpty else {
+      errorMessage = "Enter a branch name for the new worktree."
+      return
+    }
+    let trimmedStartPoint = startPoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    let panel = NSSavePanel()
+    panel.title = "Create Worktree"
+    panel.message = "Choose the new worktree folder."
+    panel.prompt = "Create"
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = trimmedBranch.replacingOccurrences(of: "/", with: "-")
+    if let repositoryURL = repository?.location.worktreeURL {
+      panel.directoryURL = repositoryURL.deletingLastPathComponent()
+    }
+
+    guard panel.runModal() == .OK, let destination = panel.url else { return }
+    applyWorktree(
+      .create(
+        path: GitPath(destination.standardizedFileURL.path),
+        branch: trimmedBranch,
+        startPoint: trimmedStartPoint.flatMap { $0.isEmpty ? nil : $0 }
+      )
+    )
+  }
+
+  func openWorktree(_ worktree: GitWorktree) {
+    guard let path = String(bytes: worktree.path.rawBytes, encoding: .utf8) else {
+      errorMessage = "Opening non-UTF-8 worktree paths is not supported by this UI."
+      return
+    }
+    Task {
+      await openRepository(at: URL(fileURLWithPath: path, isDirectory: true))
+    }
+  }
+
+  func lockWorktree(_ worktree: GitWorktree) {
+    applyWorktree(.lock(path: worktree.path, reason: "Locked by Current"))
+  }
+
+  func unlockWorktree(_ worktree: GitWorktree) {
+    applyWorktree(.unlock(path: worktree.path))
+  }
+
+  func removeWorktree(_ worktree: GitWorktree, force: Bool) {
+    applyWorktree(.remove(path: worktree.path, force: force))
+  }
+
+  func pruneWorktrees() {
+    applyWorktree(.prune)
+  }
+
   func continueOperation() {
     applyMerge(.continueOperation)
   }
@@ -780,6 +835,7 @@ final class AppModel {
     references = []
     stashes = []
     remotes = []
+    worktrees = []
     selectedDiff = nil
     clearFileInsights()
   }
@@ -952,6 +1008,23 @@ final class AppModel {
     }
   }
 
+  private func applyWorktree(_ mutation: WorktreeMutation) {
+    guard let repository else { return }
+    let activityID = beginActivity(worktreeTitle(mutation))
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        apply(try await repository.applyWorktreeMutation(mutation))
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   private func applyRemote(_ mutation: RemoteMutation) {
     guard let repository else { return }
     let activityID = beginActivity(remoteTitle(mutation))
@@ -1028,6 +1101,7 @@ final class AppModel {
     references = snapshot.references
     stashes = snapshot.stashes
     remotes = snapshot.remotes
+    worktrees = snapshot.worktrees
     rebuildGraphRows(generation: snapshot.generation)
   }
 
@@ -1283,6 +1357,17 @@ final class AppModel {
     case .apply(let selector, _): "Apply \(selector)"
     case .pop(let selector, _): "Pop \(selector)"
     case .drop(let selector): "Drop \(selector)"
+    }
+  }
+
+  private func worktreeTitle(_ mutation: WorktreeMutation) -> String {
+    switch mutation {
+    case .create(_, let branch, _): "Create worktree for \(branch)"
+    case .lock(let path, _): "Lock \(path.displayString)"
+    case .unlock(let path): "Unlock \(path.displayString)"
+    case .remove(let path, let force):
+      "\(force ? "Force remove" : "Remove") \(path.displayString)"
+    case .prune: "Prune stale worktrees"
     }
   }
 

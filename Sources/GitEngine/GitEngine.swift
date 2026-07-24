@@ -158,6 +158,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: BranchMutation
   ) async throws
+  func worktrees(at location: RepositoryLocation) async throws -> [GitWorktree]
+  func mutateWorktree(
+    at location: RepositoryLocation,
+    mutation: WorktreeMutation
+  ) async throws
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry]
   func mutateStash(
     at location: RepositoryLocation,
@@ -245,6 +250,17 @@ extension GitEngineProtocol {
     lineCount: Int
   ) async throws -> [BlameLine] {
     throw GitEngineError.invalidOutput("Blame is not implemented.")
+  }
+
+  public func worktrees(at location: RepositoryLocation) async throws -> [GitWorktree] {
+    []
+  }
+
+  public func mutateWorktree(
+    at location: RepositoryLocation,
+    mutation: WorktreeMutation
+  ) async throws {
+    throw GitEngineError.invalidOutput("Worktree mutation is not implemented.")
   }
 
   public func initializeRepository(
@@ -893,6 +909,108 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  public func worktrees(
+    at location: RepositoryLocation
+  ) async throws -> [GitWorktree] {
+    let result = try await execute(
+      GitCommand(
+        arguments: ["worktree", "list", "--porcelain", "-z"],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 16 * 1024 * 1024
+      )
+    )
+    do {
+      return try WorktreePorcelainParser().parse(result.standardOutput).map { record in
+        let path = GitPath(rawBytes: record.path)
+        return GitWorktree(
+          path: path,
+          headOID: record.headOID,
+          branch: record.branch,
+          isBare: record.isBare,
+          isDetached: record.isDetached,
+          lockReason: record.lockReason,
+          pruneReason: record.pruneReason,
+          isCurrent: worktreePath(path, matches: location.worktreeURL)
+        )
+      }
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+  }
+
+  public func mutateWorktree(
+    at location: RepositoryLocation,
+    mutation: WorktreeMutation
+  ) async throws {
+    let arguments: [[UInt8]]
+    switch mutation {
+    case .create(let path, let branch, let startPoint):
+      try validateAbsoluteWorktreePath(path)
+      try await validateBranchName(branch, at: location)
+      var create = [
+        Array("worktree".utf8),
+        Array("add".utf8),
+        Array("-b".utf8),
+        Array(branch.utf8),
+        Array("--".utf8),
+        path.rawBytes,
+      ]
+      if let startPoint {
+        create.append(Array(try await resolveCommit(startPoint, at: location).utf8))
+      }
+      arguments = create
+    case .lock(let path, let reason):
+      try validateAbsoluteWorktreePath(path)
+      var lock = [
+        Array("worktree".utf8),
+        Array("lock".utf8),
+      ]
+      if let reason, !reason.isEmpty {
+        guard !reason.utf8.contains(0) else {
+          throw GitEngineError.invalidOutput("A worktree lock reason cannot contain NUL.")
+        }
+        lock += [Array("--reason".utf8), Array(reason.utf8)]
+      }
+      lock += [Array("--".utf8), path.rawBytes]
+      arguments = lock
+    case .unlock(let path):
+      try validateAbsoluteWorktreePath(path)
+      arguments = [
+        Array("worktree".utf8),
+        Array("unlock".utf8),
+        Array("--".utf8),
+        path.rawBytes,
+      ]
+    case .remove(let path, let force):
+      try validateAbsoluteWorktreePath(path)
+      guard !worktreePath(path, matches: location.worktreeURL) else {
+        throw GitEngineError.invalidRepository("The currently open worktree cannot remove itself.")
+      }
+      arguments =
+        [
+          Array("worktree".utf8),
+          Array("remove".utf8),
+        ]
+        + (force ? [Array("--force".utf8)] : [])
+        + [Array("--".utf8), path.rawBytes]
+    case .prune:
+      arguments = [
+        Array("worktree".utf8),
+        Array("prune".utf8),
+        Array("--expire".utf8),
+        Array("now".utf8),
+      ]
+    }
+    _ = try await execute(
+      GitCommand(
+        rawArguments: arguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 32 * 1024 * 1024,
+        timeout: .seconds(180)
+      )
+    )
+  }
+
   public func stashes(
     at location: RepositoryLocation
   ) async throws -> [StashEntry] {
@@ -1341,6 +1459,31 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         workingDirectory: location.worktreeURL
       )
     )
+  }
+
+  private func validateAbsoluteWorktreePath(_ path: GitPath) throws {
+    guard
+      path.rawBytes.first == Character("/").asciiValue,
+      !path.rawBytes.contains(0)
+    else {
+      throw GitEngineError.invalidOutput(
+        "A worktree path must be an absolute path without NUL bytes."
+      )
+    }
+  }
+
+  private func worktreePath(_ path: GitPath, matches url: URL) -> Bool {
+    guard let string = String(bytes: path.rawBytes, encoding: .utf8) else {
+      return path.rawBytes == Array(url.path.utf8)
+    }
+    let worktreeURL =
+      URL(fileURLWithPath: string, isDirectory: true)
+      .standardizedFileURL
+      .resolvingSymlinksInPath()
+    let repositoryURL =
+      url.standardizedFileURL
+      .resolvingSymlinksInPath()
+    return worktreeURL.path == repositoryURL.path
   }
 
   private func validateStashSelector(_ selector: String) throws {

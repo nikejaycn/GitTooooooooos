@@ -265,6 +265,68 @@ struct GitEngineTests {
     #expect(command.arguments.last == requestedPath.rawBytes)
   }
 
+  @Test("Worktree listing and mutations use porcelain and option-safe paths")
+  func worktreeCommands() async throws {
+    let oid = String(repeating: "a", count: 40)
+    let output =
+      "worktree /tmp/repo\u{0}HEAD \(oid)\u{0}branch refs/heads/main\u{0}\u{0}"
+      + "worktree /tmp/topic\u{0}HEAD \(oid)\u{0}branch refs/heads/topic\u{0}"
+      + "locked build\u{0}\u{0}"
+    let runner = StubRunner(
+      results: [
+        .success(output),
+        .success("topic\n"),
+        .success(""),
+        .success(""),
+        .success(""),
+        .success(""),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let worktrees = try await engine.worktrees(at: location)
+    #expect(worktrees.count == 2)
+    #expect(worktrees[0].isCurrent)
+    #expect(worktrees[1].branch == "topic")
+    #expect(worktrees[1].lockReason == "build")
+
+    let path = GitPath(rawBytes: Array("/tmp/-topic\nworktree".utf8))
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .create(path: path, branch: "topic", startPoint: nil)
+    )
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .lock(path: path, reason: "agent session")
+    )
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .unlock(path: path)
+    )
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .remove(path: path, force: false)
+    )
+
+    let commands = await runner.commands()
+    #expect(commands[0].redactedDescription == "worktree list --porcelain -z")
+    #expect(
+      commands[2].arguments == [
+        Array("worktree".utf8),
+        Array("add".utf8),
+        Array("-b".utf8),
+        Array("topic".utf8),
+        Array("--".utf8),
+        path.rawBytes,
+      ])
+    #expect(commands[3].arguments.last == path.rawBytes)
+    #expect(!commands[5].arguments.contains(Array("--force".utf8)))
+  }
+
   @Test("Blame uses bounded line ranges and parses attribution")
   func blame() async throws {
     let oid = String(repeating: "b", count: 40)
@@ -879,6 +941,115 @@ struct GitEngineTests {
     )
     #expect(originalBlame.count == 10)
     #expect(originalBlame.allSatisfy { $0.oid == originalOID })
+  }
+
+  @Test(
+    "Live worktree management protects dirty, locked, current, and checked-out branches",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveWorktreeManagement() async throws {
+    let fixtureRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-worktree-\(UUID().uuidString)", isDirectory: true)
+    let root = fixtureRoot.appendingPathComponent("main", isDirectory: true)
+    let topic = fixtureRoot.appendingPathComponent("topic", isDirectory: true)
+    let duplicate = fixtureRoot.appendingPathComponent("duplicate", isDirectory: true)
+    try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let tracked = root.appendingPathComponent("tracked.txt")
+    try Data("base\n".utf8).write(to: tracked)
+    try runGit(["-C", root.path, "add", "tracked.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .create(path: GitPath(topic.path), branch: "topic", startPoint: nil)
+    )
+
+    var worktrees = try await engine.worktrees(at: location)
+    #expect(worktrees.count == 2)
+    #expect(worktrees.filter(\.isCurrent).map(\.branch) == ["main"])
+    #expect(worktrees.contains { $0.branch == "topic" && !$0.isCurrent })
+
+    var duplicateRejected = false
+    do {
+      try await engine.mutateWorktree(
+        at: location,
+        mutation: .create(
+          path: GitPath(duplicate.path),
+          branch: "topic",
+          startPoint: nil
+        )
+      )
+    } catch {
+      duplicateRejected = true
+    }
+    #expect(duplicateRejected)
+    #expect(!FileManager.default.fileExists(atPath: duplicate.path))
+
+    try Data("dirty\n".utf8).write(
+      to: topic.appendingPathComponent("tracked.txt")
+    )
+    var dirtyRemovalRejected = false
+    do {
+      try await engine.mutateWorktree(
+        at: location,
+        mutation: .remove(path: GitPath(topic.path), force: false)
+      )
+    } catch {
+      dirtyRemovalRejected = true
+    }
+    #expect(dirtyRemovalRejected)
+    #expect(FileManager.default.fileExists(atPath: topic.path))
+
+    try runGit(["-C", topic.path, "restore", "tracked.txt"])
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .lock(path: GitPath(topic.path), reason: "fixture")
+    )
+    worktrees = try await engine.worktrees(at: location)
+    #expect(worktrees.first { $0.branch == "topic" }?.lockReason == "fixture")
+
+    var lockedRemovalRejected = false
+    do {
+      try await engine.mutateWorktree(
+        at: location,
+        mutation: .remove(path: GitPath(topic.path), force: false)
+      )
+    } catch {
+      lockedRemovalRejected = true
+    }
+    #expect(lockedRemovalRejected)
+
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .unlock(path: GitPath(topic.path))
+    )
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .remove(path: GitPath(topic.path), force: false)
+    )
+    #expect(!FileManager.default.fileExists(atPath: topic.path))
+
+    var currentRemovalRejected = false
+    do {
+      try await engine.mutateWorktree(
+        at: location,
+        mutation: .remove(path: GitPath(root.path), force: true)
+      )
+    } catch {
+      currentRemovalRejected = true
+    }
+    #expect(currentRemovalRejected)
+    #expect(FileManager.default.fileExists(atPath: root.path))
   }
 
   @Test(

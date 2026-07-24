@@ -166,6 +166,7 @@ public struct RepositorySnapshot: Hashable, Sendable {
   public let references: [GitReference]
   public let stashes: [StashEntry]
   public let remotes: [GitRemote]
+  public let worktrees: [GitWorktree]
 
   public init(
     generation: RepositoryGeneration,
@@ -173,7 +174,8 @@ public struct RepositorySnapshot: Hashable, Sendable {
     commits: [CommitSummary],
     references: [GitReference],
     stashes: [StashEntry] = [],
-    remotes: [GitRemote] = []
+    remotes: [GitRemote] = [],
+    worktrees: [GitWorktree] = []
   ) {
     self.generation = generation
     self.status = status
@@ -181,6 +183,7 @@ public struct RepositorySnapshot: Hashable, Sendable {
     self.references = references
     self.stashes = stashes
     self.remotes = remotes
+    self.worktrees = worktrees
   }
 }
 
@@ -269,6 +272,48 @@ public enum BranchMutation: Hashable, Sendable {
   case checkout(name: String)
   case rename(oldName: String, newName: String)
   case delete(name: String, force: Bool)
+}
+
+public struct GitWorktree: Hashable, Sendable, Identifiable {
+  public let path: GitPath
+  public let headOID: String?
+  public let branch: String?
+  public let isBare: Bool
+  public let isDetached: Bool
+  public let lockReason: String?
+  public let pruneReason: String?
+  public let isCurrent: Bool
+
+  public init(
+    path: GitPath,
+    headOID: String?,
+    branch: String?,
+    isBare: Bool,
+    isDetached: Bool,
+    lockReason: String?,
+    pruneReason: String?,
+    isCurrent: Bool
+  ) {
+    self.path = path
+    self.headOID = headOID
+    self.branch = branch
+    self.isBare = isBare
+    self.isDetached = isDetached
+    self.lockReason = lockReason
+    self.pruneReason = pruneReason
+    self.isCurrent = isCurrent
+  }
+
+  public var id: GitPath { path }
+  public var isLocked: Bool { lockReason != nil }
+}
+
+public enum WorktreeMutation: Hashable, Sendable {
+  case create(path: GitPath, branch: String, startPoint: String?)
+  case lock(path: GitPath, reason: String?)
+  case unlock(path: GitPath)
+  case remove(path: GitPath, force: Bool)
+  case prune
 }
 
 public enum MergeMutation: Hashable, Sendable {

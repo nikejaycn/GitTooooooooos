@@ -279,6 +279,33 @@ struct RepositoryActorTests {
     #expect(await engine.mutations() == [.stage([GitPath("README.md")])])
   }
 
+  @Test("Worktree mutation uses the repository queue and refreshes worktree state")
+  func worktreeMutationRefresh() async throws {
+    let path = GitPath("/tmp/repo-topic")
+    let worktree = GitWorktree(
+      path: path,
+      headOID: String(repeating: "a", count: 40),
+      branch: "topic",
+      isBare: false,
+      isDetached: false,
+      lockReason: nil,
+      pruneReason: nil,
+      isCurrent: false
+    )
+    let engine = StubGitEngine(worktrees: [worktree])
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let mutation = WorktreeMutation.lock(path: path, reason: "agent")
+
+    let snapshot = try await repository.applyWorktreeMutation(mutation)
+
+    #expect(snapshot.worktrees == [worktree])
+    #expect(await engine.worktreeMutations() == [mutation])
+    #expect(snapshot.generation == RepositoryGeneration(1))
+  }
+
   @Test("Commit runs through the mutation queue and refreshes the full snapshot")
   func commitRefresh() async throws {
     let engine = StubGitEngine()
@@ -331,25 +358,29 @@ private actor StubGitEngine: GitEngineProtocol {
     commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
   )
   private var receivedMutations: [WorkingCopyMutation] = []
+  private var receivedWorktreeMutations: [WorktreeMutation] = []
   private var receivedCommits: [CommitRequest] = []
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
   private let comparisonFiles: [CommitFileChange]
   private let fileHistoryEntries: [FileHistoryEntry]
   private let blameLines: [BlameLine]
+  private let repositoryWorktrees: [GitWorktree]
 
   init(
     statusDelays: [UInt64: Duration] = [:],
     history: [CommitSummary] = [],
     comparisonFiles: [CommitFileChange] = [],
     fileHistoryEntries: [FileHistoryEntry] = [],
-    blameLines: [BlameLine] = []
+    blameLines: [BlameLine] = [],
+    worktrees: [GitWorktree] = []
   ) {
     self.statusDelays = statusDelays
     historyCommits = history
     self.comparisonFiles = comparisonFiles
     self.fileHistoryEntries = fileHistoryEntries
     self.blameLines = blameLines
+    repositoryWorktrees = worktrees
   }
 
   func version() async throws -> String {
@@ -433,6 +464,17 @@ private actor StubGitEngine: GitEngineProtocol {
     receivedMutations.append(mutation)
   }
 
+  func worktrees(at location: RepositoryLocation) async throws -> [GitWorktree] {
+    repositoryWorktrees
+  }
+
+  func mutateWorktree(
+    at location: RepositoryLocation,
+    mutation: WorktreeMutation
+  ) async throws {
+    receivedWorktreeMutations.append(mutation)
+  }
+
   func commit(
     at location: RepositoryLocation,
     request: CommitRequest
@@ -497,6 +539,10 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations
+  }
+
+  func worktreeMutations() -> [WorktreeMutation] {
+    receivedWorktreeMutations
   }
 
   func commits() -> [CommitRequest] {
