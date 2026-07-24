@@ -35,6 +35,8 @@ struct CurrentMacApp: App {
         continueOperation: model.continueOperation,
         abortOperation: model.abortOperation,
         resolveConflict: model.resolveConflict,
+        loadConflict: model.loadConflict,
+        saveConflict: model.saveConflict,
         cherryPick: model.cherryPick,
         revert: model.revert,
         reset: model.reset,

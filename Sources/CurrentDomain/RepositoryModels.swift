@@ -219,6 +219,7 @@ public enum BranchMutation: Hashable, Sendable {
 public enum MergeMutation: Hashable, Sendable {
   case start(branch: String, squash: Bool, noFastForward: Bool)
   case resolve(path: GitPath, side: ConflictSide)
+  case resolveContents(path: GitPath, contents: [UInt8])
   case continueOperation
   case abortOperation
 }
@@ -226,6 +227,34 @@ public enum MergeMutation: Hashable, Sendable {
 public enum ConflictSide: String, Hashable, Sendable, Codable {
   case ours
   case theirs
+}
+
+public struct ConflictFileContents: Hashable, Sendable {
+  public let path: GitPath
+  public let base: [UInt8]?
+  public let ours: [UInt8]?
+  public let theirs: [UInt8]?
+  public let workingTree: [UInt8]
+
+  public init(
+    path: GitPath,
+    base: [UInt8]?,
+    ours: [UInt8]?,
+    theirs: [UInt8]?,
+    workingTree: [UInt8]
+  ) {
+    self.path = path
+    self.base = base
+    self.ours = ours
+    self.theirs = theirs
+    self.workingTree = workingTree
+  }
+
+  public var isBinary: Bool {
+    [base, ours, theirs, Optional(workingTree)]
+      .compactMap(\.self)
+      .contains { String(bytes: $0, encoding: .utf8) == nil }
+  }
 }
 
 public enum ResetMode: String, Hashable, Sendable, Codable {

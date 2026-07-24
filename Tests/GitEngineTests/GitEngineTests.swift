@@ -441,6 +441,16 @@ struct GitEngineTests {
     #expect(!status.operation.canContinue)
     #expect(status.operation.canAbort)
 
+    let conflict = try await engine.conflictFile(
+      at: location,
+      path: GitPath("conflict.txt")
+    )
+    #expect(conflict.base == Array("base\n".utf8))
+    #expect(conflict.ours == Array("main\n".utf8))
+    #expect(conflict.theirs == Array("topic\n".utf8))
+    #expect(!conflict.isBinary)
+    #expect(String(decoding: conflict.workingTree, as: UTF8.self).contains("<<<<<<<"))
+
     try await engine.mutateMerge(at: location, mutation: .abortOperation)
     status = try await engine.status(
       at: location,
@@ -456,7 +466,10 @@ struct GitEngineTests {
     )
     try await engine.mutateMerge(
       at: location,
-      mutation: .resolve(path: GitPath("conflict.txt"), side: .ours)
+      mutation: .resolveContents(
+        path: GitPath("conflict.txt"),
+        contents: Array("combined\n".utf8)
+      )
     )
     status = try await engine.status(
       at: location,
@@ -473,7 +486,7 @@ struct GitEngineTests {
     )
     #expect(status.operation == .none)
     #expect(status.changes.isEmpty)
-    #expect(try String(contentsOf: file, encoding: .utf8) == "main\n")
+    #expect(try String(contentsOf: file, encoding: .utf8) == "combined\n")
   }
 
   @Test(

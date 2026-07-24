@@ -154,6 +154,34 @@ final class AppModel {
     applyMerge(.resolve(path: path, side: side))
   }
 
+  func loadConflict(_ path: GitPath) async throws -> ConflictFileContents {
+    guard let repository else {
+      throw GitEngineError.invalidRepository("No repository is open.")
+    }
+    return try await repository.conflictFile(for: path)
+  }
+
+  func saveConflict(_ path: GitPath, result: String) async throws {
+    guard let repository else {
+      throw GitEngineError.invalidRepository("No repository is open.")
+    }
+    let activityID = beginActivity("Resolve \(path.displayString)")
+    isLoading = true
+    errorMessage = nil
+    defer { isLoading = false }
+    do {
+      let snapshot = try await repository.applyMergeMutation(
+        .resolveContents(path: path, contents: Array(result.utf8))
+      )
+      apply(snapshot)
+      finishActivity(activityID, state: .succeeded)
+    } catch {
+      errorMessage = error.localizedDescription
+      finishActivity(activityID, error: error)
+      throw error
+    }
+  }
+
   func cherryPick(_ oid: String) {
     applyHistory(.cherryPick(commit: oid))
   }
@@ -485,6 +513,7 @@ final class AppModel {
     switch mutation {
     case .start(let branch, _, _): "Merge \(branch)"
     case .resolve(let path, let side): "Resolve \(path.displayString) using \(side.rawValue)"
+    case .resolveContents(let path, _): "Resolve \(path.displayString)"
     case .continueOperation: "Continue Git operation"
     case .abortOperation: "Abort Git operation"
     }

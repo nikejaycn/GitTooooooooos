@@ -119,6 +119,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: MergeMutation
   ) async throws
+  func conflictFile(
+    at location: RepositoryLocation,
+    path: GitPath
+  ) async throws -> ConflictFileContents
   func mutateHistory(
     at location: RepositoryLocation,
     mutation: HistoryMutation
@@ -128,6 +132,15 @@ public protocol GitEngineProtocol: Sendable {
     hunk: DiffHunk,
     source: DiffSource
   ) async throws
+}
+
+extension GitEngineProtocol {
+  public func conflictFile(
+    at location: RepositoryLocation,
+    path: GitPath
+  ) async throws -> ConflictFileContents {
+    throw GitEngineError.invalidOutput("Conflict content reading is not implemented.")
+  }
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -670,6 +683,26 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         )
       }
       return
+    case .resolveContents(let path, let contents):
+      let fileURL = try workingTreeFileURL(at: location, path: path)
+      do {
+        try Data(contents).write(to: fileURL)
+      } catch {
+        throw GitEngineError.invalidOutput(
+          "Could not save \(path.displayString): \(error.localizedDescription)"
+        )
+      }
+      _ = try await execute(
+        GitCommand(
+          rawArguments: [
+            Array("add".utf8),
+            Array("--".utf8),
+            path.rawBytes,
+          ],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      return
     case .continueOperation:
       switch operationKind(at: location) {
       case .merge: arguments = ["merge", "--continue"]
@@ -708,6 +741,43 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     throw GitEngineError.commandFailed(
       arguments: command.redactedDescription,
       message: result.errorDescription
+    )
+  }
+
+  public func conflictFile(
+    at location: RepositoryLocation,
+    path: GitPath
+  ) async throws -> ConflictFileContents {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository(
+        "A bare repository has no conflict working tree."
+      )
+    }
+    guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
+      throw GitEngineError.invalidOutput(
+        "A conflict path was empty or contained a NUL byte."
+      )
+    }
+
+    async let base = indexStage(1, path: path, at: location)
+    async let ours = indexStage(2, path: path, at: location)
+    async let theirs = indexStage(3, path: path, at: location)
+    let fileURL = try workingTreeFileURL(at: location, path: path)
+    let workingTree: [UInt8]
+    do {
+      workingTree = Array(try Data(contentsOf: fileURL))
+    } catch {
+      throw GitEngineError.invalidOutput(
+        "Could not read \(path.displayString): \(error.localizedDescription)"
+      )
+    }
+
+    return try await ConflictFileContents(
+      path: path,
+      base: base,
+      ours: ours,
+      theirs: theirs,
+      workingTree: workingTree
     )
   }
 
@@ -1081,6 +1151,52 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
     }
     return result
+  }
+
+  private func indexStage(
+    _ stage: Int,
+    path: GitPath,
+    at location: RepositoryLocation
+  ) async throws -> [UInt8]? {
+    let stagePath = Array(":\(stage):".utf8) + path.rawBytes
+    let result = try await runner.run(
+      GitCommand(
+        rawArguments: [
+          Array("show".utf8),
+          stagePath,
+        ],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 128 * 1024 * 1024
+      )
+    )
+    return result.succeeded ? result.standardOutput : nil
+  }
+
+  private func workingTreeFileURL(
+    at location: RepositoryLocation,
+    path: GitPath
+  ) throws -> URL {
+    guard let relativePath = String(bytes: path.rawBytes, encoding: .utf8) else {
+      throw GitEngineError.invalidOutput(
+        "Text conflict editing does not support a non-UTF-8 file name."
+      )
+    }
+    let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+    guard
+      !relativePath.hasPrefix("/"),
+      !components.isEmpty,
+      !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." })
+    else {
+      throw GitEngineError.invalidOutput("The conflict path was not repository-relative.")
+    }
+
+    let root = location.worktreeURL.standardizedFileURL
+    let candidate = root.appendingPathComponent(relativePath).standardizedFileURL
+    let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+    guard candidate.path.hasPrefix(rootPrefix) else {
+      throw GitEngineError.invalidOutput("The conflict path escaped the working tree.")
+    }
+    return candidate
   }
 
   private func headState(from status: PorcelainV2Status) -> HeadState {

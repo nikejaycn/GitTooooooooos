@@ -93,6 +93,10 @@ public actor RepositoryActor {
     try await engine.diff(at: location, path: path, source: source)
   }
 
+  public func conflictFile(for path: GitPath) async throws -> ConflictFileContents {
+    try await engine.conflictFile(at: location, path: path)
+  }
+
   @discardableResult
   public func applyWorkingCopyMutation(
     _ mutation: WorkingCopyMutation

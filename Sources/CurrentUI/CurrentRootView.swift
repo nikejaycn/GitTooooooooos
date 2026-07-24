@@ -38,6 +38,8 @@ public struct CurrentRootView: View {
   private let continueOperation: () -> Void
   private let abortOperation: () -> Void
   private let resolveConflict: (GitPath, ConflictSide) -> Void
+  private let loadConflict: (GitPath) async throws -> ConflictFileContents
+  private let saveConflict: (GitPath, String) async throws -> Void
   private let cherryPick: (String) -> Void
   private let revert: (String) -> Void
   private let reset: (String, ResetMode) -> Void
@@ -58,6 +60,7 @@ public struct CurrentRootView: View {
   @State private var isCreatingBranch = false
   @State private var selectedCommitOID: String?
   @State private var pendingHardResetOID: String?
+  @State private var conflictEditorPath: GitPath?
 
   public init(
     repositoryName: String?,
@@ -87,6 +90,8 @@ public struct CurrentRootView: View {
     continueOperation: @escaping () -> Void,
     abortOperation: @escaping () -> Void,
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
+    loadConflict: @escaping (GitPath) async throws -> ConflictFileContents,
+    saveConflict: @escaping (GitPath, String) async throws -> Void,
     cherryPick: @escaping (String) -> Void,
     revert: @escaping (String) -> Void,
     reset: @escaping (String, ResetMode) -> Void,
@@ -128,6 +133,8 @@ public struct CurrentRootView: View {
     self.continueOperation = continueOperation
     self.abortOperation = abortOperation
     self.resolveConflict = resolveConflict
+    self.loadConflict = loadConflict
+    self.saveConflict = saveConflict
     self.cherryPick = cherryPick
     self.revert = revert
     self.reset = reset
@@ -286,6 +293,21 @@ public struct CurrentRootView: View {
           )
         }
     }
+    .sheet(
+      isPresented: Binding(
+        get: { conflictEditorPath != nil },
+        set: { if !$0 { conflictEditorPath = nil } }
+      )
+    ) {
+      if let path = conflictEditorPath {
+        ConflictResolutionView(
+          path: path,
+          load: loadConflict,
+          save: saveConflict,
+          dismiss: { conflictEditorPath = nil }
+        )
+      }
+    }
   }
 
   @ViewBuilder
@@ -384,6 +406,9 @@ public struct CurrentRootView: View {
           Text(path.displayString)
             .lineLimit(1)
           Spacer()
+          Button("Resolve…") {
+            conflictEditorPath = path
+          }
           Button("Use Ours") {
             resolveConflict(path, .ours)
           }
