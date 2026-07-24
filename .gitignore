@@ -18,6 +18,9 @@ dist/
 .wrangler/
 coverage/
 
+# Local prototype site (published separately)
+sites/current-macos-prototype/
+
 # Local configuration and credentials
 .env
 .env.*
