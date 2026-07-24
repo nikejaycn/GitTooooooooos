@@ -12,6 +12,9 @@ import RepositoryModel
 final class AppModel {
   private static let recentRepositoriesKey = "Current.recentRepositories.v1"
   private static let maximumLoadedCommitCountKey = "Current.maximumLoadedCommitCount.v1"
+  private static let useCustomGitKey = "Current.useCustomGit.v1"
+  private static let customGitPathKey = "Current.customGitPath.v1"
+  private static let appearanceKey = "Current.appearance.v1"
   private static let historyPageSize = 200
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
@@ -28,6 +31,9 @@ final class AppModel {
   private(set) var isHistoryPageLoading = false
   private(set) var hasMoreHistory = false
   private(set) var maximumLoadedCommitCount = 10_000
+  private(set) var useCustomGit = false
+  private(set) var customGitPath = ""
+  private(set) var appearance = AppAppearance.system
   private(set) var commitComparison: CommitComparison?
   private(set) var isCommitComparisonLoading = false
   private(set) var references: [GitReference] = []
@@ -72,6 +78,11 @@ final class AppModel {
 
   init() {
     recentRepositories = Self.loadRecentRepositories()
+    useCustomGit = UserDefaults.standard.bool(forKey: Self.useCustomGitKey)
+    customGitPath = UserDefaults.standard.string(forKey: Self.customGitPathKey) ?? ""
+    appearance =
+      UserDefaults.standard.string(forKey: Self.appearanceKey)
+      .flatMap(AppAppearance.init(rawValue:)) ?? .system
     let savedCommitLimit = UserDefaults.standard.integer(
       forKey: Self.maximumLoadedCommitCountKey
     )
@@ -79,20 +90,12 @@ final class AppModel {
       maximumLoadedCommitCount = savedCommitLimit
     }
     do {
-      let executable = try GitExecutableResolver().resolve()
+      let executable = try resolveConfiguredGitExecutable()
       let liveEngine = LiveGitEngine(
         runner: SwiftSubprocessRunner(executableURL: executable.url)
       )
       engine = liveEngine
-      gitFallbackReason = executable.fallbackReason
-      switch executable.source {
-      case .bundled:
-        gitSourceDescription = "Bundled"
-      case .custom:
-        gitSourceDescription = "Custom"
-      case .developmentSystemFallback:
-        gitSourceDescription = "Development system fallback"
-      }
+      applyGitExecutableDescription(executable)
 
       Task {
         await loadGitToolchainVersions()
@@ -273,6 +276,53 @@ final class AppModel {
     {
       nextHistoryCursor = HistoryCursor(offset: commits.count)
       hasMoreHistory = true
+    }
+  }
+
+  func setAppearance(_ newAppearance: AppAppearance) {
+    guard newAppearance != appearance else { return }
+    appearance = newAppearance
+    UserDefaults.standard.set(newAppearance.rawValue, forKey: Self.appearanceKey)
+  }
+
+  func applyGitToolchain(useCustom: Bool, path: String) {
+    guard repositoryOperationTask == nil, !isLoading else {
+      errorMessage = "Wait for the current repository operation before changing Git."
+      return
+    }
+    let normalizedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !useCustom || !normalizedPath.isEmpty else {
+      errorMessage = "Choose a Git executable before enabling the custom toolchain."
+      return
+    }
+
+    let previousRepositoryURL = repository?.location.worktreeURL
+    self.useCustomGit = useCustom
+    customGitPath = normalizedPath
+    UserDefaults.standard.set(useCustom, forKey: Self.useCustomGitKey)
+    UserDefaults.standard.set(normalizedPath, forKey: Self.customGitPathKey)
+
+    do {
+      let executable = try resolveConfiguredGitExecutable()
+      let liveEngine = LiveGitEngine(
+        runner: SwiftSubprocessRunner(executableURL: executable.url)
+      )
+      engine = liveEngine
+      applyGitExecutableDescription(executable)
+      gitVersion = nil
+      gitLFSVersion = nil
+      errorMessage = nil
+      if previousRepositoryURL != nil {
+        clearRepository()
+      }
+      Task {
+        await loadGitToolchainVersions()
+        if let previousRepositoryURL {
+          await openRepository(at: previousRepositoryURL)
+        }
+      }
+    } catch {
+      errorMessage = error.localizedDescription
     }
   }
 
@@ -825,6 +875,28 @@ final class AppModel {
       gitLFSVersion = try? await engine.lfsVersion()
     } catch {
       errorMessage = error.localizedDescription
+    }
+  }
+
+  private func resolveConfiguredGitExecutable() throws -> GitExecutable {
+    var environment = ProcessInfo.processInfo.environment
+    if useCustomGit {
+      environment["CURRENT_GIT_EXECUTABLE"] = customGitPath
+    } else {
+      environment.removeValue(forKey: "CURRENT_GIT_EXECUTABLE")
+    }
+    return try GitExecutableResolver().resolve(environment: environment)
+  }
+
+  private func applyGitExecutableDescription(_ executable: GitExecutable) {
+    gitFallbackReason = executable.fallbackReason
+    switch executable.source {
+    case .bundled:
+      gitSourceDescription = "Bundled"
+    case .custom:
+      gitSourceDescription = "Custom"
+    case .developmentSystemFallback:
+      gitSourceDescription = "Development system fallback"
     }
   }
 

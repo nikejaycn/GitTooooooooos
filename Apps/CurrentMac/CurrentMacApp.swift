@@ -104,6 +104,7 @@ struct CurrentMacApp: App {
         push: model.push
       )
       .frame(minWidth: 880, minHeight: 560)
+      .preferredColorScheme(model.appearance.colorScheme)
     }
     .commands {
       CommandGroup(after: .newItem) {
@@ -116,38 +117,8 @@ struct CurrentMacApp: App {
     }
 
     Settings {
-      Form {
-        Section("Git Toolchain") {
-          LabeledContent("Git", value: model.gitVersion ?? "Checking…")
-          LabeledContent("Git LFS", value: model.gitLFSVersion ?? "Unavailable")
-          LabeledContent("Source", value: model.gitSourceDescription ?? "Unavailable")
-          if let reason = model.gitFallbackReason {
-            Label(reason, systemImage: "exclamationmark.triangle.fill")
-              .font(.caption)
-              .foregroundStyle(.orange)
-          }
-        }
-
-        Section("History") {
-          Picker(
-            "Maximum graph commits",
-            selection: Binding(
-              get: { model.maximumLoadedCommitCount },
-              set: { model.setMaximumLoadedCommitCount($0) }
-            )
-          ) {
-            ForEach(AppModel.supportedCommitLimits, id: \.self) { limit in
-              Text(limit.formatted())
-                .tag(limit)
-            }
-          }
-          Text("History is loaded in 200-commit pages up to this in-memory limit.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-      }
-      .formStyle(.grouped)
-      .frame(width: 520, height: 320)
+      CurrentSettingsView(model: model)
+        .preferredColorScheme(model.appearance.colorScheme)
     }
   }
 }

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		44E6B235671829CF0AF867EC /* CurrentUI in Frameworks */ = {isa = PBXBuildFile; productRef = BF2C24D9D6A1890C672DD0DA /* CurrentUI */; };
 		45B4809BB4963116E42242BB /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5046D0FF0576C814807D4A83 /* AppModel.swift */; };
+		7BE863952F5D4FD09B5161C2 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E39D6B06C07E4627A40DA0F5 /* SettingsView.swift */; };
 		BEDFC4CB4A6ED6E93379DB99 /* GitEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 8AAFEEE7220ABFDAB25B78AA /* GitEngine */; };
 		C42C9CA45D4E9D7E40336C65 /* RepositoryModel in Frameworks */ = {isa = PBXBuildFile; productRef = 05547B899A9D94CA332ABD3B /* RepositoryModel */; };
 		CE89D5327E68632F2A5C17DB /* CurrentMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E00A699BADCBFBFC55B4A94 /* CurrentMacApp.swift */; };
@@ -20,6 +21,7 @@
 		5046D0FF0576C814807D4A83 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		5735639D63BE281277D5F772 /* GitTooooooooos */ = {isa = PBXFileReference; lastKnownFileType = folder; name = GitTooooooooos; path = .; sourceTree = SOURCE_ROOT; };
 		9CFE8D5B9ED4F061B9997058 /* Current.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Current.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E39D6B06C07E4627A40DA0F5 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,6 +53,7 @@
 			children = (
 				5046D0FF0576C814807D4A83 /* AppModel.swift */,
 				0E00A699BADCBFBFC55B4A94 /* CurrentMacApp.swift */,
+				E39D6B06C07E4627A40DA0F5 /* SettingsView.swift */,
 			);
 			path = CurrentMac;
 			sourceTree = "<group>";
@@ -145,6 +148,7 @@
 			files = (
 				45B4809BB4963116E42242BB /* AppModel.swift in Sources */,
 				CE89D5327E68632F2A5C17DB /* CurrentMacApp.swift in Sources */,
+				7BE863952F5D4FD09B5161C2 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

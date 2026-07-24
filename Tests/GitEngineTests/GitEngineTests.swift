@@ -183,6 +183,32 @@ struct GitEngineTests {
     #expect(executable.fallbackReason?.contains("not executable") == true)
   }
 
+  @Test("Valid custom Git takes precedence over the bundled executable")
+  func resolverUsesCustomExecutable() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-custom-git-\(UUID().uuidString)", isDirectory: true)
+    let customGit = root.appendingPathComponent("custom/git")
+    try FileManager.default.createDirectory(
+      at: customGit.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: customGit)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: customGit.path
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let executable = try GitExecutableResolver().resolve(
+      resourceURL: root,
+      environment: ["CURRENT_GIT_EXECUTABLE": customGit.path]
+    )
+
+    #expect(executable.source == .custom)
+    #expect(executable.url == customGit)
+    #expect(executable.fallbackReason == nil)
+  }
+
   @Test("Maps porcelain status into domain state")
   func status() async throws {
     let output =
