@@ -491,6 +491,72 @@ public struct ConflictFileContents: Hashable, Sendable {
   }
 }
 
+public struct ExternalDiffContents: Hashable, Sendable {
+  public let path: GitPath
+  public let before: [UInt8]?
+  public let after: [UInt8]?
+
+  public init(path: GitPath, before: [UInt8]?, after: [UInt8]?) {
+    self.path = path
+    self.before = before
+    self.after = after
+  }
+}
+
+public enum ExternalTool: String, CaseIterable, Hashable, Sendable, Codable, Identifiable {
+  case none
+  case fileMerge
+  case kaleidoscope
+  case beyondCompare
+  case custom
+
+  public var id: Self { self }
+
+  public var title: String {
+    switch self {
+    case .none: "None"
+    case .fileMerge: "FileMerge"
+    case .kaleidoscope: "Kaleidoscope"
+    case .beyondCompare: "Beyond Compare"
+    case .custom: "Custom"
+    }
+  }
+}
+
+public enum ExternalToolInvocationPlanner {
+  public static func diffArguments(
+    tool: ExternalTool,
+    before: String,
+    after: String
+  ) -> [String] {
+    switch tool {
+    case .fileMerge, .kaleidoscope, .beyondCompare, .custom:
+      [before, after]
+    case .none:
+      []
+    }
+  }
+
+  public static func mergeArguments(
+    tool: ExternalTool,
+    base: String,
+    ours: String,
+    theirs: String,
+    result: String
+  ) -> [String] {
+    switch tool {
+    case .fileMerge:
+      [ours, theirs, "-ancestor", base, "-merge", result]
+    case .kaleidoscope:
+      ["--merge", "--output", result, base, ours, theirs]
+    case .beyondCompare, .custom:
+      [base, ours, theirs, result]
+    case .none:
+      []
+    }
+  }
+}
+
 public enum ResetMode: String, Hashable, Sendable, Codable {
   case soft
   case mixed

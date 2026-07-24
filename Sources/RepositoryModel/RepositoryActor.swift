@@ -220,6 +220,17 @@ public actor RepositoryActor {
     try await engine.conflictFile(at: location, path: path)
   }
 
+  public func externalDiffContents(
+    for path: GitPath,
+    source: DiffSource
+  ) async throws -> ExternalDiffContents {
+    try await engine.externalDiffContents(
+      at: location,
+      path: path,
+      source: source
+    )
+  }
+
   @discardableResult
   public func applyWorkingCopyMutation(
     _ mutation: WorkingCopyMutation

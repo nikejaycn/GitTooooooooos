@@ -45,6 +45,8 @@ public struct CurrentRootView: View {
   private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
   private let selectedDiff: DiffDocument?
+  private let externalDiffTool: ExternalTool
+  private let externalMergeTool: ExternalTool
   private let isDiffLoading: Bool
   private let fileHistory: FileHistoryResult?
   private let blameDocument: BlameDocument?
@@ -71,6 +73,7 @@ public struct CurrentRootView: View {
   private let ignore: (GitPath) -> Void
   private let commit: (String) async throws -> Void
   private let loadDiff: (FileChange) -> Void
+  private let openExternalDiff: (DiffDocument) -> Void
   private let loadFileInsights: (GitPath) -> Void
   private let loadBlame: (GitPath, String?) -> Void
   private let loadNextBlamePage: () -> Void
@@ -106,6 +109,7 @@ public struct CurrentRootView: View {
   private let resolveConflict: (GitPath, ConflictSide) -> Void
   private let loadConflict: (GitPath) async throws -> ConflictFileContents
   private let saveConflict: (GitPath, String) async throws -> Void
+  private let openExternalMerge: (GitPath) async throws -> Void
   private let cherryPick: (String) -> Void
   private let revert: (String) -> Void
   private let reset: (String, ResetMode) -> Void
@@ -200,6 +204,8 @@ public struct CurrentRootView: View {
     recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
     selectedDiff: DiffDocument?,
+    externalDiffTool: ExternalTool,
+    externalMergeTool: ExternalTool,
     isDiffLoading: Bool,
     fileHistory: FileHistoryResult?,
     blameDocument: BlameDocument?,
@@ -226,6 +232,7 @@ public struct CurrentRootView: View {
     ignore: @escaping (GitPath) -> Void,
     commit: @escaping (String) async throws -> Void,
     loadDiff: @escaping (FileChange) -> Void,
+    openExternalDiff: @escaping (DiffDocument) -> Void,
     loadFileInsights: @escaping (GitPath) -> Void,
     loadBlame: @escaping (GitPath, String?) -> Void,
     loadNextBlamePage: @escaping () -> Void,
@@ -261,6 +268,7 @@ public struct CurrentRootView: View {
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
     loadConflict: @escaping (GitPath) async throws -> ConflictFileContents,
     saveConflict: @escaping (GitPath, String) async throws -> Void,
+    openExternalMerge: @escaping (GitPath) async throws -> Void,
     cherryPick: @escaping (String) -> Void,
     revert: @escaping (String) -> Void,
     reset: @escaping (String, ResetMode) -> Void,
@@ -303,6 +311,8 @@ public struct CurrentRootView: View {
     self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
     self.selectedDiff = selectedDiff
+    self.externalDiffTool = externalDiffTool
+    self.externalMergeTool = externalMergeTool
     self.isDiffLoading = isDiffLoading
     self.fileHistory = fileHistory
     self.blameDocument = blameDocument
@@ -329,6 +339,7 @@ public struct CurrentRootView: View {
     self.ignore = ignore
     self.commit = commit
     self.loadDiff = loadDiff
+    self.openExternalDiff = openExternalDiff
     self.loadFileInsights = loadFileInsights
     self.loadBlame = loadBlame
     self.loadNextBlamePage = loadNextBlamePage
@@ -364,6 +375,7 @@ public struct CurrentRootView: View {
     self.resolveConflict = resolveConflict
     self.loadConflict = loadConflict
     self.saveConflict = saveConflict
+    self.openExternalMerge = openExternalMerge
     self.cherryPick = cherryPick
     self.revert = revert
     self.reset = reset
@@ -887,6 +899,8 @@ public struct CurrentRootView: View {
           path: path,
           load: loadConflict,
           save: saveConflict,
+          externalTool: externalMergeTool,
+          openExternal: openExternalMerge,
           dismiss: { conflictEditorPath = nil }
         )
       }
@@ -1485,6 +1499,18 @@ public struct CurrentRootView: View {
                 systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
             }
             .buttonStyle(.borderless)
+            if externalDiffTool != .none {
+              Button {
+                openExternalDiff(selectedDiff)
+              } label: {
+                Label(
+                  "Open in \(externalDiffTool.title)",
+                  systemImage: "arrow.up.forward.app"
+                )
+              }
+              .buttonStyle(.borderless)
+              .disabled(isLoading)
+            }
             Picker("Diff presentation", selection: $diffPresentation) {
               Text("Unified")
                 .tag(DiffPresentation.unified)

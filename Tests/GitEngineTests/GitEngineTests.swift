@@ -869,6 +869,60 @@ struct GitEngineTests {
     #expect(command.redactedDescription.contains("--cached -- file.txt"))
   }
 
+  @Test("External unstaged diff reads the index and working tree without a shell")
+  func externalUnstagedDiffContents() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("working\n".utf8).write(to: root.appendingPathComponent("name with spaces.txt"))
+
+    let runner = StubRunner(results: [.success("indexed\n")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let contents = try await engine.externalDiffContents(
+      at: RepositoryLocation(
+        worktreeURL: root,
+        commonGitDirectoryURL: root.appendingPathComponent(".git")
+      ),
+      path: GitPath("name with spaces.txt"),
+      source: .unstaged
+    )
+
+    #expect(contents.before == Array("indexed\n".utf8))
+    #expect(contents.after == Array("working\n".utf8))
+    let command = try #require(await runner.commands().first)
+    #expect(command.arguments == [Array("show".utf8), Array(":name with spaces.txt".utf8)])
+  }
+
+  @Test("External tool merge adapters use structured arguments")
+  func externalToolArguments() {
+    #expect(
+      ExternalToolInvocationPlanner.diffArguments(
+        tool: .custom,
+        before: "/tmp/before file",
+        after: "/tmp/after;touch injected"
+      ) == ["/tmp/before file", "/tmp/after;touch injected"]
+    )
+    #expect(
+      ExternalToolInvocationPlanner.mergeArguments(
+        tool: .fileMerge,
+        base: "base",
+        ours: "ours",
+        theirs: "theirs",
+        result: "result"
+      ) == ["ours", "theirs", "-ancestor", "base", "-merge", "result"]
+    )
+    #expect(
+      ExternalToolInvocationPlanner.mergeArguments(
+        tool: .kaleidoscope,
+        base: "base",
+        ours: "ours",
+        theirs: "theirs",
+        result: "result"
+      ) == ["--merge", "--output", "result", "base", "ours", "theirs"]
+    )
+  }
+
   @Test("Creating and checking out a branch validates its name first")
   func createBranch() async throws {
     let runner = StubRunner(results: [.success("topic\n"), .success("")])

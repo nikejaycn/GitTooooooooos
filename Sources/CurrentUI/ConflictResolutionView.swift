@@ -5,6 +5,8 @@ struct ConflictResolutionView: View {
   let path: GitPath
   let load: (GitPath) async throws -> ConflictFileContents
   let save: (GitPath, String) async throws -> Void
+  let externalTool: ExternalTool
+  let openExternal: (GitPath) async throws -> Void
   let dismiss: () -> Void
 
   @State private var contents: ConflictFileContents?
@@ -85,6 +87,12 @@ struct ConflictResolutionView: View {
         Button("Cancel", action: dismiss)
           .keyboardShortcut(.cancelAction)
         Spacer()
+        if externalTool != .none {
+          Button("Open in \(externalTool.title)") {
+            openInExternalTool()
+          }
+          .disabled(isLoading || isSaving)
+        }
         Button("Save and Stage") {
           saveResult()
         }
@@ -136,6 +144,20 @@ struct ConflictResolutionView: View {
       errorMessage = nil
       do {
         try await save(path, result)
+        dismiss()
+      } catch {
+        errorMessage = error.localizedDescription
+      }
+      isSaving = false
+    }
+  }
+
+  private func openInExternalTool() {
+    Task { @MainActor in
+      isSaving = true
+      errorMessage = nil
+      do {
+        try await openExternal(path)
         dismiss()
       } catch {
         errorMessage = error.localizedDescription

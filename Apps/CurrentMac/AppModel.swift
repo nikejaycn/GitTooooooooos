@@ -7,6 +7,23 @@ import GraphKit
 import Observation
 import RepositoryModel
 
+private enum ExternalToolError: LocalizedError {
+  case notConfigured(String)
+  case notFound(String)
+  case failed(String, Int32)
+
+  var errorDescription: String? {
+    switch self {
+    case .notConfigured(let role):
+      "Choose an external \(role) tool in Settings first."
+    case .notFound(let message):
+      message
+    case .failed(let tool, let status):
+      "\(tool) exited with status \(status). The conflict was not marked resolved."
+    }
+  }
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -16,6 +33,10 @@ final class AppModel {
   private static let customGitPathKey = "Current.customGitPath.v1"
   private static let appearanceKey = "Current.appearance.v1"
   private static let autoStashEnabledKey = "Current.autoStashEnabled.v1"
+  private static let externalDiffToolKey = "Current.externalDiffTool.v1"
+  private static let externalMergeToolKey = "Current.externalMergeTool.v1"
+  private static let customDiffToolPathKey = "Current.customDiffToolPath.v1"
+  private static let customMergeToolPathKey = "Current.customMergeToolPath.v1"
   private static let historyPageSize = 200
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
@@ -36,6 +57,10 @@ final class AppModel {
   private(set) var customGitPath = ""
   private(set) var appearance = AppAppearance.system
   private(set) var autoStashEnabled = false
+  private(set) var externalDiffTool = ExternalTool.none
+  private(set) var externalMergeTool = ExternalTool.none
+  private(set) var customDiffToolPath = ""
+  private(set) var customMergeToolPath = ""
   private(set) var commitComparison: CommitComparison?
   private(set) var isCommitComparisonLoading = false
   private(set) var references: [GitReference] = []
@@ -77,12 +102,23 @@ final class AppModel {
   private var blameTask: Task<Void, Never>?
   private var blameRequestID: UUID?
   private var repositoryOperationTask: Task<Void, Never>?
+  private var externalDiffProcesses: [UUID: Process] = [:]
 
   init() {
     recentRepositories = Self.loadRecentRepositories()
     useCustomGit = UserDefaults.standard.bool(forKey: Self.useCustomGitKey)
     customGitPath = UserDefaults.standard.string(forKey: Self.customGitPathKey) ?? ""
     autoStashEnabled = UserDefaults.standard.bool(forKey: Self.autoStashEnabledKey)
+    externalDiffTool =
+      UserDefaults.standard.string(forKey: Self.externalDiffToolKey)
+      .flatMap(ExternalTool.init(rawValue:)) ?? .none
+    externalMergeTool =
+      UserDefaults.standard.string(forKey: Self.externalMergeToolKey)
+      .flatMap(ExternalTool.init(rawValue:)) ?? .none
+    customDiffToolPath =
+      UserDefaults.standard.string(forKey: Self.customDiffToolPathKey) ?? ""
+    customMergeToolPath =
+      UserDefaults.standard.string(forKey: Self.customMergeToolPathKey) ?? ""
     appearance =
       UserDefaults.standard.string(forKey: Self.appearanceKey)
       .flatMap(AppAppearance.init(rawValue:)) ?? .system
@@ -286,6 +322,26 @@ final class AppModel {
     guard newAppearance != appearance else { return }
     appearance = newAppearance
     UserDefaults.standard.set(newAppearance.rawValue, forKey: Self.appearanceKey)
+  }
+
+  func setExternalDiffTool(_ tool: ExternalTool) {
+    externalDiffTool = tool
+    UserDefaults.standard.set(tool.rawValue, forKey: Self.externalDiffToolKey)
+  }
+
+  func setExternalMergeTool(_ tool: ExternalTool) {
+    externalMergeTool = tool
+    UserDefaults.standard.set(tool.rawValue, forKey: Self.externalMergeToolKey)
+  }
+
+  func setCustomDiffToolPath(_ path: String) {
+    customDiffToolPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    UserDefaults.standard.set(customDiffToolPath, forKey: Self.customDiffToolPathKey)
+  }
+
+  func setCustomMergeToolPath(_ path: String) {
+    customMergeToolPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    UserDefaults.standard.set(customMergeToolPath, forKey: Self.customMergeToolPathKey)
   }
 
   func applyGitToolchain(useCustom: Bool, path: String) {
@@ -520,6 +576,41 @@ final class AppModel {
       }
       if diffRequestID == requestID {
         isDiffLoading = false
+      }
+    }
+  }
+
+  func openExternalDiff(_ document: DiffDocument) {
+    guard let repository else { return }
+    let activityID = beginActivity("Open external diff for \(document.path.displayString)")
+    Task {
+      errorMessage = nil
+      do {
+        let executable = try resolveExternalTool(
+          externalDiffTool,
+          customPath: customDiffToolPath,
+          role: "diff"
+        )
+        let contents = try await repository.externalDiffContents(
+          for: document.path,
+          source: document.source
+        )
+        let directory = try makeExternalToolDirectory()
+        let fileName = safeExternalFileName(document.path.displayString)
+        let beforeURL = directory.appendingPathComponent("Before-\(fileName)")
+        let afterURL = directory.appendingPathComponent("After-\(fileName)")
+        try Data(contents.before ?? []).write(to: beforeURL, options: .atomic)
+        try Data(contents.after ?? []).write(to: afterURL, options: .atomic)
+        let arguments = ExternalToolInvocationPlanner.diffArguments(
+          tool: externalDiffTool,
+          before: beforeURL.path,
+          after: afterURL.path
+        )
+        try launchExternalProcess(executable: executable, arguments: arguments)
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
       }
     }
   }
@@ -842,6 +933,58 @@ final class AppModel {
     }
   }
 
+  func openExternalMerge(_ path: GitPath) async throws {
+    guard let repository else {
+      throw GitEngineError.invalidRepository("No repository is open.")
+    }
+    let activityID = beginActivity("Resolve \(path.displayString) with external merge")
+    isLoading = true
+    errorMessage = nil
+    defer { isLoading = false }
+    do {
+      let executable = try resolveExternalTool(
+        externalMergeTool,
+        customPath: customMergeToolPath,
+        role: "merge"
+      )
+      let contents = try await repository.conflictFile(for: path)
+      let directory = try makeExternalToolDirectory()
+      let fileName = safeExternalFileName(path.displayString)
+      let baseURL = directory.appendingPathComponent("Base-\(fileName)")
+      let oursURL = directory.appendingPathComponent("Ours-\(fileName)")
+      let theirsURL = directory.appendingPathComponent("Theirs-\(fileName)")
+      let resultURL = directory.appendingPathComponent("Result-\(fileName)")
+      try Data(contents.base ?? []).write(to: baseURL, options: .atomic)
+      try Data(contents.ours ?? []).write(to: oursURL, options: .atomic)
+      try Data(contents.theirs ?? []).write(to: theirsURL, options: .atomic)
+      try Data(contents.workingTree).write(to: resultURL, options: .atomic)
+      let arguments = ExternalToolInvocationPlanner.mergeArguments(
+        tool: externalMergeTool,
+        base: baseURL.path,
+        ours: oursURL.path,
+        theirs: theirsURL.path,
+        result: resultURL.path
+      )
+      let status = try await runExternalProcess(
+        executable: executable,
+        arguments: arguments
+      )
+      guard status == 0 else {
+        throw ExternalToolError.failed(externalMergeTool.title, status)
+      }
+      let resolved = Array(try Data(contentsOf: resultURL))
+      let snapshot = try await repository.applyMergeMutation(
+        .resolveContents(path: path, contents: resolved)
+      )
+      apply(snapshot)
+      finishActivity(activityID, state: .succeeded)
+    } catch {
+      errorMessage = error.localizedDescription
+      finishActivity(activityID, error: error)
+      throw error
+    }
+  }
+
   func cherryPick(_ oid: String) {
     applyHistory(.cherryPick(commit: oid))
   }
@@ -926,6 +1069,120 @@ final class AppModel {
       gitLFSVersion = try? await engine.lfsVersion()
     } catch {
       errorMessage = error.localizedDescription
+    }
+  }
+
+  private func resolveExternalTool(
+    _ tool: ExternalTool,
+    customPath: String,
+    role: String
+  ) throws -> URL {
+    let candidates: [String]
+    switch tool {
+    case .none:
+      throw ExternalToolError.notConfigured(role)
+    case .fileMerge:
+      candidates = ["/usr/bin/opendiff"]
+    case .kaleidoscope:
+      candidates = [
+        "/opt/homebrew/bin/ksdiff",
+        "/usr/local/bin/ksdiff",
+        "/Applications/Kaleidoscope.app/Contents/MacOS/ksdiff",
+      ]
+    case .beyondCompare:
+      candidates = [
+        "/Applications/Beyond Compare.app/Contents/MacOS/bcomp",
+        "/opt/homebrew/bin/bcomp",
+        "/usr/local/bin/bcomp",
+      ]
+    case .custom:
+      candidates = [customPath]
+    }
+
+    for path in candidates where !path.isEmpty {
+      var isDirectory: ObjCBool = false
+      if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+        !isDirectory.boolValue,
+        FileManager.default.isExecutableFile(atPath: path)
+      {
+        return URL(fileURLWithPath: path).standardizedFileURL
+      }
+    }
+    if tool == .custom {
+      throw ExternalToolError.notFound(
+        "The custom executable is missing or not executable. Choose a valid file in Settings."
+      )
+    }
+    throw ExternalToolError.notFound(
+      "\(tool.title) could not be found. Install its command-line tool or choose another tool in Settings."
+    )
+  }
+
+  private func makeExternalToolDirectory() throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("CurrentExternalTools", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: root,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    return directory
+  }
+
+  private func safeExternalFileName(_ path: String) -> String {
+    let last = URL(fileURLWithPath: path).lastPathComponent
+    let cleaned = last.replacingOccurrences(
+      of: #"[^A-Za-z0-9._-]"#,
+      with: "_",
+      options: .regularExpression
+    )
+    return cleaned.isEmpty ? "File" : String(cleaned.prefix(120))
+  }
+
+  private func launchExternalProcess(
+    executable: URL,
+    arguments: [String]
+  ) throws {
+    let id = UUID()
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = arguments
+    process.terminationHandler = { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.externalDiffProcesses[id] = nil
+      }
+    }
+    externalDiffProcesses[id] = process
+    do {
+      try process.run()
+    } catch {
+      externalDiffProcesses[id] = nil
+      throw error
+    }
+  }
+
+  private func runExternalProcess(
+    executable: URL,
+    arguments: [String]
+  ) async throws -> Int32 {
+    try await withCheckedThrowingContinuation { continuation in
+      let process = Process()
+      process.executableURL = executable
+      process.arguments = arguments
+      process.terminationHandler = { completed in
+        continuation.resume(returning: completed.terminationStatus)
+      }
+      do {
+        try process.run()
+      } catch {
+        continuation.resume(throwing: error)
+      }
     }
   }
 

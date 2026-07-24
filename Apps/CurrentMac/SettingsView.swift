@@ -1,4 +1,5 @@
 import AppKit
+import CurrentDomain
 import SwiftUI
 
 enum AppAppearance: String, CaseIterable, Identifiable {
@@ -29,6 +30,8 @@ struct CurrentSettingsView: View {
   @Bindable var model: AppModel
   @State private var draftUseCustomGit = false
   @State private var draftCustomGitPath = ""
+  @State private var draftCustomDiffToolPath = ""
+  @State private var draftCustomMergeToolPath = ""
 
   var body: some View {
     Form {
@@ -114,6 +117,72 @@ struct CurrentSettingsView: View {
           .foregroundStyle(.secondary)
       }
 
+      Section("External Tools") {
+        Picker(
+          "Diff tool",
+          selection: Binding(
+            get: { model.externalDiffTool },
+            set: { model.setExternalDiffTool($0) }
+          )
+        ) {
+          ForEach(ExternalTool.allCases) { tool in
+            Text(tool.title).tag(tool)
+          }
+        }
+        if model.externalDiffTool == .custom {
+          HStack {
+            TextField("Custom diff executable", text: $draftCustomDiffToolPath)
+              .textFieldStyle(.roundedBorder)
+              .accessibilityLabel("Custom diff executable path")
+            Button("Choose…") {
+              chooseExternalTool(
+                title: "Choose Diff Tool",
+                path: $draftCustomDiffToolPath
+              )
+            }
+          }
+        }
+
+        Picker(
+          "Merge tool",
+          selection: Binding(
+            get: { model.externalMergeTool },
+            set: { model.setExternalMergeTool($0) }
+          )
+        ) {
+          ForEach(ExternalTool.allCases) { tool in
+            Text(tool.title).tag(tool)
+          }
+        }
+        if model.externalMergeTool == .custom {
+          HStack {
+            TextField("Custom merge executable", text: $draftCustomMergeToolPath)
+              .textFieldStyle(.roundedBorder)
+              .accessibilityLabel("Custom merge executable path")
+            Button("Choose…") {
+              chooseExternalTool(
+                title: "Choose Merge Tool",
+                path: $draftCustomMergeToolPath
+              )
+            }
+          }
+        }
+
+        HStack {
+          Spacer()
+          Button("Apply Paths") {
+            model.setCustomDiffToolPath(draftCustomDiffToolPath)
+            model.setCustomMergeToolPath(draftCustomMergeToolPath)
+          }
+          .disabled(!hasExternalToolPathChanges)
+        }
+        Text(
+          "FileMerge, Kaleidoscope, and Beyond Compare use their standard command-line interfaces. A custom diff tool receives before and after paths; a custom merge tool receives base, ours, theirs, and writable result paths."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
       Section("Working Copy Protection") {
         Toggle(
           "Automatically stash before checkout, merge, and rebase",
@@ -140,10 +209,12 @@ struct CurrentSettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 560, height: 600)
+    .frame(width: 600, height: 720)
     .onAppear {
       draftUseCustomGit = model.useCustomGit
       draftCustomGitPath = model.customGitPath
+      draftCustomDiffToolPath = model.customDiffToolPath
+      draftCustomMergeToolPath = model.customMergeToolPath
     }
   }
 
@@ -162,9 +233,34 @@ struct CurrentSettingsView: View {
     }
   }
 
+  private func chooseExternalTool(
+    title: String,
+    path: Binding<String>
+  ) {
+    let panel = NSOpenPanel()
+    panel.title = title
+    panel.prompt = "Choose"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    if !path.wrappedValue.isEmpty {
+      panel.directoryURL = URL(fileURLWithPath: path.wrappedValue).deletingLastPathComponent()
+    }
+    if panel.runModal() == .OK, let url = panel.url {
+      path.wrappedValue = url.standardizedFileURL.path
+    }
+  }
+
   private var hasDraftChanges: Bool {
     draftUseCustomGit != model.useCustomGit
       || draftCustomGitPath.trimmingCharacters(in: .whitespacesAndNewlines)
         != model.customGitPath
+  }
+
+  private var hasExternalToolPathChanges: Bool {
+    draftCustomDiffToolPath.trimmingCharacters(in: .whitespacesAndNewlines)
+      != model.customDiffToolPath
+      || draftCustomMergeToolPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        != model.customMergeToolPath
   }
 }

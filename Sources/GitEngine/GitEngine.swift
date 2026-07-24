@@ -201,6 +201,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     path: GitPath
   ) async throws -> ConflictFileContents
+  func externalDiffContents(
+    at location: RepositoryLocation,
+    path: GitPath,
+    source: DiffSource
+  ) async throws -> ExternalDiffContents
   func mutateHistory(
     at location: RepositoryLocation,
     mutation: HistoryMutation
@@ -257,6 +262,14 @@ extension GitEngineProtocol {
     path: GitPath
   ) async throws -> ConflictFileContents {
     throw GitEngineError.invalidOutput("Conflict content reading is not implemented.")
+  }
+
+  public func externalDiffContents(
+    at location: RepositoryLocation,
+    path: GitPath,
+    source: DiffSource
+  ) async throws -> ExternalDiffContents {
+    throw GitEngineError.invalidOutput("External diff content reading is not implemented.")
   }
 
   public func compareCommits(
@@ -1961,6 +1974,35 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  public func externalDiffContents(
+    at location: RepositoryLocation,
+    path: GitPath,
+    source: DiffSource
+  ) async throws -> ExternalDiffContents {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository(
+        "A bare repository has no working-copy files to compare."
+      )
+    }
+    guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
+      throw GitEngineError.invalidOutput(
+        "An external diff path was empty or contained a NUL byte."
+      )
+    }
+
+    switch source {
+    case .staged:
+      async let before = revisionFile("HEAD", path: path, at: location)
+      async let after = indexStage(0, path: path, at: location)
+      return try await ExternalDiffContents(path: path, before: before, after: after)
+    case .unstaged:
+      async let before = indexStage(0, path: path, at: location)
+      let fileURL = try workingTreeFileURL(at: location, path: path)
+      let after = try? Array(Data(contentsOf: fileURL))
+      return try await ExternalDiffContents(path: path, before: before, after: after)
+    }
+  }
+
   public func interactiveRebasePlan(
     at location: RepositoryLocation,
     upstream: String
@@ -2988,12 +3030,34 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     path: GitPath,
     at location: RepositoryLocation
   ) async throws -> [UInt8]? {
-    let stagePath = Array(":\(stage):".utf8) + path.rawBytes
+    let stagePath =
+      stage == 0
+      ? Array(":".utf8) + path.rawBytes
+      : Array(":\(stage):".utf8) + path.rawBytes
     let result = try await runner.run(
       GitCommand(
         rawArguments: [
           Array("show".utf8),
           stagePath,
+        ],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 128 * 1024 * 1024
+      )
+    )
+    return result.succeeded ? result.standardOutput : nil
+  }
+
+  private func revisionFile(
+    _ revision: String,
+    path: GitPath,
+    at location: RepositoryLocation
+  ) async throws -> [UInt8]? {
+    let revisionPath = Array("\(revision):".utf8) + path.rawBytes
+    let result = try await runner.run(
+      GitCommand(
+        rawArguments: [
+          Array("show".utf8),
+          revisionPath,
         ],
         workingDirectory: location.worktreeURL,
         outputLimit: 128 * 1024 * 1024
