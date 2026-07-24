@@ -1835,6 +1835,162 @@ struct GitEngineTests {
   }
 
   @Test(
+    "Live interactive rebase reorders, rewords, squashes, and drops commits",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveInteractiveRebaseActions() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-interactive-rebase-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    try runGit(["-C", root.path, "commit", "--allow-empty", "-m", "base"])
+    let baseOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    for (name, subject) in [
+      ("a.txt", "commit A"),
+      ("b.txt", "commit B"),
+      ("c.txt", "commit C"),
+      ("d.txt", "commit D"),
+    ] {
+      try Data("\(name)\n".utf8).write(to: root.appendingPathComponent(name))
+      try runGit(["-C", root.path, "add", name])
+      try runGit(["-C", root.path, "commit", "-m", subject])
+    }
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    var plan = try await engine.interactiveRebasePlan(
+      at: location,
+      upstream: baseOID
+    )
+    #expect(
+      plan.steps.map(\.subject) == [
+        "commit A", "commit B", "commit C", "commit D",
+      ])
+    let steps = plan.steps
+    plan.steps = [
+      InteractiveRebaseStep(
+        oid: steps[2].oid,
+        subject: steps[2].subject,
+        action: .reword,
+        rewrittenMessage: "renamed C"
+      ),
+      InteractiveRebaseStep(
+        oid: steps[0].oid,
+        subject: steps[0].subject,
+        action: .pick
+      ),
+      InteractiveRebaseStep(
+        oid: steps[1].oid,
+        subject: steps[1].subject,
+        action: .squash
+      ),
+      InteractiveRebaseStep(
+        oid: steps[3].oid,
+        subject: steps[3].subject,
+        action: .drop
+      ),
+    ]
+
+    let recovery = try #require(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .interactiveRebase(plan: plan)
+      )
+    )
+    #expect(recovery.targetOID == plan.originalHeadOID)
+    let subjects = try runGitOutput([
+      "-C", root.path, "log", "--reverse", "--format=%s", "\(baseOID)..HEAD",
+    ])
+    #expect(subjects.split(separator: "\n").map(String.init) == ["renamed C", "commit A"])
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("a.txt").path))
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("b.txt").path))
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("c.txt").path))
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("d.txt").path))
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: location.gitDirectoryURL
+          .appendingPathComponent("current-interactive-rebase").path
+      )
+    )
+  }
+
+  @Test(
+    "Interactive rebase preserves reword state across conflict continuation",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveInteractiveRebaseConflictContinuation() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(
+        "current-interactive-conflict-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let shared = root.appendingPathComponent("shared.txt")
+    try Data("base\n".utf8).write(to: shared)
+    try runGit(["-C", root.path, "add", "shared.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try runGit(["-C", root.path, "switch", "-c", "topic"])
+    try Data("topic\n".utf8).write(to: shared)
+    try runGit(["-C", root.path, "commit", "-am", "topic message"])
+    try runGit(["-C", root.path, "switch", "main"])
+    try Data("main\n".utf8).write(to: shared)
+    try runGit(["-C", root.path, "commit", "-am", "main advance"])
+    try runGit(["-C", root.path, "switch", "topic"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    var plan = try await engine.interactiveRebasePlan(
+      at: location,
+      upstream: "main"
+    )
+    plan.steps[0].action = .reword
+    plan.steps[0].rewrittenMessage = "topic rewritten after conflict"
+
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .interactiveRebase(plan: plan)
+    )
+    let conflicted = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(conflicted.operation.kind == .rebase)
+    #expect(conflicted.operation.conflictedPaths.map(\.displayString) == ["shared.txt"])
+
+    try await engine.mutateMerge(
+      at: location,
+      mutation: .resolveContents(
+        path: GitPath("shared.txt"),
+        contents: Array("resolved\n".utf8)
+      )
+    )
+    try await engine.mutateMerge(at: location, mutation: .continueOperation)
+    #expect(
+      try runGitOutput(["-C", root.path, "log", "-1", "--format=%s"])
+        == "topic rewritten after conflict")
+    #expect(try String(contentsOf: shared, encoding: .utf8) == "resolved\n")
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: location.gitDirectoryURL
+          .appendingPathComponent("current-interactive-rebase").path
+      )
+    )
+  }
+
+  @Test(
     "Live hunk stage and unstage affect only the selected hunk",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
   func liveHunkMutation() async throws {

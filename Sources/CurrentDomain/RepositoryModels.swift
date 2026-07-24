@@ -496,7 +496,52 @@ public enum HistoryMutation: Hashable, Sendable {
   case revert(commit: String)
   case reset(target: String, mode: ResetMode)
   case rebase(onto: String)
+  case interactiveRebase(plan: InteractiveRebasePlan)
   case undo(reference: String)
+}
+
+public enum InteractiveRebaseAction: String, CaseIterable, Hashable, Sendable, Codable {
+  case pick
+  case reword
+  case squash
+  case drop
+}
+
+public struct InteractiveRebaseStep: Identifiable, Hashable, Sendable, Codable {
+  public let oid: String
+  public let subject: String
+  public var action: InteractiveRebaseAction
+  public var rewrittenMessage: String?
+
+  public init(
+    oid: String,
+    subject: String,
+    action: InteractiveRebaseAction = .pick,
+    rewrittenMessage: String? = nil
+  ) {
+    self.oid = oid
+    self.subject = subject
+    self.action = action
+    self.rewrittenMessage = rewrittenMessage
+  }
+
+  public var id: String { oid }
+}
+
+public struct InteractiveRebasePlan: Hashable, Sendable, Codable {
+  public let upstreamOID: String
+  public let originalHeadOID: String
+  public var steps: [InteractiveRebaseStep]
+
+  public init(
+    upstreamOID: String,
+    originalHeadOID: String,
+    steps: [InteractiveRebaseStep]
+  ) {
+    self.upstreamOID = upstreamOID
+    self.originalHeadOID = originalHeadOID
+    self.steps = steps
+  }
 }
 
 public struct RecoveryReference: Hashable, Sendable, Codable {

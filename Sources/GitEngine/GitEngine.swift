@@ -201,6 +201,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: HistoryMutation
   ) async throws -> RecoveryReference?
+  func interactiveRebasePlan(
+    at location: RepositoryLocation,
+    upstream: String
+  ) async throws -> InteractiveRebasePlan
   func applyHunk(
     at location: RepositoryLocation,
     hunk: DiffHunk,
@@ -209,6 +213,15 @@ public protocol GitEngineProtocol: Sendable {
 }
 
 extension GitEngineProtocol {
+  public func interactiveRebasePlan(
+    at location: RepositoryLocation,
+    upstream: String
+  ) async throws -> InteractiveRebasePlan {
+    throw GitEngineError.invalidRepository(
+      "This Git engine does not support interactive rebase."
+    )
+  }
+
   public func history(
     at location: RepositoryLocation,
     offset: Int,
@@ -1742,20 +1755,41 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
     }
 
+    var environment = ["GIT_EDITOR": "true"]
+    if operationKind(at: location) == .rebase,
+      let stateURL = existingInteractiveRebaseState(at: location)
+    {
+      environment = interactiveRebaseEnvironment(stateURL: stateURL)
+    }
+    let operationBeforeCommand = operationKind(at: location)
     let command = GitCommand(
       arguments: arguments,
       workingDirectory: location.worktreeURL,
-      environmentOverrides: ["GIT_EDITOR": "true"],
+      environmentOverrides: environment,
       outputLimit: 32 * 1024 * 1024,
       timeout: .seconds(600)
     )
     let result = try await runner.run(command)
-    if result.succeeded { return }
+    if result.succeeded {
+      if operationBeforeCommand == .rebase {
+        removeInteractiveRebaseState(at: location)
+      }
+      return
+    }
 
     // A merge that stopped on conflicts is a valid state transition. The
     // conflicted index and MERGE_HEAD are the authoritative result.
     if case .start = mutation, operationKind(at: location) == .merge {
       return
+    }
+    if case .continueOperation = mutation,
+      operationBeforeCommand != .none,
+      operationKind(at: location) == operationBeforeCommand
+    {
+      return
+    }
+    if case .abortOperation = mutation, operationBeforeCommand == .rebase {
+      removeInteractiveRebaseState(at: location)
     }
     throw GitEngineError.commandFailed(
       arguments: command.redactedDescription,
@@ -1797,6 +1831,66 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       ours: ours,
       theirs: theirs,
       workingTree: workingTree
+    )
+  }
+
+  public func interactiveRebasePlan(
+    at location: RepositoryLocation,
+    upstream: String
+  ) async throws -> InteractiveRebasePlan {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository(
+        "Interactive rebase requires a working copy."
+      )
+    }
+    let upstreamOID = try await resolveCommit(upstream, at: location)
+    let headOID = try await resolveCommit("HEAD", at: location)
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "log",
+          "--reverse",
+          "--topo-order",
+          "--no-merges",
+          "--format=%x1e%H%x00%s%x00",
+          "\(upstreamOID)..\(headOID)",
+        ],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 16 * 1024 * 1024
+      )
+    )
+    let records = result.standardOutput.split(
+      separator: 0x1E,
+      omittingEmptySubsequences: true
+    )
+    let steps = try records.map { record -> InteractiveRebaseStep in
+      let fields = record.split(separator: 0, omittingEmptySubsequences: false)
+      guard fields.count >= 2 else {
+        throw GitEngineError.invalidOutput(
+          "Interactive rebase history contained a truncated record."
+        )
+      }
+      let oid = String(decoding: fields[0], as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      guard isFullObjectID(oid) else {
+        throw GitEngineError.invalidOutput(
+          "Interactive rebase history contained an invalid object ID."
+        )
+      }
+      return InteractiveRebaseStep(
+        oid: oid,
+        subject: String(decoding: fields[1], as: UTF8.self)
+      )
+    }
+    guard !steps.isEmpty else {
+      throw GitEngineError.invalidRepository(
+        "The selected upstream has no current-branch commits to rewrite."
+      )
+    }
+    return InteractiveRebasePlan(
+      upstreamOID: upstreamOID,
+      originalHeadOID: headOID,
+      steps: steps
     )
   }
 
@@ -1882,6 +1976,42 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       if result.succeeded || operationKind(at: location) == .rebase {
         return recovery
       }
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: command.redactingSecrets(in: result.errorDescription)
+      )
+
+    case .interactiveRebase(let plan):
+      try await requireCleanWorkingCopy(at: location)
+      let current = try await interactiveRebasePlan(
+        at: location,
+        upstream: plan.upstreamOID
+      )
+      try validateInteractiveRebase(plan, against: current)
+      let recovery = try await createRecoveryReference(
+        reason: "interactive-rebase",
+        at: location
+      )
+      let stateURL = try createInteractiveRebaseState(
+        plan: plan,
+        at: location
+      )
+      let command = GitCommand(
+        arguments: ["rebase", "--interactive", plan.upstreamOID],
+        workingDirectory: location.worktreeURL,
+        environmentOverrides: interactiveRebaseEnvironment(stateURL: stateURL),
+        outputLimit: 32 * 1024 * 1024,
+        timeout: .seconds(900)
+      )
+      let result = try await runner.run(command)
+      if result.succeeded {
+        removeInteractiveRebaseState(at: location)
+        return recovery
+      }
+      if operationKind(at: location) == .rebase {
+        return recovery
+      }
+      removeInteractiveRebaseState(at: location)
       throw GitEngineError.commandFailed(
         arguments: command.redactedDescription,
         message: command.redactingSecrets(in: result.errorDescription)
@@ -2229,6 +2359,231 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
     }
     return changes
+  }
+
+  private func validateInteractiveRebase(
+    _ plan: InteractiveRebasePlan,
+    against current: InteractiveRebasePlan
+  ) throws {
+    guard plan.upstreamOID == current.upstreamOID,
+      plan.originalHeadOID == current.originalHeadOID
+    else {
+      throw GitEngineError.invalidRepository(
+        "Branch history changed after the interactive rebase plan was loaded."
+      )
+    }
+    let expectedOIDs = current.steps.map(\.oid)
+    let plannedOIDs = plan.steps.map(\.oid)
+    guard expectedOIDs.count == plannedOIDs.count,
+      Set(expectedOIDs) == Set(plannedOIDs),
+      Set(plannedOIDs).count == plannedOIDs.count
+    else {
+      throw GitEngineError.invalidOutput(
+        "The interactive rebase plan must contain every commit exactly once."
+      )
+    }
+    var hasRetainedCommit = false
+    for step in plan.steps {
+      guard isFullObjectID(step.oid) else {
+        throw GitEngineError.invalidOutput(
+          "The interactive rebase plan contained an invalid object ID."
+        )
+      }
+      switch step.action {
+      case .drop:
+        continue
+      case .squash:
+        guard hasRetainedCommit else {
+          throw GitEngineError.invalidOutput(
+            "Squash must follow a retained commit."
+          )
+        }
+      case .reword:
+        guard
+          let message = step.rewrittenMessage?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+          !message.isEmpty
+        else {
+          throw GitEngineError.invalidOutput(
+            "Every reword step requires a non-empty commit message."
+          )
+        }
+        hasRetainedCommit = true
+      case .pick:
+        hasRetainedCommit = true
+      }
+    }
+  }
+
+  private func createInteractiveRebaseState(
+    plan: InteractiveRebasePlan,
+    at location: RepositoryLocation
+  ) throws -> URL {
+    let fileManager = FileManager.default
+    let stateURL = interactiveRebaseStateURL(at: location)
+    if fileManager.fileExists(atPath: stateURL.path) {
+      try fileManager.removeItem(at: stateURL)
+    }
+    do {
+      try fileManager.createDirectory(
+        at: stateURL,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+      )
+
+      let todo =
+        plan.steps
+        .map { "\($0.action.rawValue) \($0.oid)" }
+        .joined(separator: "\n") + "\n"
+      try writeInteractiveRebaseFile(
+        Data(todo.utf8),
+        named: "todo",
+        permissions: 0o600,
+        in: stateURL
+      )
+
+      var editorOperations: [String] = []
+      var messageIndex = 0
+      for step in plan.steps {
+        switch step.action {
+        case .reword:
+          let name = "message-\(messageIndex)"
+          let message =
+            step.rewrittenMessage!
+            .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+          try writeInteractiveRebaseFile(
+            Data(message.utf8),
+            named: name,
+            permissions: 0o600,
+            in: stateURL
+          )
+          editorOperations.append("write:\(name)")
+          messageIndex += 1
+        case .squash:
+          editorOperations.append("keep")
+        case .pick, .drop:
+          break
+        }
+      }
+      try writeInteractiveRebaseFile(
+        Data((editorOperations.joined(separator: "\n") + "\n").utf8),
+        named: "editor-plan",
+        permissions: 0o600,
+        in: stateURL
+      )
+      try writeInteractiveRebaseFile(
+        Data("0\n".utf8),
+        named: "editor-index",
+        permissions: 0o600,
+        in: stateURL
+      )
+
+      let sequenceEditor = """
+        #!/bin/sh
+        set -eu
+        /bin/cp "${CURRENT_REBASE_STATE:?}/todo" "$1"
+        """
+      try writeInteractiveRebaseFile(
+        Data((sequenceEditor + "\n").utf8),
+        named: "sequence-editor.sh",
+        permissions: 0o700,
+        in: stateURL
+      )
+      let messageEditor = """
+        #!/bin/sh
+        set -eu
+        state="${CURRENT_REBASE_STATE:?}"
+        index="$(/bin/cat "$state/editor-index")"
+        line="$(/usr/bin/sed -n "$((index + 1))p" "$state/editor-plan")"
+        /usr/bin/printf '%s\n' "$((index + 1))" > "$state/editor-index"
+        case "$line" in
+          write:*) /bin/cp "$state/${line#write:}" "$1" ;;
+          keep) ;;
+          *) exit 1 ;;
+        esac
+        """
+      try writeInteractiveRebaseFile(
+        Data((messageEditor + "\n").utf8),
+        named: "message-editor.sh",
+        permissions: 0o700,
+        in: stateURL
+      )
+      return stateURL
+    } catch {
+      try? fileManager.removeItem(at: stateURL)
+      throw GitEngineError.invalidOutput(
+        "Could not prepare interactive rebase state: \(error.localizedDescription)"
+      )
+    }
+  }
+
+  private func writeInteractiveRebaseFile(
+    _ data: Data,
+    named name: String,
+    permissions: Int,
+    in directory: URL
+  ) throws {
+    let url = directory.appendingPathComponent(name, isDirectory: false)
+    try data.write(to: url, options: [.atomic])
+    try FileManager.default.setAttributes(
+      [.posixPermissions: permissions],
+      ofItemAtPath: url.path
+    )
+  }
+
+  private func interactiveRebaseEnvironment(stateURL: URL) -> [String: String] {
+    [
+      "CURRENT_REBASE_STATE": stateURL.path,
+      "GIT_SEQUENCE_EDITOR": shellQuoted(
+        stateURL.appendingPathComponent("sequence-editor.sh").path
+      ),
+      "GIT_EDITOR": shellQuoted(
+        stateURL.appendingPathComponent("message-editor.sh").path
+      ),
+    ]
+  }
+
+  private func shellQuoted(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+  }
+
+  private func interactiveRebaseStateURL(
+    at location: RepositoryLocation
+  ) -> URL {
+    location.gitDirectoryURL.appendingPathComponent(
+      "current-interactive-rebase",
+      isDirectory: true
+    )
+  }
+
+  private func existingInteractiveRebaseState(
+    at location: RepositoryLocation
+  ) -> URL? {
+    let url = interactiveRebaseStateURL(at: location)
+    var isDirectory = ObjCBool(false)
+    guard
+      FileManager.default.fileExists(
+        atPath: url.path,
+        isDirectory: &isDirectory
+      ), isDirectory.boolValue
+    else {
+      return nil
+    }
+    return url
+  }
+
+  private func removeInteractiveRebaseState(
+    at location: RepositoryLocation
+  ) {
+    guard let url = existingInteractiveRebaseState(at: location) else { return }
+    try? FileManager.default.removeItem(at: url)
+  }
+
+  private func isFullObjectID(_ value: String) -> Bool {
+    (40...64).contains(value.utf8.count)
+      && value.utf8.allSatisfy {
+        (48...57).contains($0) || (97...102).contains($0) || (65...70).contains($0)
+      }
   }
 
   private func createRecoveryReference(

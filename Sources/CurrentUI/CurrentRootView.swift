@@ -104,6 +104,8 @@ public struct CurrentRootView: View {
   private let revert: (String) -> Void
   private let reset: (String, ResetMode) -> Void
   private let rebase: (String) -> Void
+  private let loadInteractiveRebase: (String) async throws -> InteractiveRebasePlan
+  private let runInteractiveRebase: (InteractiveRebasePlan) -> Void
   private let undoLastOperation: () -> Void
   private let applyHunk: (DiffDocument, DiffHunk) -> Void
   private let applyLine: (DiffDocument, DiffHunk, Int) -> Void
@@ -155,6 +157,7 @@ public struct CurrentRootView: View {
   @State private var diffPresentation: DiffPresentation = .unified
   @State private var fileInsightPathText = ""
   @State private var pendingHardResetOID: String?
+  @State private var pendingInteractiveRebaseOID: String?
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
   @State private var cloneURL = ""
@@ -253,6 +256,8 @@ public struct CurrentRootView: View {
     revert: @escaping (String) -> Void,
     reset: @escaping (String, ResetMode) -> Void,
     rebase: @escaping (String) -> Void,
+    loadInteractiveRebase: @escaping (String) async throws -> InteractiveRebasePlan,
+    runInteractiveRebase: @escaping (InteractiveRebasePlan) -> Void,
     undoLastOperation: @escaping () -> Void,
     applyHunk: @escaping (DiffDocument, DiffHunk) -> Void,
     applyLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
@@ -353,6 +358,8 @@ public struct CurrentRootView: View {
     self.revert = revert
     self.reset = reset
     self.rebase = rebase
+    self.loadInteractiveRebase = loadInteractiveRebase
+    self.runInteractiveRebase = runInteractiveRebase
     self.undoLastOperation = undoLastOperation
     self.applyHunk = applyHunk
     self.applyLine = applyLine
@@ -868,6 +875,21 @@ public struct CurrentRootView: View {
         actions: commandPaletteActions,
         dismiss: { isShowingCommandPalette = false }
       )
+    }
+    .sheet(
+      isPresented: Binding(
+        get: { pendingInteractiveRebaseOID != nil },
+        set: { if !$0 { pendingInteractiveRebaseOID = nil } }
+      )
+    ) {
+      if let upstream = pendingInteractiveRebaseOID {
+        InteractiveRebaseView(
+          upstream: upstream,
+          load: loadInteractiveRebase,
+          execute: runInteractiveRebase,
+          dismiss: { pendingInteractiveRebaseOID = nil }
+        )
+      }
     }
   }
 
@@ -1787,6 +1809,9 @@ public struct CurrentRootView: View {
             Button("Rebase Current Branch onto Commit") {
               if let selectedCommitOID { rebase(selectedCommitOID) }
             }
+            Button("Interactive Rebase…") {
+              pendingInteractiveRebaseOID = selectedCommitOID
+            }
           }
           .disabled(selectedCommitOID == nil || isLoading)
         }
@@ -2284,6 +2309,16 @@ public struct CurrentRootView: View {
         isEnabled: status?.upstream != nil && !isLoading
       ) {
         isConfirmingForcePush = true
+      },
+      CommandPaletteAction(
+        id: "history.interactive-rebase",
+        title: "Interactive Rebase from Selected Commit…",
+        detail: selectedCommitOID.map { String($0.prefix(12)) },
+        systemImage: "arrow.triangle.2.circlepath",
+        keywords: "history rewrite pick reword squash drop reorder",
+        isEnabled: selectedCommitOID != nil && !isLoading
+      ) {
+        pendingInteractiveRebaseOID = selectedCommitOID
       },
       CommandPaletteAction(
         id: "workspace.changes",

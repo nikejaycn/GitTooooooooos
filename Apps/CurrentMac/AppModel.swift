@@ -825,6 +825,17 @@ final class AppModel {
     applyHistory(.rebase(onto: oid))
   }
 
+  func interactiveRebasePlan(onto oid: String) async throws -> InteractiveRebasePlan {
+    guard let repository else {
+      throw GitEngineError.invalidRepository("No repository is open.")
+    }
+    return try await repository.interactiveRebasePlan(upstream: oid)
+  }
+
+  func runInteractiveRebase(_ plan: InteractiveRebasePlan) {
+    applyHistory(.interactiveRebase(plan: plan))
+  }
+
   func undoLastRecoverableOperation() {
     guard let reference = lastRecoveryReference else { return }
     applyHistory(.undo(reference: reference.name))
@@ -1373,6 +1384,9 @@ final class AppModel {
         }
         finishActivity(activityID, state: .succeeded)
       } catch {
+        if let snapshot = try? await repository.refreshSnapshot() {
+          apply(snapshot)
+        }
         errorMessage = error.localizedDescription
         finishActivity(activityID, error: error)
       }
@@ -1734,6 +1748,7 @@ final class AppModel {
     case .revert(let oid): "Revert \(oid.prefix(12))"
     case .reset(let target, let mode): "\(mode.rawValue.capitalized) reset to \(target.prefix(12))"
     case .rebase(let onto): "Rebase onto \(onto.prefix(12))"
+    case .interactiveRebase: "Run interactive rebase"
     case .undo: "Undo last recoverable operation"
     }
   }

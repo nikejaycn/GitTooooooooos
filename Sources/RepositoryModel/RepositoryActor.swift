@@ -500,6 +500,17 @@ public actor RepositoryActor {
     return result
   }
 
+  public func interactiveRebasePlan(
+    upstream: String
+  ) async throws -> InteractiveRebasePlan {
+    await mutationTail?.value
+    try Task.checkCancellation()
+    return try await engine.interactiveRebasePlan(
+      at: location,
+      upstream: upstream
+    )
+  }
+
   @discardableResult
   public func applyHunk(
     _ hunk: DiffHunk,

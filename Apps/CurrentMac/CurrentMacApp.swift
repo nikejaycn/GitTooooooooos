@@ -93,6 +93,8 @@ struct CurrentMacApp: App {
         revert: model.revert,
         reset: model.reset,
         rebase: model.rebase,
+        loadInteractiveRebase: model.interactiveRebasePlan,
+        runInteractiveRebase: model.runInteractiveRebase,
         undoLastOperation: model.undoLastRecoverableOperation,
         applyHunk: model.applyHunk,
         applyLine: model.applyLine,
