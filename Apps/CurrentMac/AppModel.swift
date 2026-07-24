@@ -17,6 +17,7 @@ final class AppModel {
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
   private(set) var activities: [OperationActivity] = []
+  private(set) var lastRecoveryReference: RecoveryReference?
   private(set) var selectedDiff: DiffDocument?
   private(set) var isDiffLoading = false
   private(set) var isLoading = false
@@ -151,6 +152,27 @@ final class AppModel {
 
   func resolveConflict(_ path: GitPath, side: ConflictSide) {
     applyMerge(.resolve(path: path, side: side))
+  }
+
+  func cherryPick(_ oid: String) {
+    applyHistory(.cherryPick(commit: oid))
+  }
+
+  func revert(_ oid: String) {
+    applyHistory(.revert(commit: oid))
+  }
+
+  func reset(_ oid: String, mode: ResetMode) {
+    applyHistory(.reset(target: oid, mode: mode))
+  }
+
+  func rebase(onto oid: String) {
+    applyHistory(.rebase(onto: oid))
+  }
+
+  func undoLastRecoverableOperation() {
+    guard let reference = lastRecoveryReference else { return }
+    applyHistory(.undo(reference: reference.name))
   }
 
   private func loadGitVersion() async {
@@ -331,6 +353,27 @@ final class AppModel {
     }
   }
 
+  private func applyHistory(_ mutation: HistoryMutation) {
+    guard let repository else { return }
+    let activityID = beginActivity(historyTitle(mutation))
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        let result = try await repository.applyHistoryMutation(mutation)
+        apply(result.snapshot)
+        if let recovery = result.recoveryReference {
+          lastRecoveryReference = recovery
+        }
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   private func apply(_ snapshot: RepositorySnapshot) {
     repositoryStatus = snapshot.status
     commits = snapshot.commits
@@ -406,6 +449,16 @@ final class AppModel {
     case .resolve(let path, let side): "Resolve \(path.displayString) using \(side.rawValue)"
     case .continueOperation: "Continue Git operation"
     case .abortOperation: "Abort Git operation"
+    }
+  }
+
+  private func historyTitle(_ mutation: HistoryMutation) -> String {
+    switch mutation {
+    case .cherryPick(let oid): "Cherry-pick \(oid.prefix(12))"
+    case .revert(let oid): "Revert \(oid.prefix(12))"
+    case .reset(let target, let mode): "\(mode.rawValue.capitalized) reset to \(target.prefix(12))"
+    case .rebase(let onto): "Rebase onto \(onto.prefix(12))"
+    case .undo: "Undo last recoverable operation"
     }
   }
 }

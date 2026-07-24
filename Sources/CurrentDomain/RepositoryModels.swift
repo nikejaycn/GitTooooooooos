@@ -227,3 +227,42 @@ public enum ConflictSide: String, Hashable, Sendable, Codable {
   case ours
   case theirs
 }
+
+public enum ResetMode: String, Hashable, Sendable, Codable {
+  case soft
+  case mixed
+  case hard
+}
+
+public enum HistoryMutation: Hashable, Sendable {
+  case cherryPick(commit: String)
+  case revert(commit: String)
+  case reset(target: String, mode: ResetMode)
+  case rebase(onto: String)
+  case undo(reference: String)
+}
+
+public struct RecoveryReference: Hashable, Sendable, Codable {
+  public let name: String
+  public let targetOID: String
+  public let createdAt: Date
+
+  public init(name: String, targetOID: String, createdAt: Date = Date()) {
+    self.name = name
+    self.targetOID = targetOID
+    self.createdAt = createdAt
+  }
+}
+
+public struct HistoryMutationResult: Hashable, Sendable {
+  public let snapshot: RepositorySnapshot
+  public let recoveryReference: RecoveryReference?
+
+  public init(
+    snapshot: RepositorySnapshot,
+    recoveryReference: RecoveryReference?
+  ) {
+    self.snapshot = snapshot
+    self.recoveryReference = recoveryReference
+  }
+}

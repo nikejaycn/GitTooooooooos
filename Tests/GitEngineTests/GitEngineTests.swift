@@ -475,6 +475,105 @@ struct GitEngineTests {
     #expect(status.changes.isEmpty)
     #expect(try String(contentsOf: file, encoding: .utf8) == "main\n")
   }
+
+  @Test(
+    "Live history mutations create recovery refs and support undo",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveHistoryMutations() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-history-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("history.txt")
+    try Data("one\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "history.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "first"])
+    let firstOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    try Data("two\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "commit", "-am", "second"])
+    let secondOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+
+    let recovery = try #require(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .reset(target: firstOID, mode: .hard)
+      )
+    )
+    #expect(recovery.targetOID == secondOID)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == firstOID)
+
+    let inverse = try #require(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .undo(reference: recovery.name)
+      )
+    )
+    #expect(inverse.targetOID == firstOID)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == secondOID)
+
+    try runGit(["-C", root.path, "switch", "-c", "topic", firstOID])
+    let topicFile = root.appendingPathComponent("topic.txt")
+    try Data("topic\n".utf8).write(to: topicFile)
+    try runGit(["-C", root.path, "add", "topic.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "topic"])
+    let topicOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    try runGit(["-C", root.path, "switch", "main"])
+
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .cherryPick(commit: topicOID)
+    )
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("topic.txt").path))
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .revert(commit: topicOID)
+    )
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("topic.txt").path))
+
+    try runGit(["-C", root.path, "switch", "-c", "rebased", firstOID])
+    let rebaseFile = root.appendingPathComponent("rebase.txt")
+    try Data("rebase\n".utf8).write(to: rebaseFile)
+    try runGit(["-C", root.path, "add", "rebase.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "rebase candidate"])
+    let beforeRebase = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    let rebaseRecovery = try #require(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .rebase(onto: "main")
+      )
+    )
+    #expect(rebaseRecovery.targetOID == beforeRebase)
+    let mergeBase = try runGitOutput(["-C", root.path, "merge-base", "HEAD", "main"])
+    let mainOID = try runGitOutput(["-C", root.path, "rev-parse", "main"])
+    #expect(mergeBase == mainOID)
+
+    try Data("dirty\n".utf8).write(to: rebaseFile)
+    var rejectedDirtyReset = false
+    do {
+      _ = try await engine.mutateHistory(
+        at: location,
+        mutation: .reset(target: "main", mode: .hard)
+      )
+    } catch {
+      rejectedDirtyReset = true
+    }
+    #expect(rejectedDirtyReset)
+    let recoveryRefs = try runGitOutput([
+      "-C", root.path, "for-each-ref", "--format=%(refname)", "refs/current/undo",
+    ])
+    #expect(recoveryRefs.split(separator: "\n").count >= 3)
+  }
 }
 
 private func runGit(_ arguments: [String]) throws {
@@ -491,6 +590,28 @@ private func runGit(_ arguments: [String]) throws {
       message: "fixture Git command exited \(process.terminationStatus)"
     )
   }
+}
+
+private func runGitOutput(_ arguments: [String]) throws -> String {
+  let process = Process()
+  let output = Pipe()
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+  process.arguments = arguments
+  process.standardOutput = output
+  process.standardError = FileHandle.nullDevice
+  try process.run()
+  process.waitUntilExit()
+  guard process.terminationStatus == 0 else {
+    throw GitEngineError.commandFailed(
+      arguments: arguments.joined(separator: " "),
+      message: "fixture Git command exited \(process.terminationStatus)"
+    )
+  }
+  return String(
+    decoding: output.fileHandleForReading.readDataToEndOfFile(),
+    as: UTF8.self
+  )
+  .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private actor StubRunner: GitProcessRunning {

@@ -119,6 +119,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: MergeMutation
   ) async throws
+  func mutateHistory(
+    at location: RepositoryLocation,
+    mutation: HistoryMutation
+  ) async throws -> RecoveryReference?
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -702,6 +706,114 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  public func mutateHistory(
+    at location: RepositoryLocation,
+    mutation: HistoryMutation
+  ) async throws -> RecoveryReference? {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository(
+        "This history operation requires a working copy."
+      )
+    }
+
+    switch mutation {
+    case .cherryPick(let commit):
+      let oid = try await resolveCommit(commit, at: location)
+      let command = GitCommand(
+        arguments: ["cherry-pick", oid],
+        workingDirectory: location.worktreeURL,
+        environmentOverrides: ["GIT_EDITOR": "true"],
+        timeout: .seconds(600)
+      )
+      let result = try await runner.run(command)
+      if result.succeeded || operationKind(at: location) == .cherryPick {
+        return nil
+      }
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: result.errorDescription
+      )
+
+    case .revert(let commit):
+      let oid = try await resolveCommit(commit, at: location)
+      let command = GitCommand(
+        arguments: ["revert", "--no-edit", oid],
+        workingDirectory: location.worktreeURL,
+        environmentOverrides: ["GIT_EDITOR": "true"],
+        timeout: .seconds(600)
+      )
+      let result = try await runner.run(command)
+      if result.succeeded || operationKind(at: location) == .revert {
+        return nil
+      }
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: result.errorDescription
+      )
+
+    case .reset(let target, let mode):
+      let oid = try await resolveCommit(target, at: location)
+      if mode == .hard {
+        try await requireCleanWorkingCopy(at: location)
+      }
+      let recovery = try await createRecoveryReference(
+        reason: "reset-\(mode.rawValue)",
+        at: location
+      )
+      _ = try await execute(
+        GitCommand(
+          arguments: ["reset", "--\(mode.rawValue)", oid],
+          workingDirectory: location.worktreeURL,
+          timeout: .seconds(300)
+        )
+      )
+      return recovery
+
+    case .rebase(let onto):
+      let oid = try await resolveCommit(onto, at: location)
+      let recovery = try await createRecoveryReference(
+        reason: "rebase",
+        at: location
+      )
+      let command = GitCommand(
+        arguments: ["rebase", oid],
+        workingDirectory: location.worktreeURL,
+        environmentOverrides: [
+          "GIT_EDITOR": "true",
+          "GIT_SEQUENCE_EDITOR": "true",
+        ],
+        timeout: .seconds(900)
+      )
+      let result = try await runner.run(command)
+      if result.succeeded || operationKind(at: location) == .rebase {
+        return recovery
+      }
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: result.errorDescription
+      )
+
+    case .undo(let reference):
+      guard reference.hasPrefix("refs/current/undo/"), !reference.utf8.contains(0) else {
+        throw GitEngineError.invalidOutput("Invalid Current recovery reference.")
+      }
+      try await requireCleanWorkingCopy(at: location)
+      let target = try await resolveCommit(reference, at: location)
+      let inverse = try await createRecoveryReference(
+        reason: "undo",
+        at: location
+      )
+      _ = try await execute(
+        GitCommand(
+          arguments: ["reset", "--hard", target],
+          workingDirectory: location.worktreeURL,
+          timeout: .seconds(300)
+        )
+      )
+      return inverse
+    }
+  }
+
   private func validateBranchName(
     _ name: String,
     at location: RepositoryLocation
@@ -722,6 +834,69 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       selector.dropFirst(7).dropLast().allSatisfy(\.isNumber)
     else {
       throw GitEngineError.invalidOutput("Invalid stash selector.")
+    }
+  }
+
+  private func resolveCommit(
+    _ revision: String,
+    at location: RepositoryLocation
+  ) async throws -> String {
+    guard !revision.isEmpty, !revision.utf8.contains(0) else {
+      throw GitEngineError.invalidOutput("A commit revision is required.")
+    }
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "rev-parse",
+          "--verify",
+          "--end-of-options",
+          "\(revision)^{commit}",
+        ],
+        workingDirectory: location.worktreeURL
+      )
+    )
+    let oid = String(decoding: result.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard oid.count >= 40, oid.allSatisfy(\.isHexDigit) else {
+      throw GitEngineError.invalidOutput("Git returned an invalid commit object ID.")
+    }
+    return oid
+  }
+
+  private func createRecoveryReference(
+    reason: String,
+    at location: RepositoryLocation
+  ) async throws -> RecoveryReference {
+    let head = try await resolveCommit("HEAD", at: location)
+    let timestamp = Int(Date().timeIntervalSince1970)
+    let identifier = UUID().uuidString.lowercased()
+    let name = "refs/current/undo/\(timestamp)-\(identifier)"
+    _ = try await execute(
+      GitCommand(
+        arguments: [
+          "update-ref",
+          "-m",
+          "Current recovery before \(reason)",
+          name,
+          head,
+        ],
+        workingDirectory: location.worktreeURL
+      )
+    )
+    return RecoveryReference(name: name, targetOID: head)
+  }
+
+  private func requireCleanWorkingCopy(
+    at location: RepositoryLocation
+  ) async throws {
+    let current = try await status(
+      at: location,
+      generation: RepositoryGeneration(0)
+    )
+    guard current.changes.isEmpty, !current.operation.isInProgress else {
+      throw GitEngineError.invalidRepository(
+        "Commit or stash working-copy changes before this destructive operation."
+      )
     }
   }
 

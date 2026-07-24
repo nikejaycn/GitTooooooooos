@@ -256,6 +256,56 @@ public actor RepositoryActor {
     }
   }
 
+  @discardableResult
+  public func applyHistoryMutation(
+    _ mutation: HistoryMutation,
+    historyLimit: Int = 500
+  ) async throws -> HistoryMutationResult {
+    let requestedGeneration = generation.next()
+    generation = requestedGeneration
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      let recovery = try await engine.mutateHistory(
+        at: location,
+        mutation: mutation
+      )
+      async let status = engine.status(
+        at: location,
+        generation: requestedGeneration
+      )
+      async let commits = engine.history(at: location, limit: historyLimit)
+      async let references = engine.references(at: location)
+      async let stashes = engine.stashes(at: location)
+      async let remotes = engine.remotes(at: location)
+      let loaded = try await (status, commits, references, stashes, remotes)
+      let snapshot = RepositorySnapshot(
+        generation: requestedGeneration,
+        status: loaded.0,
+        commits: loaded.1,
+        references: loaded.2,
+        stashes: loaded.3,
+        remotes: loaded.4
+      )
+      return HistoryMutationResult(
+        snapshot: snapshot,
+        recoveryReference: recovery
+      )
+    }
+    mutationTail = Task {
+      _ = try? await operation.value
+    }
+    let result = try await operation.value
+    guard requestedGeneration == generation else { return result }
+    cachedStatus = result.snapshot.status
+    cachedSnapshot = result.snapshot
+    return result
+  }
+
   private func applyRepositoryMutation(
     historyLimit: Int,
     operation mutation:

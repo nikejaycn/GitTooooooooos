@@ -185,6 +185,13 @@ private actor StubGitEngine: GitEngineProtocol {
     mutation: MergeMutation
   ) async throws {}
 
+  func mutateHistory(
+    at location: RepositoryLocation,
+    mutation: HistoryMutation
+  ) async throws -> RecoveryReference? {
+    nil
+  }
+
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations
   }

@@ -24,13 +24,18 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
 
 public struct CommitGraphView: NSViewRepresentable {
   private let rows: [GraphRow]
+  private let onSelection: (GraphRow?) -> Void
 
-  public init(rows: [GraphRow]) {
+  public init(
+    rows: [GraphRow],
+    onSelection: @escaping (GraphRow?) -> Void = { _ in }
+  ) {
     self.rows = rows
+    self.onSelection = onSelection
   }
 
   public func makeCoordinator() -> Coordinator {
-    Coordinator(rows: rows)
+    Coordinator(rows: rows, onSelection: onSelection)
   }
 
   public func makeNSView(context: Context) -> NSScrollView {
@@ -62,15 +67,18 @@ public struct CommitGraphView: NSViewRepresentable {
 
   public func updateNSView(_ scrollView: NSScrollView, context: Context) {
     context.coordinator.rows = rows
+    context.coordinator.onSelection = onSelection
     (scrollView.documentView as? NSTableView)?.reloadData()
     scrollView.toolTip = "\(rows.count) commits"
   }
 
   public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var rows: [GraphRow]
+    var onSelection: (GraphRow?) -> Void
 
-    init(rows: [GraphRow]) {
+    init(rows: [GraphRow], onSelection: @escaping (GraphRow?) -> Void) {
       self.rows = rows
+      self.onSelection = onSelection
     }
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
@@ -109,6 +117,16 @@ public struct CommitGraphView: NSViewRepresentable {
       ])
       cell.toolTip = text
       return cell
+    }
+
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+      guard let tableView = notification.object as? NSTableView,
+        rows.indices.contains(tableView.selectedRow)
+      else {
+        onSelection(nil)
+        return
+      }
+      onSelection(rows[tableView.selectedRow])
     }
   }
 }

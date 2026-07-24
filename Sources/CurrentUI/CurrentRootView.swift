@@ -19,6 +19,7 @@ public struct CurrentRootView: View {
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
   private let activities: [OperationActivity]
+  private let lastRecoveryReference: RecoveryReference?
   private let selectedDiff: DiffDocument?
   private let isDiffLoading: Bool
   private let isLoading: Bool
@@ -37,6 +38,11 @@ public struct CurrentRootView: View {
   private let continueOperation: () -> Void
   private let abortOperation: () -> Void
   private let resolveConflict: (GitPath, ConflictSide) -> Void
+  private let cherryPick: (String) -> Void
+  private let revert: (String) -> Void
+  private let reset: (String, ResetMode) -> Void
+  private let rebase: (String) -> Void
+  private let undoLastOperation: () -> Void
   private let saveStash: (String?) -> Void
   private let popStash: (String) -> Void
   private let dropStash: (String) -> Void
@@ -48,6 +54,8 @@ public struct CurrentRootView: View {
   @State private var commitMessage = ""
   @State private var newBranchName = ""
   @State private var isCreatingBranch = false
+  @State private var selectedCommitOID: String?
+  @State private var pendingHardResetOID: String?
 
   public init(
     repositoryName: String?,
@@ -58,6 +66,7 @@ public struct CurrentRootView: View {
     stashes: [StashEntry],
     remotes: [GitRemote],
     activities: [OperationActivity],
+    lastRecoveryReference: RecoveryReference?,
     selectedDiff: DiffDocument?,
     isDiffLoading: Bool,
     isLoading: Bool,
@@ -76,6 +85,11 @@ public struct CurrentRootView: View {
     continueOperation: @escaping () -> Void,
     abortOperation: @escaping () -> Void,
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
+    cherryPick: @escaping (String) -> Void,
+    revert: @escaping (String) -> Void,
+    reset: @escaping (String, ResetMode) -> Void,
+    rebase: @escaping (String) -> Void,
+    undoLastOperation: @escaping () -> Void,
     saveStash: @escaping (String?) -> Void,
     popStash: @escaping (String) -> Void,
     dropStash: @escaping (String) -> Void,
@@ -91,6 +105,7 @@ public struct CurrentRootView: View {
     self.stashes = stashes
     self.remotes = remotes
     self.activities = activities
+    self.lastRecoveryReference = lastRecoveryReference
     self.selectedDiff = selectedDiff
     self.isDiffLoading = isDiffLoading
     self.isLoading = isLoading
@@ -109,6 +124,11 @@ public struct CurrentRootView: View {
     self.continueOperation = continueOperation
     self.abortOperation = abortOperation
     self.resolveConflict = resolveConflict
+    self.cherryPick = cherryPick
+    self.revert = revert
+    self.reset = reset
+    self.rebase = rebase
+    self.undoLastOperation = undoLastOperation
     self.saveStash = saveStash
     self.popStash = popStash
     self.dropStash = dropStash
@@ -196,6 +216,9 @@ public struct CurrentRootView: View {
                 saveStash(nil)
               }
               .disabled(status?.changes.isEmpty != false)
+              Divider()
+              Button("Undo Last Recoverable Operation", action: undoLastOperation)
+                .disabled(lastRecoveryReference == nil)
             } label: {
               Label("Repository Actions", systemImage: "ellipsis.circle")
             }
@@ -232,6 +255,28 @@ public struct CurrentRootView: View {
         } message: {
           Text(
             "This replaces the working-copy file with its indexed version and cannot be undone by Git."
+          )
+        }
+        .confirmationDialog(
+          "Hard reset to \(pendingHardResetOID?.prefix(12) ?? "")?",
+          isPresented: Binding(
+            get: { pendingHardResetOID != nil },
+            set: { if !$0 { pendingHardResetOID = nil } }
+          ),
+          titleVisibility: .visible
+        ) {
+          Button("Hard Reset", role: .destructive) {
+            if let oid = pendingHardResetOID {
+              reset(oid, .hard)
+            }
+            pendingHardResetOID = nil
+          }
+          Button("Cancel", role: .cancel) {
+            pendingHardResetOID = nil
+          }
+        } message: {
+          Text(
+            "Current refuses this operation unless the working copy is clean and creates an undo reference first."
           )
         }
     }
@@ -566,7 +611,44 @@ public struct CurrentRootView: View {
         description: Text("This repository has no reachable commits.")
       )
     } else {
-      CommitGraphView(rows: commits.map(GraphRow.init))
+      VStack(spacing: 0) {
+        HStack {
+          Text(selectedCommitOID.map { String($0.prefix(12)) } ?? "Select a commit")
+            .font(.system(.body, design: .monospaced))
+            .foregroundStyle(.secondary)
+          Spacer()
+          Button("Cherry-pick") {
+            if let selectedCommitOID { cherryPick(selectedCommitOID) }
+          }
+          .disabled(selectedCommitOID == nil || isLoading)
+          Button("Revert") {
+            if let selectedCommitOID { revert(selectedCommitOID) }
+          }
+          .disabled(selectedCommitOID == nil || isLoading)
+          Menu("Rewrite") {
+            Button("Soft Reset") {
+              if let selectedCommitOID { reset(selectedCommitOID, .soft) }
+            }
+            Button("Mixed Reset") {
+              if let selectedCommitOID { reset(selectedCommitOID, .mixed) }
+            }
+            Button("Hard Reset…") {
+              pendingHardResetOID = selectedCommitOID
+            }
+            Divider()
+            Button("Rebase Current Branch onto Commit") {
+              if let selectedCommitOID { rebase(selectedCommitOID) }
+            }
+          }
+          .disabled(selectedCommitOID == nil || isLoading)
+        }
+        .padding(10)
+        Divider()
+        CommitGraphView(
+          rows: commits.map(GraphRow.init),
+          onSelection: { selectedCommitOID = $0?.id }
+        )
+      }
     }
   }
 
