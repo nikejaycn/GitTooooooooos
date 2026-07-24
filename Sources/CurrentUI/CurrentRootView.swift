@@ -34,6 +34,7 @@ public struct CurrentRootView: View {
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
   private let worktrees: [GitWorktree]
+  private let submodules: [GitSubmodule]
   private let activities: [OperationActivity]
   private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
@@ -76,6 +77,13 @@ public struct CurrentRootView: View {
   private let unlockWorktree: (GitWorktree) -> Void
   private let removeWorktree: (GitWorktree, Bool) -> Void
   private let pruneWorktrees: () -> Void
+  private let addSubmodule: (String, String, String?) -> Void
+  private let openSubmodule: (GitSubmodule) -> Void
+  private let initializeSubmodule: (GitSubmodule) -> Void
+  private let checkoutRecordedSubmodule: (GitSubmodule) -> Void
+  private let updateSubmoduleFromRemote: (GitSubmodule) -> Void
+  private let stageSubmodulePointer: (GitSubmodule) -> Void
+  private let removeSubmodule: (GitSubmodule, Bool) -> Void
   private let continueOperation: () -> Void
   private let abortOperation: () -> Void
   private let resolveConflict: (GitPath, ConflictSide) -> Void
@@ -104,6 +112,12 @@ public struct CurrentRootView: View {
   @State private var newWorktreeStartPoint = ""
   @State private var pendingWorktreeRemoval: GitWorktree?
   @State private var forceWorktreeRemoval = false
+  @State private var isAddingSubmodule = false
+  @State private var newSubmoduleURL = ""
+  @State private var newSubmodulePath = ""
+  @State private var newSubmoduleBranch = ""
+  @State private var pendingSubmoduleRemoval: GitSubmodule?
+  @State private var forceSubmoduleRemoval = false
   @State private var selectedCommitOID: String?
   @State private var selectedCommitCount = 0
   @State private var isWorkingCopySelected = false
@@ -134,6 +148,7 @@ public struct CurrentRootView: View {
     stashes: [StashEntry],
     remotes: [GitRemote],
     worktrees: [GitWorktree],
+    submodules: [GitSubmodule],
     activities: [OperationActivity],
     recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
@@ -176,6 +191,13 @@ public struct CurrentRootView: View {
     unlockWorktree: @escaping (GitWorktree) -> Void,
     removeWorktree: @escaping (GitWorktree, Bool) -> Void,
     pruneWorktrees: @escaping () -> Void,
+    addSubmodule: @escaping (String, String, String?) -> Void,
+    openSubmodule: @escaping (GitSubmodule) -> Void,
+    initializeSubmodule: @escaping (GitSubmodule) -> Void,
+    checkoutRecordedSubmodule: @escaping (GitSubmodule) -> Void,
+    updateSubmoduleFromRemote: @escaping (GitSubmodule) -> Void,
+    stageSubmodulePointer: @escaping (GitSubmodule) -> Void,
+    removeSubmodule: @escaping (GitSubmodule, Bool) -> Void,
     continueOperation: @escaping () -> Void,
     abortOperation: @escaping () -> Void,
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
@@ -210,6 +232,7 @@ public struct CurrentRootView: View {
     self.stashes = stashes
     self.remotes = remotes
     self.worktrees = worktrees
+    self.submodules = submodules
     self.activities = activities
     self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
@@ -252,6 +275,13 @@ public struct CurrentRootView: View {
     self.unlockWorktree = unlockWorktree
     self.removeWorktree = removeWorktree
     self.pruneWorktrees = pruneWorktrees
+    self.addSubmodule = addSubmodule
+    self.openSubmodule = openSubmodule
+    self.initializeSubmodule = initializeSubmodule
+    self.checkoutRecordedSubmodule = checkoutRecordedSubmodule
+    self.updateSubmoduleFromRemote = updateSubmoduleFromRemote
+    self.stageSubmodulePointer = stageSubmodulePointer
+    self.removeSubmodule = removeSubmodule
     self.continueOperation = continueOperation
     self.abortOperation = abortOperation
     self.resolveConflict = resolveConflict
@@ -393,6 +423,77 @@ public struct CurrentRootView: View {
             }
           }
         }
+        if status != nil {
+          Section {
+            ForEach(submodules) { submodule in
+              Button {
+                openSubmodule(submodule)
+              } label: {
+                HStack(spacing: 6) {
+                  Image(systemName: submoduleIcon(submodule))
+                  VStack(alignment: .leading, spacing: 1) {
+                    Text(submodule.path.displayString)
+                      .lineLimit(1)
+                    Text(submoduleSummary(submodule))
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(1)
+                  }
+                }
+              }
+              .buttonStyle(.plain)
+              .disabled(!submodule.isInitialized || isLoading)
+              .help(submoduleHelp(submodule))
+              .contextMenu {
+                Button("Open") {
+                  openSubmodule(submodule)
+                }
+                .disabled(!submodule.isInitialized)
+                Divider()
+                if !submodule.isInitialized {
+                  Button("Initialize") {
+                    initializeSubmodule(submodule)
+                  }
+                } else {
+                  Button("Checkout Recorded Commit") {
+                    checkoutRecordedSubmodule(submodule)
+                  }
+                  Button("Update from Remote") {
+                    updateSubmoduleFromRemote(submodule)
+                  }
+                  Button("Stage Pointer") {
+                    stageSubmodulePointer(submodule)
+                  }
+                  .disabled(!submodule.hasPointerChange)
+                }
+                Divider()
+                Button("Remove…", role: .destructive) {
+                  forceSubmoduleRemoval = false
+                  pendingSubmoduleRemoval = submodule
+                }
+                Button("Force Remove…", role: .destructive) {
+                  forceSubmoduleRemoval = true
+                  pendingSubmoduleRemoval = submodule
+                }
+              }
+            }
+          } header: {
+            HStack {
+              Text("Submodules")
+              Spacer()
+              Button {
+                newSubmoduleURL = ""
+                newSubmodulePath = ""
+                newSubmoduleBranch = ""
+                isAddingSubmodule = true
+              } label: {
+                Image(systemName: "plus")
+              }
+              .buttonStyle(.borderless)
+              .help("Add Submodule")
+            }
+          }
+        }
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 220)
     } detail: {
@@ -459,6 +560,28 @@ public struct CurrentRootView: View {
           Button("Cancel", role: .cancel) {}
         } message: {
           Text("Current creates a new branch and checks it out in a separate folder.")
+        }
+        .alert("Add Submodule", isPresented: $isAddingSubmodule) {
+          TextField("Remote URL", text: $newSubmoduleURL)
+          TextField("Repository-relative path", text: $newSubmodulePath)
+          TextField("Branch (optional)", text: $newSubmoduleBranch)
+          Button("Add") {
+            addSubmodule(
+              newSubmoduleURL,
+              newSubmodulePath,
+              newSubmoduleBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil : newSubmoduleBranch
+            )
+          }
+          .disabled(
+            newSubmoduleURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              || newSubmodulePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          )
+          Button("Cancel", role: .cancel) {}
+        } message: {
+          Text(
+            "The path must stay inside this repository. Current stages the new gitlink and .gitmodules."
+          )
         }
         .alert("Clone Repository", isPresented: $isCloningRepository) {
           TextField("HTTPS, SSH, or local repository URL", text: $cloneURL)
@@ -539,6 +662,33 @@ public struct CurrentRootView: View {
             forceWorktreeRemoval
               ? "This can delete uncommitted changes inside the selected worktree. Locked and current worktrees remain protected."
               : "Git refuses removal when the selected worktree is dirty or locked."
+          )
+        }
+        .confirmationDialog(
+          "\(forceSubmoduleRemoval ? "Force remove" : "Remove") submodule?",
+          isPresented: Binding(
+            get: { pendingSubmoduleRemoval != nil },
+            set: { if !$0 { pendingSubmoduleRemoval = nil } }
+          ),
+          titleVisibility: .visible
+        ) {
+          Button(
+            forceSubmoduleRemoval ? "Force Remove Submodule" : "Remove Submodule",
+            role: .destructive
+          ) {
+            if let pendingSubmoduleRemoval {
+              removeSubmodule(pendingSubmoduleRemoval, forceSubmoduleRemoval)
+            }
+            pendingSubmoduleRemoval = nil
+          }
+          Button("Cancel", role: .cancel) {
+            pendingSubmoduleRemoval = nil
+          }
+        } message: {
+          Text(
+            forceSubmoduleRemoval
+              ? "This can delete uncommitted files inside the nested repository. Its cached Git directory remains available for recovery."
+              : "Git refuses removal when the submodule contains uncommitted or untracked changes."
           )
         }
     }
@@ -1700,6 +1850,43 @@ public struct CurrentRootView: View {
     if let pruneReason = worktree.pruneReason {
       details.append(pruneReason.isEmpty ? "Prunable" : "Prunable: \(pruneReason)")
     }
+    return details.filter { !$0.isEmpty }.joined(separator: "\n")
+  }
+
+  private func submoduleIcon(_ submodule: GitSubmodule) -> String {
+    switch submodule.checkoutState {
+    case .uninitialized: "square.dashed"
+    case .conflicted: "exclamationmark.triangle.fill"
+    case .pointerModified: "arrow.triangle.2.circlepath"
+    case .current:
+      submodule.hasNestedChanges ? "shippingbox.fill" : "shippingbox"
+    }
+  }
+
+  private func submoduleSummary(_ submodule: GitSubmodule) -> String {
+    var parts: [String] = []
+    switch submodule.checkoutState {
+    case .uninitialized: parts.append("Not initialized")
+    case .conflicted: parts.append("Conflicted pointer")
+    case .pointerModified: parts.append("Pointer changed")
+    case .current: parts.append("At recorded commit")
+    }
+    if submodule.hasNestedChanges {
+      parts.append("nested changes")
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  private func submoduleHelp(_ submodule: GitSubmodule) -> String {
+    var details = [
+      submodule.path.displayString,
+      "Remote: \(submodule.remoteURL)",
+      submodule.branch.map { "Branch: \($0)" } ?? "",
+      submodule.recordedOID.map { "Recorded: \($0)" } ?? "",
+      submodule.checkedOutOID.map { "Checked out: \($0)" } ?? "",
+      submoduleSummary(submodule),
+    ]
+    details.append("Config name: \(submodule.name)")
     return details.filter { !$0.isEmpty }.joined(separator: "\n")
   }
 }

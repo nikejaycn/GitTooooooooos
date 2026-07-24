@@ -167,6 +167,7 @@ public struct RepositorySnapshot: Hashable, Sendable {
   public let stashes: [StashEntry]
   public let remotes: [GitRemote]
   public let worktrees: [GitWorktree]
+  public let submodules: [GitSubmodule]
 
   public init(
     generation: RepositoryGeneration,
@@ -175,7 +176,8 @@ public struct RepositorySnapshot: Hashable, Sendable {
     references: [GitReference],
     stashes: [StashEntry] = [],
     remotes: [GitRemote] = [],
-    worktrees: [GitWorktree] = []
+    worktrees: [GitWorktree] = [],
+    submodules: [GitSubmodule] = []
   ) {
     self.generation = generation
     self.status = status
@@ -184,6 +186,7 @@ public struct RepositorySnapshot: Hashable, Sendable {
     self.stashes = stashes
     self.remotes = remotes
     self.worktrees = worktrees
+    self.submodules = submodules
   }
 }
 
@@ -314,6 +317,56 @@ public enum WorktreeMutation: Hashable, Sendable {
   case unlock(path: GitPath)
   case remove(path: GitPath, force: Bool)
   case prune
+}
+
+public enum SubmoduleCheckoutState: String, Hashable, Sendable, Codable {
+  case uninitialized
+  case current
+  case pointerModified
+  case conflicted
+}
+
+public struct GitSubmodule: Hashable, Sendable, Identifiable {
+  public let name: String
+  public let path: GitPath
+  public let remoteURL: String
+  public let branch: String?
+  public let checkoutState: SubmoduleCheckoutState
+  public let recordedOID: String?
+  public let checkedOutOID: String?
+  public let hasNestedChanges: Bool
+
+  public init(
+    name: String,
+    path: GitPath,
+    remoteURL: String,
+    branch: String?,
+    checkoutState: SubmoduleCheckoutState,
+    recordedOID: String?,
+    checkedOutOID: String?,
+    hasNestedChanges: Bool
+  ) {
+    self.name = name
+    self.path = path
+    self.remoteURL = remoteURL
+    self.branch = branch
+    self.checkoutState = checkoutState
+    self.recordedOID = recordedOID
+    self.checkedOutOID = checkedOutOID
+    self.hasNestedChanges = hasNestedChanges
+  }
+
+  public var id: GitPath { path }
+  public var isInitialized: Bool { checkoutState != .uninitialized }
+  public var hasPointerChange: Bool { checkoutState == .pointerModified }
+}
+
+public enum SubmoduleMutation: Hashable, Sendable {
+  case add(remoteURL: String, path: GitPath, branch: String?)
+  case initialize(path: GitPath)
+  case checkoutRecorded(path: GitPath)
+  case updateFromRemote(path: GitPath)
+  case remove(path: GitPath, force: Bool)
 }
 
 public enum MergeMutation: Hashable, Sendable {

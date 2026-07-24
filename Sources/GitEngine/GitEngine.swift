@@ -163,6 +163,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: WorktreeMutation
   ) async throws
+  func submodules(at location: RepositoryLocation) async throws -> [GitSubmodule]
+  func mutateSubmodule(
+    at location: RepositoryLocation,
+    mutation: SubmoduleMutation
+  ) async throws
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry]
   func mutateStash(
     at location: RepositoryLocation,
@@ -261,6 +266,17 @@ extension GitEngineProtocol {
     mutation: WorktreeMutation
   ) async throws {
     throw GitEngineError.invalidOutput("Worktree mutation is not implemented.")
+  }
+
+  public func submodules(at location: RepositoryLocation) async throws -> [GitSubmodule] {
+    []
+  }
+
+  public func mutateSubmodule(
+    at location: RepositoryLocation,
+    mutation: SubmoduleMutation
+  ) async throws {
+    throw GitEngineError.invalidOutput("Submodule mutation is not implemented.")
   }
 
   public func initializeRepository(
@@ -1011,6 +1027,165 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  public func submodules(
+    at location: RepositoryLocation
+  ) async throws -> [GitSubmodule] {
+    guard location.kind != .bare else { return [] }
+    let trackedConfig = try await execute(
+      GitCommand(
+        arguments: ["ls-files", "-z", "--", ".gitmodules"],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 1024
+      )
+    )
+    guard !trackedConfig.standardOutput.isEmpty else { return [] }
+
+    let configResult = try await execute(
+      GitCommand(
+        arguments: ["config", "--null", "--file", ".gitmodules", "--list"],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 4 * 1024 * 1024
+      )
+    )
+    let configurations: [ParsedSubmoduleConfig]
+    do {
+      configurations = try SubmoduleConfigParser().parse(configResult.standardOutput)
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+    guard configurations.count <= 256 else {
+      throw GitEngineError.invalidOutput("A repository cannot expose more than 256 submodules.")
+    }
+
+    var output: [GitSubmodule] = []
+    output.reserveCapacity(configurations.count)
+    for configuration in configurations {
+      let path = GitPath(rawBytes: configuration.path)
+      try validateRepositoryRelativePath(path, label: "submodule")
+      let statusResult = try await execute(
+        GitCommand(
+          rawArguments: [
+            Array("submodule".utf8),
+            Array("status".utf8),
+            Array("--".utf8),
+            path.rawBytes,
+          ],
+          workingDirectory: location.worktreeURL,
+          outputLimit: 1024 * 1024,
+          timeout: .seconds(30)
+        )
+      )
+      let parsedStatus: ParsedSubmoduleStatus
+      do {
+        parsedStatus = try SubmoduleStatusParser().parse(statusResult.standardOutput)
+      } catch {
+        throw GitEngineError.invalidOutput(String(describing: error))
+      }
+      let checkoutState: SubmoduleCheckoutState
+      switch parsedStatus.state {
+      case .uninitialized: checkoutState = .uninitialized
+      case .current: checkoutState = .current
+      case .pointerModified: checkoutState = .pointerModified
+      case .conflicted: checkoutState = .conflicted
+      }
+      let recordedOID = try await submoduleGitlinkOID(path, at: location)
+      let hasNestedChanges: Bool
+      if checkoutState == .uninitialized {
+        hasNestedChanges = false
+      } else {
+        let nestedStatus = try await execute(
+          GitCommand(
+            rawArguments: [
+              Array("-C".utf8),
+              path.rawBytes,
+              Array("status".utf8),
+              Array("--porcelain=v2".utf8),
+              Array("-z".utf8),
+              Array("--untracked-files=normal".utf8),
+            ],
+            workingDirectory: location.worktreeURL,
+            outputLimit: 8 * 1024 * 1024,
+            timeout: .seconds(30)
+          )
+        )
+        hasNestedChanges = !nestedStatus.standardOutput.isEmpty
+      }
+      output.append(
+        GitSubmodule(
+          name: configuration.name,
+          path: path,
+          remoteURL: configuration.remoteURL,
+          branch: configuration.branch,
+          checkoutState: checkoutState,
+          recordedOID: recordedOID,
+          checkedOutOID:
+            checkoutState == .uninitialized ? nil : parsedStatus.checkedOutOID,
+          hasNestedChanges: hasNestedChanges
+        )
+      )
+    }
+    return output
+  }
+
+  public func mutateSubmodule(
+    at location: RepositoryLocation,
+    mutation: SubmoduleMutation
+  ) async throws {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository cannot mutate submodules.")
+    }
+    let arguments: [[UInt8]]
+    switch mutation {
+    case .add(let remoteURL, let path, let branch):
+      try validateRepositoryRelativePath(path, label: "submodule")
+      let trimmedURL = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmedURL.isEmpty, !trimmedURL.utf8.contains(0) else {
+        throw GitEngineError.invalidOutput("A submodule remote URL is empty or invalid.")
+      }
+      var add = [
+        Array("submodule".utf8),
+        Array("add".utf8),
+      ]
+      if let branch {
+        try await validateBranchName(branch, at: location)
+        add += [Array("--branch".utf8), Array(branch.utf8)]
+      }
+      add += [Array("--".utf8), Array(trimmedURL.utf8), path.rawBytes]
+      arguments = add
+    case .initialize(let path):
+      try validateRepositoryRelativePath(path, label: "submodule")
+      arguments =
+        ["submodule", "update", "--init", "--recursive", "--"].map { Array($0.utf8) }
+        + [path.rawBytes]
+    case .checkoutRecorded(let path):
+      try validateRepositoryRelativePath(path, label: "submodule")
+      arguments =
+        ["submodule", "update", "--init", "--recursive", "--checkout", "--"].map {
+          Array($0.utf8)
+        } + [path.rawBytes]
+    case .updateFromRemote(let path):
+      try validateRepositoryRelativePath(path, label: "submodule")
+      arguments =
+        ["submodule", "update", "--init", "--recursive", "--remote", "--checkout", "--"].map {
+          Array($0.utf8)
+        } + [path.rawBytes]
+    case .remove(let path, let force):
+      try validateRepositoryRelativePath(path, label: "submodule")
+      arguments =
+        [Array("rm".utf8)]
+        + (force ? [Array("--force".utf8)] : [])
+        + [Array("--".utf8), path.rawBytes]
+    }
+    _ = try await execute(
+      GitCommand(
+        rawArguments: arguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: .seconds(600)
+      )
+    )
+  }
+
   public func stashes(
     at location: RepositoryLocation
   ) async throws -> [StashEntry] {
@@ -1470,6 +1645,76 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         "A worktree path must be an absolute path without NUL bytes."
       )
     }
+  }
+
+  private func validateRepositoryRelativePath(
+    _ path: GitPath,
+    label: String
+  ) throws {
+    let components = path.rawBytes.split(
+      separator: 0x2F,
+      omittingEmptySubsequences: false
+    )
+    guard
+      !path.rawBytes.isEmpty,
+      !path.rawBytes.contains(0),
+      path.rawBytes.first != Character("/").asciiValue,
+      components.allSatisfy({
+        !$0.isEmpty
+          && $0 != ArraySlice(".".utf8)
+          && $0 != ArraySlice("..".utf8)
+          && $0 != ArraySlice(".git".utf8)
+      })
+    else {
+      throw GitEngineError.invalidOutput(
+        "A \(label) path must stay inside the repository and cannot contain NUL."
+      )
+    }
+  }
+
+  private func submoduleGitlinkOID(
+    _ path: GitPath,
+    at location: RepositoryLocation
+  ) async throws -> String? {
+    let result = try await execute(
+      GitCommand(
+        rawArguments: [
+          Array("ls-files".utf8),
+          Array("--stage".utf8),
+          Array("-z".utf8),
+          Array("--".utf8),
+          path.rawBytes,
+        ],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 1024 * 1024,
+        timeout: .seconds(30)
+      )
+    )
+    for record in result.standardOutput.split(
+      separator: 0,
+      omittingEmptySubsequences: true
+    ) {
+      guard let tab = record.firstIndex(of: 0x09) else {
+        throw GitEngineError.invalidOutput("A submodule index record was malformed.")
+      }
+      let metadata = record[..<tab].split(separator: 0x20)
+      let recordPath = record[record.index(after: tab)...]
+      guard metadata.count == 3 else {
+        throw GitEngineError.invalidOutput("A submodule index record was malformed.")
+      }
+      guard recordPath.elementsEqual(path.rawBytes) else { continue }
+      guard metadata[0].elementsEqual("160000".utf8) else { return nil }
+      guard metadata[2].elementsEqual("0".utf8) else { continue }
+      let oid = String(decoding: metadata[1], as: UTF8.self)
+      guard
+        oid.count == 40 || oid.count == 64,
+        oid.allSatisfy(\.isHexDigit)
+      else {
+        throw GitEngineError.invalidOutput("A submodule index OID was invalid.")
+      }
+      return oid
+    }
+    return nil
   }
 
   private func worktreePath(_ path: GitPath, matches url: URL) -> Bool {

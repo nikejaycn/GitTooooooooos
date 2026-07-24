@@ -327,6 +327,88 @@ struct GitEngineTests {
     #expect(!commands[5].arguments.contains(Array("--force".utf8)))
   }
 
+  @Test("Submodule listing and mutations preserve raw option-safe paths")
+  func submoduleCommands() async throws {
+    let oid = String(repeating: "a", count: 40)
+    let path = GitPath(rawBytes: Array("modules/-demo \n\u{00E9}".utf8))
+    let config =
+      Array("submodule.demo.path\n".utf8)
+      + path.rawBytes
+      + [0]
+      + Array("submodule.demo.url\nssh://example.test/demo.git\u{0}".utf8)
+      + Array("submodule.demo.branch\nmain\u{0}".utf8)
+    let status = Array("+\(oid) ignored display path\n".utf8)
+    let index =
+      Array("160000 \(oid) 0\t".utf8)
+      + path.rawBytes
+      + [0]
+    let runner = StubRunner(
+      results: [
+        .success(".gitmodules\u{0}"),
+        .success(config),
+        .success(status),
+        .success(index),
+        .success("1 .M N... 100644 100644 100644 \(oid) \(oid) file\u{0}"),
+        .success("main\n"),
+        .success(""),
+        .success(""),
+        .success(""),
+        .success(""),
+        .success(""),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let modules = try await engine.submodules(at: location)
+    #expect(modules.count == 1)
+    #expect(modules[0].path == path)
+    #expect(modules[0].checkoutState == .pointerModified)
+    #expect(modules[0].recordedOID == oid)
+    #expect(modules[0].checkedOutOID == oid)
+    #expect(modules[0].hasNestedChanges)
+
+    try await engine.mutateSubmodule(
+      at: location,
+      mutation: .add(
+        remoteURL: "ssh://example.test/new.git",
+        path: path,
+        branch: "main"
+      )
+    )
+    try await engine.mutateSubmodule(at: location, mutation: .initialize(path: path))
+    try await engine.mutateSubmodule(at: location, mutation: .checkoutRecorded(path: path))
+    try await engine.mutateSubmodule(at: location, mutation: .updateFromRemote(path: path))
+    try await engine.mutateSubmodule(
+      at: location,
+      mutation: .remove(path: path, force: false)
+    )
+
+    let commands = await runner.commands()
+    #expect(commands[0].redactedDescription == "ls-files -z -- .gitmodules")
+    #expect(commands[1].redactedDescription == "config --null --file .gitmodules --list")
+    #expect(commands[2].arguments.last == path.rawBytes)
+    #expect(commands[3].arguments.last == path.rawBytes)
+    #expect(commands[4].arguments[1] == path.rawBytes)
+    #expect(
+      commands[6].arguments == [
+        Array("submodule".utf8),
+        Array("add".utf8),
+        Array("--branch".utf8),
+        Array("main".utf8),
+        Array("--".utf8),
+        Array("ssh://example.test/new.git".utf8),
+        path.rawBytes,
+      ])
+    #expect(commands[7].arguments.last == path.rawBytes)
+    #expect(commands[8].arguments.contains(Array("--checkout".utf8)))
+    #expect(commands[9].arguments.contains(Array("--remote".utf8)))
+    #expect(!commands[10].arguments.contains(Array("--force".utf8)))
+  }
+
   @Test("Blame uses bounded line ranges and parses attribution")
   func blame() async throws {
     let oid = String(repeating: "b", count: 40)
@@ -1053,6 +1135,116 @@ struct GitEngineTests {
   }
 
   @Test(
+    "Live submodule management detects pointer and nested changes with safe removal",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveSubmoduleManagement() async throws {
+    let fixtureRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-submodule-\(UUID().uuidString)", isDirectory: true)
+    let root = fixtureRoot.appendingPathComponent("main", isDirectory: true)
+    let source = fixtureRoot.appendingPathComponent("source", isDirectory: true)
+    let remote = fixtureRoot.appendingPathComponent("remote.git", isDirectory: true)
+    try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+    try runGit(["init", "--initial-branch=main", source.path])
+    try runGit(["-C", source.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", source.path, "config", "user.email", "current@example.invalid"])
+    let sourceFile = source.appendingPathComponent("nested.txt")
+    try Data("one\n".utf8).write(to: sourceFile)
+    try runGit(["-C", source.path, "add", "nested.txt"])
+    try runGit(["-C", source.path, "commit", "-m", "nested base"])
+    try runGit(["clone", "--bare", source.path, remote.path])
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    try runGit(["-C", root.path, "commit", "--allow-empty", "-m", "root"])
+
+    let runner = EnvironmentOverrideRunner(
+      base: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      ),
+      overrides: ["GIT_ALLOW_PROTOCOL": "file"]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = try await engine.locateRepository(at: root)
+    let path = GitPath(rawBytes: Array("modules/demo space".utf8))
+
+    try await engine.mutateSubmodule(
+      at: location,
+      mutation: .add(remoteURL: remote.path, path: path, branch: "main")
+    )
+    var modules = try await engine.submodules(at: location)
+    #expect(modules.count == 1)
+    #expect(modules[0].checkoutState == .current)
+    #expect(!modules[0].hasNestedChanges)
+    #expect(modules[0].recordedOID == modules[0].checkedOutOID)
+    try runGit(["-C", root.path, "commit", "-m", "add submodule"])
+
+    try Data("two\n".utf8).write(to: sourceFile)
+    try runGit(["-C", source.path, "commit", "-am", "nested update"])
+    try runGit(["-C", source.path, "push", remote.path, "main"])
+    try await engine.mutateSubmodule(
+      at: location,
+      mutation: .updateFromRemote(path: path)
+    )
+    modules = try await engine.submodules(at: location)
+    #expect(modules[0].checkoutState == .pointerModified)
+    #expect(modules[0].recordedOID != modules[0].checkedOutOID)
+
+    try await engine.mutateWorkingCopy(
+      at: location,
+      mutation: .stage([path])
+    )
+    try runGit(["-C", root.path, "reset", "--hard", "HEAD"])
+    modules = try await engine.submodules(at: location)
+    #expect(modules[0].checkoutState == .pointerModified)
+    try await engine.mutateSubmodule(
+      at: location,
+      mutation: .checkoutRecorded(path: path)
+    )
+    modules = try await engine.submodules(at: location)
+    #expect(modules[0].checkoutState == .current)
+
+    try runGit([
+      "-C", root.path, "submodule", "deinit", "--force", "--", path.displayString,
+    ])
+    modules = try await engine.submodules(at: location)
+    #expect(modules[0].checkoutState == .uninitialized)
+    try await engine.mutateSubmodule(
+      at: location,
+      mutation: .initialize(path: path)
+    )
+    modules = try await engine.submodules(at: location)
+    #expect(modules[0].checkoutState == .current)
+
+    let nestedFile =
+      root
+      .appendingPathComponent(path.displayString, isDirectory: true)
+      .appendingPathComponent("nested.txt")
+    try Data("dirty\n".utf8).write(to: nestedFile)
+    modules = try await engine.submodules(at: location)
+    #expect(modules[0].hasNestedChanges)
+    var dirtyRemovalRejected = false
+    do {
+      try await engine.mutateSubmodule(
+        at: location,
+        mutation: .remove(path: path, force: false)
+      )
+    } catch {
+      dirtyRemovalRejected = true
+    }
+    #expect(dirtyRemovalRejected)
+    #expect(FileManager.default.fileExists(atPath: nestedFile.path))
+
+    try await engine.mutateSubmodule(
+      at: location,
+      mutation: .remove(path: path, force: true)
+    )
+    #expect(try await engine.submodules(at: location).isEmpty)
+  }
+
+  @Test(
     "Live merge conflict supports abort, side resolution, and continue",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
   func liveMergeConflict() async throws {
@@ -1377,6 +1569,28 @@ private func runGitOutput(_ arguments: [String]) throws -> String {
   .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+private struct EnvironmentOverrideRunner<Base: GitProcessRunning>: GitProcessRunning {
+  let base: Base
+  let overrides: [String: String?]
+
+  func run(_ command: GitCommand) async throws -> GitProcessResult {
+    var environment = command.environmentOverrides
+    for (key, value) in overrides {
+      environment[key] = value
+    }
+    return try await base.run(
+      GitCommand(
+        rawArguments: command.arguments,
+        workingDirectory: command.workingDirectory,
+        environmentOverrides: environment,
+        standardInput: command.standardInput,
+        outputLimit: command.outputLimit,
+        timeout: command.timeout
+      )
+    )
+  }
+}
+
 private actor StubRunner: GitProcessRunning {
   private var pendingResults: [GitProcessResult]
   private var receivedCommands: [GitCommand] = []
@@ -1397,9 +1611,13 @@ private actor StubRunner: GitProcessRunning {
 
 extension GitProcessResult {
   fileprivate static func success(_ output: String) -> Self {
+    success(Array(output.utf8))
+  }
+
+  fileprivate static func success(_ output: [UInt8]) -> Self {
     GitProcessResult(
       termination: .exited(0),
-      standardOutput: Array(output.utf8),
+      standardOutput: output,
       standardError: [],
       duration: .milliseconds(1)
     )

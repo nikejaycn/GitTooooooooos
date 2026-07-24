@@ -306,6 +306,33 @@ struct RepositoryActorTests {
     #expect(snapshot.generation == RepositoryGeneration(1))
   }
 
+  @Test("Submodule mutation uses the repository queue and refreshes nested state")
+  func submoduleMutationRefresh() async throws {
+    let path = GitPath("modules/demo")
+    let module = GitSubmodule(
+      name: "demo",
+      path: path,
+      remoteURL: "ssh://example.test/demo.git",
+      branch: "main",
+      checkoutState: .current,
+      recordedOID: String(repeating: "a", count: 40),
+      checkedOutOID: String(repeating: "a", count: 40),
+      hasNestedChanges: false
+    )
+    let engine = StubGitEngine(submodules: [module])
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let mutation = SubmoduleMutation.updateFromRemote(path: path)
+
+    let snapshot = try await repository.applySubmoduleMutation(mutation)
+
+    #expect(snapshot.submodules == [module])
+    #expect(await engine.submoduleMutations() == [mutation])
+    #expect(snapshot.generation == RepositoryGeneration(1))
+  }
+
   @Test("Commit runs through the mutation queue and refreshes the full snapshot")
   func commitRefresh() async throws {
     let engine = StubGitEngine()
@@ -359,6 +386,7 @@ private actor StubGitEngine: GitEngineProtocol {
   )
   private var receivedMutations: [WorkingCopyMutation] = []
   private var receivedWorktreeMutations: [WorktreeMutation] = []
+  private var receivedSubmoduleMutations: [SubmoduleMutation] = []
   private var receivedCommits: [CommitRequest] = []
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
@@ -366,6 +394,7 @@ private actor StubGitEngine: GitEngineProtocol {
   private let fileHistoryEntries: [FileHistoryEntry]
   private let blameLines: [BlameLine]
   private let repositoryWorktrees: [GitWorktree]
+  private let repositorySubmodules: [GitSubmodule]
 
   init(
     statusDelays: [UInt64: Duration] = [:],
@@ -373,7 +402,8 @@ private actor StubGitEngine: GitEngineProtocol {
     comparisonFiles: [CommitFileChange] = [],
     fileHistoryEntries: [FileHistoryEntry] = [],
     blameLines: [BlameLine] = [],
-    worktrees: [GitWorktree] = []
+    worktrees: [GitWorktree] = [],
+    submodules: [GitSubmodule] = []
   ) {
     self.statusDelays = statusDelays
     historyCommits = history
@@ -381,6 +411,7 @@ private actor StubGitEngine: GitEngineProtocol {
     self.fileHistoryEntries = fileHistoryEntries
     self.blameLines = blameLines
     repositoryWorktrees = worktrees
+    repositorySubmodules = submodules
   }
 
   func version() async throws -> String {
@@ -475,6 +506,17 @@ private actor StubGitEngine: GitEngineProtocol {
     receivedWorktreeMutations.append(mutation)
   }
 
+  func submodules(at location: RepositoryLocation) async throws -> [GitSubmodule] {
+    repositorySubmodules
+  }
+
+  func mutateSubmodule(
+    at location: RepositoryLocation,
+    mutation: SubmoduleMutation
+  ) async throws {
+    receivedSubmoduleMutations.append(mutation)
+  }
+
   func commit(
     at location: RepositoryLocation,
     request: CommitRequest
@@ -543,6 +585,10 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func worktreeMutations() -> [WorktreeMutation] {
     receivedWorktreeMutations
+  }
+
+  func submoduleMutations() -> [SubmoduleMutation] {
+    receivedSubmoduleMutations
   }
 
   func commits() -> [CommitRequest] {

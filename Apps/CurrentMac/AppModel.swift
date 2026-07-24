@@ -34,6 +34,7 @@ final class AppModel {
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
   private(set) var worktrees: [GitWorktree] = []
+  private(set) var submodules: [GitSubmodule] = []
   private(set) var activities: [OperationActivity] = []
   private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
@@ -616,6 +617,58 @@ final class AppModel {
     applyWorktree(.prune)
   }
 
+  func addSubmodule(remoteURL: String, path: String, branch: String?) {
+    let trimmedURL = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedBranch = branch?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedURL.isEmpty, !trimmedPath.isEmpty else {
+      errorMessage = "Enter both a remote URL and a repository-relative path."
+      return
+    }
+    applySubmodule(
+      .add(
+        remoteURL: trimmedURL,
+        path: GitPath(trimmedPath),
+        branch: trimmedBranch.flatMap { $0.isEmpty ? nil : $0 }
+      )
+    )
+  }
+
+  func openSubmodule(_ submodule: GitSubmodule) {
+    guard
+      let repositoryURL = repository?.location.worktreeURL,
+      let path = String(bytes: submodule.path.rawBytes, encoding: .utf8)
+    else {
+      errorMessage = "Opening non-UTF-8 submodule paths is not supported by this UI."
+      return
+    }
+    Task {
+      await openRepository(
+        at: repositoryURL.appendingPathComponent(path, isDirectory: true)
+      )
+    }
+  }
+
+  func initializeSubmodule(_ submodule: GitSubmodule) {
+    applySubmodule(.initialize(path: submodule.path))
+  }
+
+  func checkoutRecordedSubmodule(_ submodule: GitSubmodule) {
+    applySubmodule(.checkoutRecorded(path: submodule.path))
+  }
+
+  func updateSubmoduleFromRemote(_ submodule: GitSubmodule) {
+    applySubmodule(.updateFromRemote(path: submodule.path))
+  }
+
+  func removeSubmodule(_ submodule: GitSubmodule, force: Bool) {
+    applySubmodule(.remove(path: submodule.path, force: force))
+  }
+
+  func stageSubmodulePointer(_ submodule: GitSubmodule) {
+    stage(submodule.path)
+  }
+
   func continueOperation() {
     applyMerge(.continueOperation)
   }
@@ -836,6 +889,7 @@ final class AppModel {
     stashes = []
     remotes = []
     worktrees = []
+    submodules = []
     selectedDiff = nil
     clearFileInsights()
   }
@@ -1025,6 +1079,23 @@ final class AppModel {
     }
   }
 
+  private func applySubmodule(_ mutation: SubmoduleMutation) {
+    guard let repository else { return }
+    let activityID = beginActivity(submoduleTitle(mutation))
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        apply(try await repository.applySubmoduleMutation(mutation))
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   private func applyRemote(_ mutation: RemoteMutation) {
     guard let repository else { return }
     let activityID = beginActivity(remoteTitle(mutation))
@@ -1102,6 +1173,7 @@ final class AppModel {
     stashes = snapshot.stashes
     remotes = snapshot.remotes
     worktrees = snapshot.worktrees
+    submodules = snapshot.submodules
     rebuildGraphRows(generation: snapshot.generation)
   }
 
@@ -1368,6 +1440,17 @@ final class AppModel {
     case .remove(let path, let force):
       "\(force ? "Force remove" : "Remove") \(path.displayString)"
     case .prune: "Prune stale worktrees"
+    }
+  }
+
+  private func submoduleTitle(_ mutation: SubmoduleMutation) -> String {
+    switch mutation {
+    case .add(_, let path, _): "Add submodule \(path.displayString)"
+    case .initialize(let path): "Initialize submodule \(path.displayString)"
+    case .checkoutRecorded(let path): "Checkout recorded submodule \(path.displayString)"
+    case .updateFromRemote(let path): "Update submodule \(path.displayString)"
+    case .remove(let path, let force):
+      "\(force ? "Force remove" : "Remove") submodule \(path.displayString)"
     }
   }
 
