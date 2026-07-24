@@ -7,6 +7,7 @@ public struct CurrentRootView: View {
   private enum Workspace: Hashable {
     case changes
     case history
+    case fileHistory
     case stashes
     case operations
   }
@@ -37,6 +38,10 @@ public struct CurrentRootView: View {
   private let lastRecoveryReference: RecoveryReference?
   private let selectedDiff: DiffDocument?
   private let isDiffLoading: Bool
+  private let fileHistory: FileHistoryResult?
+  private let blameDocument: BlameDocument?
+  private let isFileHistoryLoading: Bool
+  private let isBlameLoading: Bool
   private let isLoading: Bool
   private let isRepositoryOperation: Bool
   private let errorMessage: String?
@@ -58,6 +63,9 @@ public struct CurrentRootView: View {
   private let ignore: (GitPath) -> Void
   private let commit: (String) async throws -> Void
   private let loadDiff: (FileChange) -> Void
+  private let loadFileInsights: (GitPath) -> Void
+  private let loadBlame: (GitPath, String?) -> Void
+  private let loadNextBlamePage: () -> Void
   private let createBranch: (String) -> Void
   private let checkoutBranch: (String) -> Void
   private let mergeBranch: (String) -> Void
@@ -92,6 +100,7 @@ public struct CurrentRootView: View {
   @State private var graphSearchScope: GraphSearchScope = .loaded
   @State private var hasSubmittedRepositorySearch = false
   @State private var diffPresentation: DiffPresentation = .unified
+  @State private var fileInsightPathText = ""
   @State private var pendingHardResetOID: String?
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
@@ -117,6 +126,10 @@ public struct CurrentRootView: View {
     lastRecoveryReference: RecoveryReference?,
     selectedDiff: DiffDocument?,
     isDiffLoading: Bool,
+    fileHistory: FileHistoryResult?,
+    blameDocument: BlameDocument?,
+    isFileHistoryLoading: Bool,
+    isBlameLoading: Bool,
     isLoading: Bool,
     isRepositoryOperation: Bool,
     errorMessage: String?,
@@ -138,6 +151,9 @@ public struct CurrentRootView: View {
     ignore: @escaping (GitPath) -> Void,
     commit: @escaping (String) async throws -> Void,
     loadDiff: @escaping (FileChange) -> Void,
+    loadFileInsights: @escaping (GitPath) -> Void,
+    loadBlame: @escaping (GitPath, String?) -> Void,
+    loadNextBlamePage: @escaping () -> Void,
     createBranch: @escaping (String) -> Void,
     checkoutBranch: @escaping (String) -> Void,
     mergeBranch: @escaping (String) -> Void,
@@ -179,6 +195,10 @@ public struct CurrentRootView: View {
     self.lastRecoveryReference = lastRecoveryReference
     self.selectedDiff = selectedDiff
     self.isDiffLoading = isDiffLoading
+    self.fileHistory = fileHistory
+    self.blameDocument = blameDocument
+    self.isFileHistoryLoading = isFileHistoryLoading
+    self.isBlameLoading = isBlameLoading
     self.isLoading = isLoading
     self.isRepositoryOperation = isRepositoryOperation
     self.errorMessage = errorMessage
@@ -200,6 +220,9 @@ public struct CurrentRootView: View {
     self.ignore = ignore
     self.commit = commit
     self.loadDiff = loadDiff
+    self.loadFileInsights = loadFileInsights
+    self.loadBlame = loadBlame
+    self.loadNextBlamePage = loadNextBlamePage
     self.createBranch = createBranch
     self.checkoutBranch = checkoutBranch
     self.mergeBranch = mergeBranch
@@ -234,6 +257,8 @@ public struct CurrentRootView: View {
             .tag(Workspace.changes)
           Label("History", systemImage: "point.3.connected.trianglepath.dotted")
             .tag(Workspace.history)
+          Label("File History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            .tag(Workspace.fileHistory)
           Label("Stashes", systemImage: "archivebox")
             .tag(Workspace.stashes)
           Label("Operations", systemImage: "list.bullet.rectangle")
@@ -451,6 +476,8 @@ public struct CurrentRootView: View {
           }
         case .history:
           history
+        case .fileHistory:
+          fileHistoryAndBlame
         case .stashes:
           stashList
         case .operations:
@@ -742,6 +769,11 @@ public struct CurrentRootView: View {
                 .lineLimit(1)
             }
             .buttonStyle(.plain)
+            .contextMenu {
+              Button("File History & Blame") {
+                openFileInsights(change.path)
+              }
+            }
             Spacer()
             Text(change.kind.rawValue)
               .foregroundStyle(.secondary)
@@ -799,6 +831,14 @@ public struct CurrentRootView: View {
             Text(selectedDiff.path.displayString)
               .font(.headline)
               .lineLimit(1)
+            Button {
+              openFileInsights(selectedDiff.path)
+            } label: {
+              Label(
+                "History & Blame",
+                systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            }
+            .buttonStyle(.borderless)
             Picker("Diff presentation", selection: $diffPresentation) {
               Text("Unified")
                 .tag(DiffPresentation.unified)
@@ -896,6 +936,218 @@ public struct CurrentRootView: View {
     let marker = line.kind == .addition ? "+" : "-"
     let number = line.newLineNumber ?? line.oldLineNumber ?? 0
     return "\(verb) \(marker)\(number): \(line.text)"
+  }
+
+  private func openFileInsights(_ path: GitPath) {
+    fileInsightPathText = path.displayString
+    workspace = .fileHistory
+    loadFileInsights(path)
+  }
+
+  private func submitFileInsightPath() {
+    let trimmedPath = fileInsightPathText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedPath.isEmpty else { return }
+    openFileInsights(GitPath(trimmedPath))
+  }
+
+  private var fileHistoryAndBlame: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 8) {
+        TextField("Repository-relative path", text: $fileInsightPathText)
+          .textFieldStyle(.roundedBorder)
+          .onSubmit(submitFileInsightPath)
+        Button("Load", action: submitFileInsightPath)
+          .disabled(
+            fileInsightPathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              || isFileHistoryLoading
+          )
+        if let fileHistory, blameDocument?.revision != nil {
+          Button("Working Copy") {
+            loadBlame(fileHistory.requestedPath, nil)
+          }
+          .disabled(isBlameLoading)
+        }
+      }
+      .padding(10)
+
+      Divider()
+
+      HSplitView {
+        fileHistoryList
+          .frame(minWidth: 280, idealWidth: 330, maxWidth: 410)
+        blameView
+          .frame(minWidth: 500)
+          .layoutPriority(1)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var fileHistoryList: some View {
+    if isFileHistoryLoading, fileHistory == nil {
+      ProgressView("Loading file history…")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if let fileHistory, !fileHistory.entries.isEmpty {
+      List(fileHistory.entries) { entry in
+        Button {
+          loadBlame(entry.pathAtCommit, entry.commit.oid)
+        } label: {
+          VStack(alignment: .leading, spacing: 5) {
+            Text(entry.commit.subject)
+              .fontWeight(.medium)
+              .lineLimit(2)
+            HStack(spacing: 8) {
+              Text(String(entry.commit.oid.prefix(10)))
+                .font(.system(.caption, design: .monospaced))
+              Text(entry.commit.authorName)
+                .lineLimit(1)
+              Spacer()
+              Text(entry.commit.authoredAt, style: .date)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            if entry.pathAtCommit != fileHistory.requestedPath {
+              Label(entry.pathAtCommit.displayString, systemImage: "arrow.triangle.branch")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(
+          "\(entry.commit.oid)\n"
+            + "\(entry.commit.authorName) <\(entry.commit.authorEmail)>\n"
+            + entry.pathAtCommit.displayString
+        )
+      }
+    } else {
+      ContentUnavailableView(
+        fileHistory == nil ? "Choose a File" : "No File History",
+        systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",
+        description: Text(
+          fileHistory == nil
+            ? "Enter a repository-relative path or open a changed file's context menu."
+            : "Git did not find commits for this path."
+        )
+      )
+    }
+  }
+
+  @ViewBuilder
+  private var blameView: some View {
+    if isBlameLoading, blameDocument == nil {
+      ProgressView("Loading blame…")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if let blameDocument, !blameDocument.lines.isEmpty {
+      VStack(alignment: .leading, spacing: 0) {
+        HStack {
+          VStack(alignment: .leading, spacing: 3) {
+            Text(blameDocument.path.displayString)
+              .font(.headline)
+              .lineLimit(1)
+            Text(
+              blameDocument.revision.map { "Commit \($0.prefix(12))" }
+                ?? "Working Copy"
+            )
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
+          }
+          Spacer()
+          Text("\(blameDocument.lines.count.formatted()) lines loaded")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        Divider()
+        ScrollView([.horizontal, .vertical]) {
+          LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(blameDocument.lines) { line in
+              blameRow(line)
+                .onAppear {
+                  if line.id == blameDocument.lines.last?.id,
+                    blameDocument.nextLine != nil
+                  {
+                    loadNextBlamePage()
+                  }
+                }
+            }
+            if blameDocument.nextLine != nil {
+              HStack(spacing: 8) {
+                if isBlameLoading {
+                  ProgressView()
+                    .controlSize(.small)
+                }
+                Button("Load More", action: loadNextBlamePage)
+                  .disabled(isBlameLoading)
+              }
+              .padding(10)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+    } else {
+      ContentUnavailableView(
+        blameDocument == nil ? "No Blame Loaded" : "File Is Empty",
+        systemImage: "person.text.rectangle",
+        description: Text(
+          blameDocument == nil
+            ? "Select a file-history commit or load a working-copy path."
+            : "There are no lines to attribute."
+        )
+      )
+    }
+  }
+
+  private func blameRow(_ line: BlameLine) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      Text(line.finalLineNumber.formatted())
+        .foregroundStyle(.tertiary)
+        .frame(width: 50, alignment: .trailing)
+      if line.isUncommitted {
+        Text("Working Copy")
+          .foregroundStyle(.orange)
+          .frame(width: 90, alignment: .leading)
+      } else {
+        Button(String(line.oid.prefix(10))) {
+          loadBlame(line.originalPath, line.oid)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .frame(width: 90, alignment: .leading)
+      }
+      Text(line.authorName.isEmpty ? "Unknown" : line.authorName)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .frame(width: 130, alignment: .leading)
+      Text(line.content.isEmpty ? " " : line.content)
+        .textSelection(.enabled)
+    }
+    .font(.system(.caption, design: .monospaced))
+    .padding(.horizontal, 8)
+    .padding(.vertical, 2)
+    .background(line.finalLineNumber.isMultiple(of: 2) ? Color.clear : Color.primary.opacity(0.025))
+    .help(blameHelp(line))
+  }
+
+  private func blameHelp(_ line: BlameLine) -> String {
+    var details = [
+      line.isUncommitted ? "Working Copy" : line.oid,
+      line.authorEmail.isEmpty
+        ? line.authorName
+        : "\(line.authorName) <\(line.authorEmail)>",
+      line.authoredAt?.formatted(date: .abbreviated, time: .standard) ?? "Unknown date",
+      line.summary,
+      "Original: \(line.originalPath.displayString):\(line.originalLineNumber)",
+    ]
+    if let previousOID = line.previousOID {
+      let previousPath = line.previousPath?.displayString ?? line.originalPath.displayString
+      details.append("Previous: \(previousOID) \(previousPath)")
+    }
+    return details.filter { !$0.isEmpty }.joined(separator: "\n")
   }
 
   @ViewBuilder

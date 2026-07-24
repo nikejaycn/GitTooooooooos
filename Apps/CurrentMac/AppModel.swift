@@ -38,6 +38,10 @@ final class AppModel {
   private(set) var lastRecoveryReference: RecoveryReference?
   private(set) var selectedDiff: DiffDocument?
   private(set) var isDiffLoading = false
+  private(set) var fileHistory: FileHistoryResult?
+  private(set) var blameDocument: BlameDocument?
+  private(set) var isFileHistoryLoading = false
+  private(set) var isBlameLoading = false
   private(set) var isLoading = false
   private(set) var isRepositoryOperation = false
   private(set) var errorMessage: String?
@@ -57,6 +61,10 @@ final class AppModel {
   private var commitComparisonTask: Task<Void, Never>?
   private var commitComparisonRequestID: UUID?
   private var diffRequestID: UUID?
+  private var fileHistoryTask: Task<Void, Never>?
+  private var fileHistoryRequestID: UUID?
+  private var blameTask: Task<Void, Never>?
+  private var blameRequestID: UUID?
   private var repositoryOperationTask: Task<Void, Never>?
 
   init() {
@@ -460,6 +468,87 @@ final class AppModel {
     }
   }
 
+  func loadFileInsights(_ path: GitPath) {
+    clearFileInsights()
+    guard
+      let repository,
+      let generation = repositoryStatus?.generation,
+      !path.rawBytes.isEmpty,
+      !path.rawBytes.contains(0)
+    else {
+      return
+    }
+
+    let requestID = UUID()
+    let sessionID = repositorySessionID
+    fileHistoryRequestID = requestID
+    isFileHistoryLoading = true
+    fileHistoryTask = Task {
+      defer {
+        if fileHistoryRequestID == requestID {
+          isFileHistoryLoading = false
+          fileHistoryTask = nil
+        }
+      }
+      do {
+        let result = try await repository.fileHistory(
+          for: path,
+          limit: 2_000,
+          generation: generation
+        )
+        guard
+          !Task.isCancelled,
+          fileHistoryRequestID == requestID,
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+        fileHistory = result
+      } catch is CancellationError {
+        return
+      } catch {
+        guard
+          fileHistoryRequestID == requestID,
+          repositorySessionID == sessionID
+        else {
+          return
+        }
+        errorMessage = error.localizedDescription
+      }
+    }
+    loadBlame(path: path, revision: nil)
+  }
+
+  func loadBlame(path: GitPath, revision: String?) {
+    blameTask?.cancel()
+    blameTask = nil
+    blameRequestID = nil
+    blameDocument = nil
+    requestBlamePage(
+      path: path,
+      revision: revision,
+      startLine: 1,
+      appending: false
+    )
+  }
+
+  func loadNextBlamePage() {
+    guard
+      let blameDocument,
+      let nextLine = blameDocument.nextLine,
+      !isBlameLoading
+    else {
+      return
+    }
+    requestBlamePage(
+      path: blameDocument.path,
+      revision: blameDocument.revision,
+      startLine: nextLine,
+      appending: true
+    )
+  }
+
   func createBranch(_ name: String) {
     applyBranch(.create(name: name, startPoint: nil, checkout: true))
   }
@@ -692,6 +781,7 @@ final class AppModel {
     stashes = []
     remotes = []
     selectedDiff = nil
+    clearFileInsights()
   }
 
   private func suggestedCloneName(from remoteURL: String) -> String {
@@ -927,6 +1017,7 @@ final class AppModel {
     isHistoryPageLoading = false
     clearRepositoryHistorySearch()
     clearCommitComparison()
+    clearFileInsights()
     repositoryStatus = snapshot.status
     commits = Array(snapshot.commits.prefix(maximumLoadedCommitCount))
     nextHistoryCursor =
@@ -947,6 +1038,7 @@ final class AppModel {
     }
     clearRepositoryHistorySearch()
     clearCommitComparison()
+    clearFileInsights()
     repositoryStatus = status
     rebuildGraphRows(generation: status.generation)
   }
@@ -984,6 +1076,84 @@ final class AppModel {
     commitComparisonRequestID = nil
     commitComparison = nil
     isCommitComparisonLoading = false
+  }
+
+  private func clearFileInsights() {
+    fileHistoryTask?.cancel()
+    fileHistoryTask = nil
+    fileHistoryRequestID = nil
+    blameTask?.cancel()
+    blameTask = nil
+    blameRequestID = nil
+    fileHistory = nil
+    blameDocument = nil
+    isFileHistoryLoading = false
+    isBlameLoading = false
+  }
+
+  private func requestBlamePage(
+    path: GitPath,
+    revision: String?,
+    startLine: Int,
+    appending: Bool
+  ) {
+    guard
+      let repository,
+      let generation = repositoryStatus?.generation
+    else {
+      return
+    }
+    let requestID = UUID()
+    let sessionID = repositorySessionID
+    blameRequestID = requestID
+    isBlameLoading = true
+    blameTask = Task {
+      defer {
+        if blameRequestID == requestID {
+          isBlameLoading = false
+          blameTask = nil
+        }
+      }
+      do {
+        guard
+          let page = try await repository.blamePage(
+            for: path,
+            revision: revision,
+            startLine: startLine,
+            lineCount: 500,
+            generation: generation
+          ),
+          !Task.isCancelled,
+          blameRequestID == requestID,
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+        if appending {
+          guard let current = blameDocument?.appending(page) else { return }
+          blameDocument = current
+        } else {
+          blameDocument = BlameDocument(
+            generation: page.generation,
+            path: page.path,
+            revision: page.revision,
+            lines: page.lines,
+            nextLine: page.nextLine
+          )
+        }
+      } catch is CancellationError {
+        return
+      } catch {
+        guard
+          blameRequestID == requestID,
+          repositorySessionID == sessionID
+        else {
+          return
+        }
+        errorMessage = error.localizedDescription
+      }
+    }
   }
 
   private func startWatchingRepository(_ opened: RepositoryActor) {

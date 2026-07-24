@@ -224,6 +224,88 @@ struct GitEngineTests {
     #expect(commands[2].redactedDescription.hasSuffix("\(base) \(target) --"))
   }
 
+  @Test("File history follows renames with an option-safe raw path")
+  func fileHistory() async throws {
+    let oid = String(repeating: "a", count: 40)
+    let requestedPath = GitPath(rawBytes: Array("-new\nname.swift".utf8))
+    let oldPath = Array("old name.swift".utf8)
+    var output = Array(
+      "\u{1e}\(oid)\0\0A\0a@example.com\01700000000\0rename\0\u{1f}\0\nR100\0"
+        .utf8
+    )
+    output += oldPath + [0] + requestedPath.rawBytes + [0]
+    let runner = StubRunner(
+      results: [
+        GitProcessResult(
+          termination: .exited(0),
+          standardOutput: output,
+          standardError: [],
+          duration: .milliseconds(1)
+        )
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let entries = try await engine.fileHistory(
+      at: location,
+      path: requestedPath,
+      limit: 200
+    )
+
+    #expect(entries.map(\.commit.oid) == [oid])
+    #expect(entries.first?.pathAtCommit == requestedPath)
+    let command = try #require(await runner.commands().first)
+    #expect(command.arguments.contains(Array("--follow".utf8)))
+    #expect(command.arguments.contains(Array("--name-status".utf8)))
+    #expect(command.arguments.suffix(2).first == Array("--".utf8))
+    #expect(command.arguments.last == requestedPath.rawBytes)
+  }
+
+  @Test("Blame uses bounded line ranges and parses attribution")
+  func blame() async throws {
+    let oid = String(repeating: "b", count: 40)
+    let output = """
+      \(oid) 3 10 1
+      author Grace
+      author-mail <grace@example.com>
+      author-time 1700000000
+      author-tz +0000
+      summary explain line
+      filename Sources/File.swift
+      \tlet value = 1
+
+      """
+    let runner = StubRunner(results: [.success(output)])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let lines = try await engine.blame(
+      at: location,
+      path: GitPath("Sources/File.swift"),
+      revision: nil,
+      startLine: 10,
+      lineCount: 6
+    )
+
+    let line = try #require(lines.first)
+    #expect(line.oid == oid)
+    #expect(line.finalLineNumber == 10)
+    #expect(line.authorName == "Grace")
+    #expect(line.content == "let value = 1")
+    let command = try #require(await runner.commands().first)
+    #expect(command.arguments.contains(Array("-L".utf8)))
+    #expect(command.arguments.contains(Array("10,15".utf8)))
+    #expect(command.arguments.suffix(2).first == Array("--".utf8))
+    #expect(command.arguments.last == Array("Sources/File.swift".utf8))
+  }
+
   @Test("Identifies a standard repository")
   func standardRepositoryIdentity() async throws {
     let runner = StubRunner(
@@ -717,6 +799,86 @@ struct GitEngineTests {
     } catch {
       Issue.record("Expected CancellationError, got \(error)")
     }
+  }
+
+  @Test(
+    "Live file history follows a rename and blame includes working-copy lines",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveFileHistoryAndBlame() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(
+        "current-file-history-\(UUID().uuidString)",
+        isDirectory: true
+      )
+    try FileManager.default.createDirectory(
+      at: root,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit([
+      "-C", root.path, "config", "user.email", "current@example.invalid",
+    ])
+    let oldFile = root.appendingPathComponent("old name.swift")
+    let newFile = root.appendingPathComponent("new name.swift")
+    let originalContents =
+      (1...10)
+      .map { "let value\($0) = \($0)" }
+      .joined(separator: "\n") + "\n"
+    try Data(originalContents.utf8).write(to: oldFile)
+    try runGit(["-C", root.path, "add", "old name.swift"])
+    try runGit(["-C", root.path, "commit", "-m", "add original"])
+    let originalOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    try runGit(["-C", root.path, "mv", "old name.swift", "new name.swift"])
+    let renamedContents = originalContents.replacingOccurrences(
+      of: "let value2 = 2",
+      with: "let value2 = 20"
+    )
+    try Data(renamedContents.utf8).write(to: newFile)
+    try runGit(["-C", root.path, "commit", "-am", "rename and edit"])
+    try Data((renamedContents + "let pending = true\n").utf8).write(to: newFile)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    let history = try await engine.fileHistory(
+      at: location,
+      path: GitPath("new name.swift"),
+      limit: 20
+    )
+    #expect(history.map(\.commit.subject) == ["rename and edit", "add original"])
+    #expect(
+      history.map(\.pathAtCommit) == [
+        GitPath("new name.swift"),
+        GitPath("old name.swift"),
+      ])
+
+    let blame = try await engine.blame(
+      at: location,
+      path: GitPath("new name.swift"),
+      revision: nil,
+      startLine: 1,
+      lineCount: 100
+    )
+    #expect(blame.map(\.finalLineNumber) == Array(1...11))
+    #expect(blame[0].originalPath == GitPath("old name.swift"))
+    #expect(blame[10].isUncommitted)
+    #expect(blame[10].content == "let pending = true")
+
+    let originalBlame = try await engine.blame(
+      at: location,
+      path: GitPath("old name.swift"),
+      revision: originalOID,
+      startLine: 1,
+      lineCount: 100
+    )
+    #expect(originalBlame.count == 10)
+    #expect(originalBlame.allSatisfy { $0.oid == originalOID })
   }
 
   @Test(

@@ -138,6 +138,55 @@ public actor RepositoryActor {
     try await engine.diff(at: location, path: path, source: source)
   }
 
+  public func fileHistory(
+    for path: GitPath,
+    limit: Int,
+    generation requestedGeneration: RepositoryGeneration
+  ) async throws -> FileHistoryResult? {
+    guard requestedGeneration == generation else { return nil }
+    let entries = try await engine.fileHistory(
+      at: location,
+      path: path,
+      limit: min(max(limit, 1), 10_000)
+    )
+    guard requestedGeneration == generation else { return nil }
+    return FileHistoryResult(
+      generation: requestedGeneration,
+      requestedPath: path,
+      entries: entries
+    )
+  }
+
+  public func blamePage(
+    for path: GitPath,
+    revision: String?,
+    startLine: Int,
+    lineCount: Int,
+    generation requestedGeneration: RepositoryGeneration
+  ) async throws -> BlamePage? {
+    guard requestedGeneration == generation else { return nil }
+    let boundedCount = min(max(lineCount, 1), 2_000)
+    let loaded = try await engine.blame(
+      at: location,
+      path: path,
+      revision: revision,
+      startLine: max(startLine, 1),
+      lineCount: boundedCount + 1
+    )
+    guard requestedGeneration == generation else { return nil }
+    let lines = Array(loaded.prefix(boundedCount))
+    return BlamePage(
+      generation: requestedGeneration,
+      path: path,
+      revision: revision,
+      lines: lines,
+      nextLine:
+        loaded.count > boundedCount
+        ? lines.last.map { $0.finalLineNumber + 1 }
+        : nil
+    )
+  }
+
   public func compareCommits(
     base: String,
     target: String,

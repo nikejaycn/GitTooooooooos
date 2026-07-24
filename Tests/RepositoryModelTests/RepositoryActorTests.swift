@@ -175,6 +175,93 @@ struct RepositoryActorTests {
     )
   }
 
+  @Test("File history and blame pages are generation-bound and blame is paginated")
+  func fileInsightsGenerationAndPaging() async throws {
+    let commit = CommitSummary(
+      oid: String(repeating: "d", count: 40),
+      parentOIDs: [],
+      authorName: "Ada",
+      authorEmail: "ada@example.com",
+      authoredAt: Date(timeIntervalSince1970: 1_700_000_000),
+      subject: "Add file"
+    )
+    let path = GitPath("Sources/Feature.swift")
+    let historyEntry = FileHistoryEntry(commit: commit, pathAtCommit: path)
+    let blameLines = (1...3).map { lineNumber in
+      BlameLine(
+        oid: commit.oid,
+        originalLineNumber: lineNumber,
+        finalLineNumber: lineNumber,
+        authorName: commit.authorName,
+        authorEmail: commit.authorEmail,
+        authoredAt: commit.authoredAt,
+        summary: commit.subject,
+        originalPath: path,
+        content: "line \(lineNumber)"
+      )
+    }
+    let engine = StubGitEngine(
+      fileHistoryEntries: [historyEntry],
+      blameLines: blameLines
+    )
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let snapshot = try await repository.refreshSnapshot()
+
+    let history = try #require(
+      try await repository.fileHistory(
+        for: path,
+        limit: 10,
+        generation: snapshot.generation
+      )
+    )
+    #expect(history.entries == [historyEntry])
+
+    let firstPage = try #require(
+      try await repository.blamePage(
+        for: path,
+        revision: commit.oid,
+        startLine: 1,
+        lineCount: 2,
+        generation: snapshot.generation
+      )
+    )
+    #expect(firstPage.lines.map(\.finalLineNumber) == [1, 2])
+    #expect(firstPage.nextLine == 3)
+
+    let lastPage = try #require(
+      try await repository.blamePage(
+        for: path,
+        revision: commit.oid,
+        startLine: 3,
+        lineCount: 2,
+        generation: snapshot.generation
+      )
+    )
+    #expect(lastPage.lines.map(\.finalLineNumber) == [3])
+    #expect(lastPage.nextLine == nil)
+
+    await repository.invalidate()
+    #expect(
+      try await repository.fileHistory(
+        for: path,
+        limit: 10,
+        generation: snapshot.generation
+      ) == nil
+    )
+    #expect(
+      try await repository.blamePage(
+        for: path,
+        revision: nil,
+        startLine: 1,
+        lineCount: 2,
+        generation: snapshot.generation
+      ) == nil
+    )
+  }
+
   @Test("Working-copy mutation is followed by an authoritative status refresh")
   func mutationRefresh() async throws {
     let engine = StubGitEngine()
@@ -248,15 +335,21 @@ private actor StubGitEngine: GitEngineProtocol {
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
   private let comparisonFiles: [CommitFileChange]
+  private let fileHistoryEntries: [FileHistoryEntry]
+  private let blameLines: [BlameLine]
 
   init(
     statusDelays: [UInt64: Duration] = [:],
     history: [CommitSummary] = [],
-    comparisonFiles: [CommitFileChange] = []
+    comparisonFiles: [CommitFileChange] = [],
+    fileHistoryEntries: [FileHistoryEntry] = [],
+    blameLines: [BlameLine] = []
   ) {
     self.statusDelays = statusDelays
     historyCommits = history
     self.comparisonFiles = comparisonFiles
+    self.fileHistoryEntries = fileHistoryEntries
+    self.blameLines = blameLines
   }
 
   func version() async throws -> String {
@@ -309,6 +402,28 @@ private actor StubGitEngine: GitEngineProtocol {
     target: String
   ) async throws -> [CommitFileChange] {
     comparisonFiles
+  }
+
+  func fileHistory(
+    at location: RepositoryLocation,
+    path: GitPath,
+    limit: Int
+  ) async throws -> [FileHistoryEntry] {
+    Array(fileHistoryEntries.prefix(limit))
+  }
+
+  func blame(
+    at location: RepositoryLocation,
+    path: GitPath,
+    revision: String?,
+    startLine: Int,
+    lineCount: Int
+  ) async throws -> [BlameLine] {
+    Array(
+      blameLines
+        .filter { $0.finalLineNumber >= startLine }
+        .prefix(lineCount)
+    )
   }
 
   func mutateWorkingCopy(

@@ -137,6 +137,18 @@ public protocol GitEngineProtocol: Sendable {
     path: GitPath,
     source: DiffSource
   ) async throws -> DiffDocument
+  func fileHistory(
+    at location: RepositoryLocation,
+    path: GitPath,
+    limit: Int
+  ) async throws -> [FileHistoryEntry]
+  func blame(
+    at location: RepositoryLocation,
+    path: GitPath,
+    revision: String?,
+    startLine: Int,
+    lineCount: Int
+  ) async throws -> [BlameLine]
   func compareCommits(
     at location: RepositoryLocation,
     base: String,
@@ -215,6 +227,24 @@ extension GitEngineProtocol {
     target: String
   ) async throws -> [CommitFileChange] {
     throw GitEngineError.invalidOutput("Commit comparison is not implemented.")
+  }
+
+  public func fileHistory(
+    at location: RepositoryLocation,
+    path: GitPath,
+    limit: Int
+  ) async throws -> [FileHistoryEntry] {
+    throw GitEngineError.invalidOutput("File history is not implemented.")
+  }
+
+  public func blame(
+    at location: RepositoryLocation,
+    path: GitPath,
+    revision: String?,
+    startLine: Int,
+    lineCount: Int
+  ) async throws -> [BlameLine] {
+    throw GitEngineError.invalidOutput("Blame is not implemented.")
   }
 
   public func initializeRepository(
@@ -685,6 +715,114 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         path: path,
         source: source
       )
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+  }
+
+  public func fileHistory(
+    at location: RepositoryLocation,
+    path: GitPath,
+    limit: Int
+  ) async throws -> [FileHistoryEntry] {
+    try validateHistoryPath(path)
+    let boundedLimit = min(max(limit, 1), 10_000)
+    let arguments =
+      [
+        "log",
+        "--follow",
+        "--date-order",
+        "--max-count=\(boundedLimit)",
+        "--format=%x1e%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%x1f",
+        "--name-status",
+        "-z",
+        "--",
+      ].map { Array($0.utf8) } + [path.rawBytes]
+    let result = try await execute(
+      GitCommand(
+        rawArguments: arguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
+    do {
+      return try FileHistoryParser()
+        .parse(Data(result.standardOutput), requestedPath: path.rawBytes)
+        .map { entry in
+          FileHistoryEntry(
+            commit: CommitSummary(
+              oid: entry.oid,
+              parentOIDs: entry.parentOIDs,
+              authorName: entry.authorName,
+              authorEmail: entry.authorEmail,
+              authoredAt: Date(
+                timeIntervalSince1970: TimeInterval(
+                  entry.authoredAtUnixSeconds
+                )
+              ),
+              subject: entry.subject
+            ),
+            pathAtCommit: GitPath(rawBytes: entry.pathAtCommit)
+          )
+        }
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+  }
+
+  public func blame(
+    at location: RepositoryLocation,
+    path: GitPath,
+    revision: String?,
+    startLine: Int,
+    lineCount: Int
+  ) async throws -> [BlameLine] {
+    try validateHistoryPath(path)
+    let boundedStart = min(max(startLine, 1), 10_000_000)
+    let boundedCount = min(max(lineCount, 1), 2_001)
+    let endLine = boundedStart + boundedCount - 1
+    var prefix = [
+      "blame",
+      "--line-porcelain",
+      "--root",
+      "-M",
+      "-C",
+      "--encoding=UTF-8",
+      "-L",
+      "\(boundedStart),\(endLine)",
+    ]
+    if let revision {
+      prefix.append(try await resolveCommit(revision, at: location))
+    }
+    prefix.append("--")
+    let result = try await execute(
+      GitCommand(
+        rawArguments: prefix.map { Array($0.utf8) } + [path.rawBytes],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 128 * 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
+    do {
+      return try BlamePorcelainParser().parse(Data(result.standardOutput)).map {
+        line in
+        BlameLine(
+          oid: line.oid,
+          originalLineNumber: line.originalLineNumber,
+          finalLineNumber: line.finalLineNumber,
+          authorName: line.authorName,
+          authorEmail: line.authorEmail,
+          authoredAt: line.authoredAtUnixSeconds.map {
+            Date(timeIntervalSince1970: TimeInterval($0))
+          },
+          summary: line.summary,
+          originalPath: GitPath(rawBytes: line.originalPath),
+          previousOID: line.previousOID,
+          previousPath: line.previousPath.map(GitPath.init(rawBytes:)),
+          content: line.content
+        )
+      }
     } catch {
       throw GitEngineError.invalidOutput(String(describing: error))
     }
@@ -1180,6 +1318,14 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: .seconds(120)
       )
     )
+  }
+
+  private func validateHistoryPath(_ path: GitPath) throws {
+    guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
+      throw GitEngineError.invalidOutput(
+        "A file history path was empty or contained a NUL byte."
+      )
+    }
   }
 
   private func validateBranchName(
