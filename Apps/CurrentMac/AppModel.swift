@@ -35,6 +35,7 @@ final class AppModel {
   private(set) var remotes: [GitRemote] = []
   private(set) var worktrees: [GitWorktree] = []
   private(set) var submodules: [GitSubmodule] = []
+  private(set) var gitLFS: GitLFSRepositoryState = .unavailable
   private(set) var activities: [OperationActivity] = []
   private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
@@ -669,6 +670,39 @@ final class AppModel {
     stage(submodule.path)
   }
 
+  func installLFS() {
+    applyLFS(.installLocal)
+  }
+
+  func trackLFS(pattern: String, lockable: Bool) {
+    let trimmedPattern = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedPattern.isEmpty else {
+      errorMessage = "Enter a Git LFS filename pattern."
+      return
+    }
+    applyLFS(.track(pattern: trimmedPattern, lockable: lockable))
+  }
+
+  func untrackLFS(_ pattern: GitLFSPattern) {
+    guard pattern.canUntrack else {
+      errorMessage = "Only rules in the repository root .gitattributes can be removed here."
+      return
+    }
+    applyLFS(.untrack(pattern: pattern.pattern))
+  }
+
+  func fetchLFS(recent: Bool) {
+    applyLFS(.fetch(recent: recent))
+  }
+
+  func pullLFS() {
+    applyLFS(.pull)
+  }
+
+  func pruneLFS() {
+    applyLFS(.pruneVerified)
+  }
+
   func continueOperation() {
     applyMerge(.continueOperation)
   }
@@ -890,6 +924,7 @@ final class AppModel {
     remotes = []
     worktrees = []
     submodules = []
+    gitLFS = .unavailable
     selectedDiff = nil
     clearFileInsights()
   }
@@ -1096,6 +1131,23 @@ final class AppModel {
     }
   }
 
+  private func applyLFS(_ mutation: GitLFSMutation) {
+    guard let repository else { return }
+    let activityID = beginActivity(lfsTitle(mutation))
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        apply(try await repository.applyLFSMutation(mutation))
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   private func applyRemote(_ mutation: RemoteMutation) {
     guard let repository else { return }
     let activityID = beginActivity(remoteTitle(mutation))
@@ -1174,6 +1226,7 @@ final class AppModel {
     remotes = snapshot.remotes
     worktrees = snapshot.worktrees
     submodules = snapshot.submodules
+    gitLFS = snapshot.gitLFS
     rebuildGraphRows(generation: snapshot.generation)
   }
 
@@ -1451,6 +1504,17 @@ final class AppModel {
     case .updateFromRemote(let path): "Update submodule \(path.displayString)"
     case .remove(let path, let force):
       "\(force ? "Force remove" : "Remove") submodule \(path.displayString)"
+    }
+  }
+
+  private func lfsTitle(_ mutation: GitLFSMutation) -> String {
+    switch mutation {
+    case .installLocal: "Initialize Git LFS"
+    case .track(let pattern, _): "Track \(pattern) with Git LFS"
+    case .untrack(let pattern): "Stop tracking \(pattern) with Git LFS"
+    case .fetch(let recent): recent ? "Fetch recent Git LFS objects" : "Fetch Git LFS objects"
+    case .pull: "Pull Git LFS objects"
+    case .pruneVerified: "Prune verified Git LFS objects"
     }
   }
 

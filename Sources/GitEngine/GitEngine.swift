@@ -168,6 +168,13 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: SubmoduleMutation
   ) async throws
+  func lfsRepositoryState(
+    at location: RepositoryLocation
+  ) async throws -> GitLFSRepositoryState
+  func mutateLFS(
+    at location: RepositoryLocation,
+    mutation: GitLFSMutation
+  ) async throws
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry]
   func mutateStash(
     at location: RepositoryLocation,
@@ -277,6 +284,19 @@ extension GitEngineProtocol {
     mutation: SubmoduleMutation
   ) async throws {
     throw GitEngineError.invalidOutput("Submodule mutation is not implemented.")
+  }
+
+  public func lfsRepositoryState(
+    at location: RepositoryLocation
+  ) async throws -> GitLFSRepositoryState {
+    .unavailable
+  }
+
+  public func mutateLFS(
+    at location: RepositoryLocation,
+    mutation: GitLFSMutation
+  ) async throws {
+    throw GitEngineError.invalidOutput("Git LFS mutation is not implemented.")
   }
 
   public func initializeRepository(
@@ -1186,6 +1206,143 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  public func lfsRepositoryState(
+    at location: RepositoryLocation
+  ) async throws -> GitLFSRepositoryState {
+    guard location.kind != .bare else { return .unavailable }
+
+    let versionResult = try await runner.run(
+      GitCommand(
+        arguments: ["lfs", "version"],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 1024 * 1024,
+        timeout: .seconds(30)
+      )
+    )
+    guard versionResult.succeeded else { return .unavailable }
+    let version = String(decoding: versionResult.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !version.isEmpty else {
+      throw GitEngineError.invalidOutput("Git LFS returned an empty version.")
+    }
+
+    let configurationResult = try await runner.run(
+      GitCommand(
+        arguments: ["config", "--get", "filter.lfs.process"],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024,
+        timeout: .seconds(30)
+      )
+    )
+    let isConfigured =
+      configurationResult.succeeded && !configurationResult.standardOutput.isEmpty
+
+    let patternsResult = try await runner.run(
+      GitCommand(
+        arguments: ["lfs", "track", "--json"],
+        workingDirectory: location.worktreeURL,
+        environmentOverrides: ["GIT_LFS_TRACK_NO_INSTALL_HOOKS": "1"],
+        outputLimit: 4 * 1024 * 1024,
+        timeout: .seconds(30)
+      )
+    )
+    guard patternsResult.succeeded else {
+      return GitLFSRepositoryState(
+        isAvailable: true,
+        version: version,
+        isConfigured: isConfigured,
+        patterns: [],
+        patternInspectionError:
+          "This Git LFS version cannot provide machine-readable tracking rules."
+      )
+    }
+
+    let parsedPatterns: [ParsedLFSPattern]
+    do {
+      parsedPatterns = try LFSTrackJSONParser().parse(patternsResult.standardOutput)
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+    let patterns = parsedPatterns.map {
+      GitLFSPattern(
+        pattern: $0.pattern,
+        source: $0.source,
+        isLockable: $0.isLockable,
+        isTracked: $0.isTracked
+      )
+    }.sorted {
+      ($0.source, $0.pattern, $0.isTracked ? 0 : 1)
+        < ($1.source, $1.pattern, $1.isTracked ? 0 : 1)
+    }
+    return GitLFSRepositoryState(
+      isAvailable: true,
+      version: version,
+      isConfigured: isConfigured,
+      patterns: patterns
+    )
+  }
+
+  public func mutateLFS(
+    at location: RepositoryLocation,
+    mutation: GitLFSMutation
+  ) async throws {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository cannot mutate Git LFS.")
+    }
+
+    let arguments: [[UInt8]]
+    let timeout: Duration
+    switch mutation {
+    case .installLocal:
+      arguments = ["lfs", "install", "--local"].map { Array($0.utf8) }
+      timeout = .seconds(120)
+    case .track(let pattern, let lockable):
+      let validatedPattern = try validateLFSPattern(pattern)
+      _ = try await execute(
+        GitCommand(
+          arguments: ["lfs", "install", "--local"],
+          workingDirectory: location.worktreeURL,
+          outputLimit: 4 * 1024 * 1024,
+          timeout: .seconds(120)
+        )
+      )
+      arguments =
+        [Array("lfs".utf8), Array("track".utf8)]
+        + (lockable ? [Array("--lockable".utf8)] : [])
+        + [Array("--".utf8), Array(validatedPattern.utf8)]
+      timeout = .seconds(120)
+    case .untrack(let pattern):
+      let validatedPattern = try validateLFSPattern(pattern)
+      arguments = [
+        Array("lfs".utf8),
+        Array("untrack".utf8),
+        Array("--".utf8),
+        Array(validatedPattern.utf8),
+      ]
+      timeout = .seconds(120)
+    case .fetch(let recent):
+      arguments =
+        ["lfs", "fetch"].map { Array($0.utf8) }
+        + (recent ? [Array("--recent".utf8)] : [])
+      timeout = .seconds(1_800)
+    case .pull:
+      arguments = ["lfs", "pull"].map { Array($0.utf8) }
+      timeout = .seconds(1_800)
+    case .pruneVerified:
+      arguments = ["lfs", "prune", "--verify-remote"].map { Array($0.utf8) }
+      timeout = .seconds(1_800)
+    }
+
+    _ = try await execute(
+      GitCommand(
+        rawArguments: arguments,
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: timeout
+      )
+    )
+  }
+
   public func stashes(
     at location: RepositoryLocation
   ) async throws -> [StashEntry] {
@@ -1670,6 +1827,21 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         "A \(label) path must stay inside the repository and cannot contain NUL."
       )
     }
+  }
+
+  private func validateLFSPattern(_ pattern: String) throws -> String {
+    guard
+      !pattern.isEmpty,
+      pattern.utf8.count <= 16 * 1024,
+      !pattern.utf8.contains(0),
+      !pattern.contains("\n"),
+      !pattern.contains("\r")
+    else {
+      throw GitEngineError.invalidOutput(
+        "A Git LFS pattern must be non-empty and cannot contain NUL or newlines."
+      )
+    }
+    return pattern
   }
 
   private func submoduleGitlinkOID(

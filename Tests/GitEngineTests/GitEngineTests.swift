@@ -39,6 +39,124 @@ struct GitEngineTests {
     #expect(await runner.commands().first?.redactedDescription == "lfs version")
   }
 
+  @Test("Reads Git LFS repository state without installing hooks")
+  func lfsRepositoryState() async throws {
+    let json = """
+      {
+        "patterns": [
+          {
+            "pattern": "*.psd",
+            "source": ".gitattributes",
+            "lockable": false,
+            "tracked": true
+          },
+          {
+            "pattern": "*.tmp",
+            "source": "Assets/.gitattributes",
+            "lockable": false,
+            "tracked": false
+          }
+        ]
+      }
+      """
+    let runner = StubRunner(
+      results: [
+        .success("git-lfs/3.7.1 (GitHub; darwin arm64)\n"),
+        .success("git-lfs filter-process\n"),
+        .success(json),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let state = try await engine.lfsRepositoryState(at: location)
+
+    #expect(state.isAvailable)
+    #expect(state.isConfigured)
+    #expect(state.version == "git-lfs/3.7.1 (GitHub; darwin arm64)")
+    #expect(state.patterns.map(\.pattern) == ["*.psd", "*.tmp"])
+    #expect(state.patterns[0].canUntrack)
+    #expect(!state.patterns[1].isTracked)
+    let commands = await runner.commands()
+    #expect(
+      commands.map(\.redactedDescription) == [
+        "lfs version",
+        "config --get filter.lfs.process",
+        "lfs track --json",
+      ])
+    #expect(commands[2].environmentOverrides["GIT_LFS_TRACK_NO_INSTALL_HOOKS"] == "1")
+  }
+
+  @Test("Missing Git LFS is a repository capability, not a snapshot failure")
+  func unavailableLFSRepositoryState() async throws {
+    let runner = StubRunner(results: [.failure(code: 1, error: "not a git command")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let state = try await engine.lfsRepositoryState(at: location)
+
+    #expect(state == .unavailable)
+    #expect(await runner.commands().count == 1)
+  }
+
+  @Test("Git LFS mutations use bounded, option-safe commands")
+  func lfsMutationCommands() async throws {
+    let runner = StubRunner(results: Array(repeating: .success(""), count: 7))
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateLFS(at: location, mutation: .installLocal)
+    try await engine.mutateLFS(
+      at: location,
+      mutation: .track(pattern: "-asset *.psd", lockable: true)
+    )
+    try await engine.mutateLFS(
+      at: location,
+      mutation: .untrack(pattern: "-asset *.psd")
+    )
+    try await engine.mutateLFS(at: location, mutation: .fetch(recent: true))
+    try await engine.mutateLFS(at: location, mutation: .pull)
+    try await engine.mutateLFS(at: location, mutation: .pruneVerified)
+
+    #expect(
+      await runner.commands().map(\.redactedDescription) == [
+        "lfs install --local",
+        "lfs install --local",
+        "lfs track --lockable -- -asset *.psd",
+        "lfs untrack -- -asset *.psd",
+        "lfs fetch --recent",
+        "lfs pull",
+        "lfs prune --verify-remote",
+      ])
+  }
+
+  @Test("Git LFS rejects patterns that can corrupt .gitattributes")
+  func rejectsUnsafeLFSPatterns() async {
+    let runner = StubRunner(results: [])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateLFS(
+        at: location,
+        mutation: .track(pattern: "*.psd\n*.zip", lockable: false)
+      )
+    }
+    #expect(await runner.commands().isEmpty)
+  }
+
   @Test("Invalid custom Git falls back to the bundled executable with a reason")
   func resolverFallsBackToBundle() throws {
     let root = FileManager.default.temporaryDirectory
@@ -943,6 +1061,67 @@ struct GitEngineTests {
     } catch {
       Issue.record("Expected CancellationError, got \(error)")
     }
+  }
+
+  @Test(
+    "Live bundled Git LFS detects, initializes, tracks, and untracks without read-side hooks",
+    .enabled(
+      if: ProcessInfo.processInfo.environment["CURRENT_TEST_GIT_LFS"].map {
+        FileManager.default.isExecutableFile(atPath: $0)
+      } == true
+    )
+  )
+  func liveLFSManagement() async throws {
+    let lfsExecutable = try #require(
+      ProcessInfo.processInfo.environment["CURRENT_TEST_GIT_LFS"]
+    )
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-lfs-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+
+    let inheritedPath =
+      ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+    let runner = EnvironmentOverrideRunner(
+      base: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      ),
+      overrides: [
+        "PATH":
+          "\(URL(fileURLWithPath: lfsExecutable).deletingLastPathComponent().path):\(inheritedPath)"
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = try await engine.locateRepository(at: root)
+    let hook = root.appendingPathComponent(".git/hooks/pre-push")
+
+    var state = try await engine.lfsRepositoryState(at: location)
+    #expect(state.isAvailable)
+    #expect(state.version?.hasPrefix("git-lfs/3.7.1") == true)
+    #expect(!FileManager.default.fileExists(atPath: hook.path))
+
+    try await engine.mutateLFS(
+      at: location,
+      mutation: .track(pattern: "*.asset", lockable: true)
+    )
+    state = try await engine.lfsRepositoryState(at: location)
+    #expect(state.isConfigured)
+    #expect(FileManager.default.isExecutableFile(atPath: hook.path))
+    let tracked = try #require(state.patterns.first { $0.pattern == "*.asset" })
+    #expect(tracked.isTracked)
+    #expect(tracked.isLockable)
+    #expect(tracked.canUntrack)
+
+    try await engine.mutateLFS(
+      at: location,
+      mutation: .untrack(pattern: "*.asset")
+    )
+    state = try await engine.lfsRepositoryState(at: location)
+    #expect(!state.patterns.contains { $0.pattern == "*.asset" && $0.isTracked })
   }
 
   @Test(

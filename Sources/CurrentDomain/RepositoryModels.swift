@@ -168,6 +168,7 @@ public struct RepositorySnapshot: Hashable, Sendable {
   public let remotes: [GitRemote]
   public let worktrees: [GitWorktree]
   public let submodules: [GitSubmodule]
+  public let gitLFS: GitLFSRepositoryState
 
   public init(
     generation: RepositoryGeneration,
@@ -177,7 +178,8 @@ public struct RepositorySnapshot: Hashable, Sendable {
     stashes: [StashEntry] = [],
     remotes: [GitRemote] = [],
     worktrees: [GitWorktree] = [],
-    submodules: [GitSubmodule] = []
+    submodules: [GitSubmodule] = [],
+    gitLFS: GitLFSRepositoryState = .unavailable
   ) {
     self.generation = generation
     self.status = status
@@ -187,6 +189,7 @@ public struct RepositorySnapshot: Hashable, Sendable {
     self.remotes = remotes
     self.worktrees = worktrees
     self.submodules = submodules
+    self.gitLFS = gitLFS
   }
 }
 
@@ -367,6 +370,71 @@ public enum SubmoduleMutation: Hashable, Sendable {
   case checkoutRecorded(path: GitPath)
   case updateFromRemote(path: GitPath)
   case remove(path: GitPath, force: Bool)
+}
+
+public struct GitLFSPattern: Hashable, Sendable, Identifiable {
+  public let pattern: String
+  public let source: String
+  public let isLockable: Bool
+  public let isTracked: Bool
+
+  public init(
+    pattern: String,
+    source: String,
+    isLockable: Bool,
+    isTracked: Bool
+  ) {
+    self.pattern = pattern
+    self.source = source
+    self.isLockable = isLockable
+    self.isTracked = isTracked
+  }
+
+  public var id: String {
+    "\(source)\u{0}\(pattern)\u{0}\(isTracked)\u{0}\(isLockable)"
+  }
+
+  public var canUntrack: Bool {
+    isTracked && source == ".gitattributes"
+  }
+}
+
+public struct GitLFSRepositoryState: Hashable, Sendable {
+  public let isAvailable: Bool
+  public let version: String?
+  public let isConfigured: Bool
+  public let patterns: [GitLFSPattern]
+  public let patternInspectionError: String?
+
+  public init(
+    isAvailable: Bool,
+    version: String?,
+    isConfigured: Bool,
+    patterns: [GitLFSPattern],
+    patternInspectionError: String? = nil
+  ) {
+    self.isAvailable = isAvailable
+    self.version = version
+    self.isConfigured = isConfigured
+    self.patterns = patterns
+    self.patternInspectionError = patternInspectionError
+  }
+
+  public static let unavailable = Self(
+    isAvailable: false,
+    version: nil,
+    isConfigured: false,
+    patterns: []
+  )
+}
+
+public enum GitLFSMutation: Hashable, Sendable {
+  case installLocal
+  case track(pattern: String, lockable: Bool)
+  case untrack(pattern: String)
+  case fetch(recent: Bool)
+  case pull
+  case pruneVerified
 }
 
 public enum MergeMutation: Hashable, Sendable {

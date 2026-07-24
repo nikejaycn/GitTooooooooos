@@ -35,6 +35,7 @@ public struct CurrentRootView: View {
   private let remotes: [GitRemote]
   private let worktrees: [GitWorktree]
   private let submodules: [GitSubmodule]
+  private let gitLFS: GitLFSRepositoryState
   private let activities: [OperationActivity]
   private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
@@ -84,6 +85,12 @@ public struct CurrentRootView: View {
   private let updateSubmoduleFromRemote: (GitSubmodule) -> Void
   private let stageSubmodulePointer: (GitSubmodule) -> Void
   private let removeSubmodule: (GitSubmodule, Bool) -> Void
+  private let installLFS: () -> Void
+  private let trackLFS: (String, Bool) -> Void
+  private let untrackLFS: (GitLFSPattern) -> Void
+  private let fetchLFS: (Bool) -> Void
+  private let pullLFS: () -> Void
+  private let pruneLFS: () -> Void
   private let continueOperation: () -> Void
   private let abortOperation: () -> Void
   private let resolveConflict: (GitPath, ConflictSide) -> Void
@@ -118,6 +125,11 @@ public struct CurrentRootView: View {
   @State private var newSubmoduleBranch = ""
   @State private var pendingSubmoduleRemoval: GitSubmodule?
   @State private var forceSubmoduleRemoval = false
+  @State private var isTrackingLFS = false
+  @State private var newLFSPattern = ""
+  @State private var newLFSPatternLockable = false
+  @State private var pendingLFSUntrack: GitLFSPattern?
+  @State private var isConfirmingLFSPrune = false
   @State private var selectedCommitOID: String?
   @State private var selectedCommitCount = 0
   @State private var isWorkingCopySelected = false
@@ -149,6 +161,7 @@ public struct CurrentRootView: View {
     remotes: [GitRemote],
     worktrees: [GitWorktree],
     submodules: [GitSubmodule],
+    gitLFS: GitLFSRepositoryState,
     activities: [OperationActivity],
     recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
@@ -198,6 +211,12 @@ public struct CurrentRootView: View {
     updateSubmoduleFromRemote: @escaping (GitSubmodule) -> Void,
     stageSubmodulePointer: @escaping (GitSubmodule) -> Void,
     removeSubmodule: @escaping (GitSubmodule, Bool) -> Void,
+    installLFS: @escaping () -> Void,
+    trackLFS: @escaping (String, Bool) -> Void,
+    untrackLFS: @escaping (GitLFSPattern) -> Void,
+    fetchLFS: @escaping (Bool) -> Void,
+    pullLFS: @escaping () -> Void,
+    pruneLFS: @escaping () -> Void,
     continueOperation: @escaping () -> Void,
     abortOperation: @escaping () -> Void,
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
@@ -233,6 +252,7 @@ public struct CurrentRootView: View {
     self.remotes = remotes
     self.worktrees = worktrees
     self.submodules = submodules
+    self.gitLFS = gitLFS
     self.activities = activities
     self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
@@ -282,6 +302,12 @@ public struct CurrentRootView: View {
     self.updateSubmoduleFromRemote = updateSubmoduleFromRemote
     self.stageSubmodulePointer = stageSubmodulePointer
     self.removeSubmodule = removeSubmodule
+    self.installLFS = installLFS
+    self.trackLFS = trackLFS
+    self.untrackLFS = untrackLFS
+    self.fetchLFS = fetchLFS
+    self.pullLFS = pullLFS
+    self.pruneLFS = pruneLFS
     self.continueOperation = continueOperation
     self.abortOperation = abortOperation
     self.resolveConflict = resolveConflict
@@ -494,6 +520,7 @@ public struct CurrentRootView: View {
             }
           }
         }
+        lfsSidebarSection
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 220)
     } detail: {
@@ -691,6 +718,18 @@ public struct CurrentRootView: View {
               : "Git refuses removal when the submodule contains uncommitted or untracked changes."
           )
         }
+        .modifier(
+          LFSDialogsModifier(
+            isTracking: $isTrackingLFS,
+            pattern: $newLFSPattern,
+            isLockable: newLFSPatternLockable,
+            pendingUntrack: $pendingLFSUntrack,
+            isConfirmingPrune: $isConfirmingLFSPrune,
+            track: trackLFS,
+            untrack: untrackLFS,
+            prune: pruneLFS
+          )
+        )
     }
     .sheet(
       isPresented: Binding(
@@ -707,6 +746,112 @@ public struct CurrentRootView: View {
         )
       }
     }
+  }
+
+  @ViewBuilder
+  private var lfsSidebarSection: some View {
+    if status != nil {
+      Section {
+        if !gitLFS.isAvailable {
+          Label("Unavailable", systemImage: "externaldrive.badge.xmark")
+            .foregroundStyle(.secondary)
+            .help("The selected Git toolchain cannot run Git LFS.")
+        } else {
+          Label {
+            VStack(alignment: .leading, spacing: 1) {
+              Text(gitLFS.isConfigured ? "Ready" : "Needs initialization")
+              if let version = gitLFS.version {
+                Text(version)
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+              }
+            }
+          } icon: {
+            Image(
+              systemName: gitLFS.isConfigured ? "checkmark.circle" : "wrench.and.screwdriver"
+            )
+          }
+          .contextMenu {
+            lfsActionButtons
+          }
+
+          ForEach(gitLFS.patterns) { pattern in
+            Label {
+              VStack(alignment: .leading, spacing: 1) {
+                Text(pattern.pattern)
+                  .lineLimit(1)
+                Text(pattern.source)
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+              }
+            } icon: {
+              Image(systemName: lfsPatternIcon(pattern))
+            }
+            .foregroundStyle(pattern.isTracked ? .primary : .secondary)
+            .help(lfsPatternHelp(pattern))
+            .contextMenu {
+              Button("Stop Tracking…", role: .destructive) {
+                pendingLFSUntrack = pattern
+              }
+              .disabled(!pattern.canUntrack)
+            }
+          }
+
+          if let inspectionError = gitLFS.patternInspectionError {
+            Label(inspectionError, systemImage: "exclamationmark.triangle")
+              .font(.caption)
+              .foregroundStyle(.orange)
+          }
+        }
+      } header: {
+        HStack {
+          Text("Git LFS")
+          Spacer()
+          if gitLFS.isAvailable {
+            Menu {
+              Button("Track Pattern…") {
+                beginTrackingLFS(lockable: false)
+              }
+              Button("Track Lockable Pattern…") {
+                beginTrackingLFS(lockable: true)
+              }
+              Divider()
+              lfsActionButtons
+            } label: {
+              Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .help("Git LFS Actions")
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var lfsActionButtons: some View {
+    if !gitLFS.isConfigured {
+      Button("Initialize for This Repository", action: installLFS)
+    }
+    Button("Fetch Current Refs", action: { fetchLFS(false) })
+      .disabled(remotes.isEmpty)
+    Button("Fetch Recent Refs", action: { fetchLFS(true) })
+      .disabled(remotes.isEmpty)
+    Button("Pull Objects", action: pullLFS)
+      .disabled(remotes.isEmpty)
+    Divider()
+    Button("Prune Verified Objects…") {
+      isConfirmingLFSPrune = true
+    }
+    .disabled(remotes.isEmpty)
+  }
+
+  private func beginTrackingLFS(lockable: Bool) {
+    newLFSPattern = ""
+    newLFSPatternLockable = lockable
+    isTrackingLFS = true
   }
 
   @ViewBuilder
@@ -1888,5 +2033,92 @@ public struct CurrentRootView: View {
     ]
     details.append("Config name: \(submodule.name)")
     return details.filter { !$0.isEmpty }.joined(separator: "\n")
+  }
+
+  private func lfsPatternIcon(_ pattern: GitLFSPattern) -> String {
+    if !pattern.isTracked {
+      return "minus.circle"
+    }
+    return pattern.isLockable ? "lock.document" : "doc.badge.gearshape"
+  }
+
+  private func lfsPatternHelp(_ pattern: GitLFSPattern) -> String {
+    [
+      "Pattern: \(pattern.pattern)",
+      "Source: \(pattern.source)",
+      pattern.isTracked ? "Tracked by Git LFS" : "Explicitly excluded from Git LFS",
+      pattern.isLockable ? "Lockable" : "",
+      pattern.canUntrack
+        ? "Can be removed from the repository root .gitattributes."
+        : "Rules outside the repository root are read-only here.",
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n")
+  }
+}
+
+private struct LFSDialogsModifier: ViewModifier {
+  @Binding var isTracking: Bool
+  @Binding var pattern: String
+  let isLockable: Bool
+  @Binding var pendingUntrack: GitLFSPattern?
+  @Binding var isConfirmingPrune: Bool
+  let track: (String, Bool) -> Void
+  let untrack: (GitLFSPattern) -> Void
+  let prune: () -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .alert(
+        isLockable ? "Track Lockable Git LFS Pattern" : "Track Git LFS Pattern",
+        isPresented: $isTracking
+      ) {
+        TextField("Pattern, for example *.psd", text: $pattern)
+        Button("Track") {
+          track(pattern, isLockable)
+        }
+        .disabled(pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          isLockable
+            ? "This updates .gitattributes and makes matching files read-only unless locked. Existing Git blobs are not migrated automatically."
+            : "This updates .gitattributes. Existing Git blobs are not migrated automatically."
+        )
+      }
+      .confirmationDialog(
+        "Stop tracking \(pendingUntrack?.pattern ?? "this pattern") with Git LFS?",
+        isPresented: Binding(
+          get: { pendingUntrack != nil },
+          set: { if !$0 { pendingUntrack = nil } }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button("Stop Tracking", role: .destructive) {
+          if let pendingUntrack {
+            untrack(pendingUntrack)
+          }
+          pendingUntrack = nil
+        }
+        Button("Cancel", role: .cancel) {
+          pendingUntrack = nil
+        }
+      } message: {
+        Text(
+          "This removes the root .gitattributes rule. Existing LFS objects and repository history are not rewritten."
+        )
+      }
+      .confirmationDialog(
+        "Prune local Git LFS objects?",
+        isPresented: $isConfirmingPrune,
+        titleVisibility: .visible
+      ) {
+        Button("Prune Verified Objects", role: .destructive, action: prune)
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          "Git LFS keeps objects needed by current and recent refs and verifies prune candidates exist on the remote before deleting local copies."
+        )
+      }
   }
 }

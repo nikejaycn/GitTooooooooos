@@ -60,6 +60,7 @@ public actor RepositoryActor {
     async let remotes = engine.remotes(at: location)
     async let worktrees = engine.worktrees(at: location)
     async let submodules = engine.submodules(at: location)
+    async let gitLFS = engine.lfsRepositoryState(at: location)
     let loaded = try await (
       status,
       commits,
@@ -67,7 +68,8 @@ public actor RepositoryActor {
       stashes,
       remotes,
       worktrees,
-      submodules
+      submodules,
+      gitLFS
     )
     let snapshot = RepositorySnapshot(
       generation: requestedGeneration,
@@ -77,7 +79,8 @@ public actor RepositoryActor {
       stashes: loaded.3,
       remotes: loaded.4,
       worktrees: loaded.5,
-      submodules: loaded.6
+      submodules: loaded.6,
+      gitLFS: loaded.7
     )
 
     guard requestedGeneration == generation else {
@@ -254,7 +257,8 @@ public actor RepositoryActor {
         stashes: cachedSnapshot.stashes,
         remotes: cachedSnapshot.remotes,
         worktrees: cachedSnapshot.worktrees,
-        submodules: cachedSnapshot.submodules
+        submodules: cachedSnapshot.submodules,
+        gitLFS: cachedSnapshot.gitLFS
       )
     }
     return status
@@ -285,8 +289,9 @@ public actor RepositoryActor {
       async let remotes = engine.remotes(at: location)
       async let worktrees = engine.worktrees(at: location)
       async let submodules = engine.submodules(at: location)
+      async let gitLFS = engine.lfsRepositoryState(at: location)
       let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules
+        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
       )
       return RepositorySnapshot(
         generation: requestedGeneration,
@@ -296,7 +301,8 @@ public actor RepositoryActor {
         stashes: loaded.3,
         remotes: loaded.4,
         worktrees: loaded.5,
-        submodules: loaded.6
+        submodules: loaded.6,
+        gitLFS: loaded.7
       )
     }
     mutationTail = Task {
@@ -337,8 +343,9 @@ public actor RepositoryActor {
       async let remotes = engine.remotes(at: location)
       async let worktrees = engine.worktrees(at: location)
       async let submodules = engine.submodules(at: location)
+      async let gitLFS = engine.lfsRepositoryState(at: location)
       let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules
+        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
       )
       return RepositorySnapshot(
         generation: requestedGeneration,
@@ -348,7 +355,8 @@ public actor RepositoryActor {
         stashes: loaded.3,
         remotes: loaded.4,
         worktrees: loaded.5,
-        submodules: loaded.6
+        submodules: loaded.6,
+        gitLFS: loaded.7
       )
     }
     mutationTail = Task {
@@ -391,6 +399,16 @@ public actor RepositoryActor {
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
       try await engine.mutateSubmodule(at: location, mutation: mutation)
+    }
+  }
+
+  @discardableResult
+  public func applyLFSMutation(
+    _ mutation: GitLFSMutation,
+    historyLimit: Int = 200
+  ) async throws -> RepositorySnapshot {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.mutateLFS(at: location, mutation: mutation)
     }
   }
 
@@ -442,8 +460,9 @@ public actor RepositoryActor {
       async let remotes = engine.remotes(at: location)
       async let worktrees = engine.worktrees(at: location)
       async let submodules = engine.submodules(at: location)
+      async let gitLFS = engine.lfsRepositoryState(at: location)
       let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules
+        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
       )
       let snapshot = RepositorySnapshot(
         generation: requestedGeneration,
@@ -453,7 +472,8 @@ public actor RepositoryActor {
         stashes: loaded.3,
         remotes: loaded.4,
         worktrees: loaded.5,
-        submodules: loaded.6
+        submodules: loaded.6,
+        gitLFS: loaded.7
       )
       return HistoryMutationResult(
         snapshot: snapshot,
@@ -509,8 +529,9 @@ public actor RepositoryActor {
       async let remotes = engine.remotes(at: location)
       async let worktrees = engine.worktrees(at: location)
       async let submodules = engine.submodules(at: location)
+      async let gitLFS = engine.lfsRepositoryState(at: location)
       let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules
+        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
       )
       return RepositorySnapshot(
         generation: requestedGeneration,
@@ -520,7 +541,8 @@ public actor RepositoryActor {
         stashes: loaded.3,
         remotes: loaded.4,
         worktrees: loaded.5,
-        submodules: loaded.6
+        submodules: loaded.6,
+        gitLFS: loaded.7
       )
     }
     mutationTail = Task {

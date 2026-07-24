@@ -333,6 +333,35 @@ struct RepositoryActorTests {
     #expect(snapshot.generation == RepositoryGeneration(1))
   }
 
+  @Test("Git LFS mutation uses the repository queue and refreshes capability state")
+  func lfsMutationRefresh() async throws {
+    let lfsState = GitLFSRepositoryState(
+      isAvailable: true,
+      version: "git-lfs/3.7.1",
+      isConfigured: true,
+      patterns: [
+        GitLFSPattern(
+          pattern: "*.psd",
+          source: ".gitattributes",
+          isLockable: false,
+          isTracked: true
+        )
+      ]
+    )
+    let engine = StubGitEngine(gitLFS: lfsState)
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let mutation = GitLFSMutation.fetch(recent: true)
+
+    let snapshot = try await repository.applyLFSMutation(mutation)
+
+    #expect(snapshot.gitLFS == lfsState)
+    #expect(await engine.lfsMutations() == [mutation])
+    #expect(snapshot.generation == RepositoryGeneration(1))
+  }
+
   @Test("Commit runs through the mutation queue and refreshes the full snapshot")
   func commitRefresh() async throws {
     let engine = StubGitEngine()
@@ -387,6 +416,7 @@ private actor StubGitEngine: GitEngineProtocol {
   private var receivedMutations: [WorkingCopyMutation] = []
   private var receivedWorktreeMutations: [WorktreeMutation] = []
   private var receivedSubmoduleMutations: [SubmoduleMutation] = []
+  private var receivedLFSMutations: [GitLFSMutation] = []
   private var receivedCommits: [CommitRequest] = []
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
@@ -395,6 +425,7 @@ private actor StubGitEngine: GitEngineProtocol {
   private let blameLines: [BlameLine]
   private let repositoryWorktrees: [GitWorktree]
   private let repositorySubmodules: [GitSubmodule]
+  private let repositoryGitLFS: GitLFSRepositoryState
 
   init(
     statusDelays: [UInt64: Duration] = [:],
@@ -403,7 +434,8 @@ private actor StubGitEngine: GitEngineProtocol {
     fileHistoryEntries: [FileHistoryEntry] = [],
     blameLines: [BlameLine] = [],
     worktrees: [GitWorktree] = [],
-    submodules: [GitSubmodule] = []
+    submodules: [GitSubmodule] = [],
+    gitLFS: GitLFSRepositoryState = .unavailable
   ) {
     self.statusDelays = statusDelays
     historyCommits = history
@@ -412,6 +444,7 @@ private actor StubGitEngine: GitEngineProtocol {
     self.blameLines = blameLines
     repositoryWorktrees = worktrees
     repositorySubmodules = submodules
+    repositoryGitLFS = gitLFS
   }
 
   func version() async throws -> String {
@@ -517,6 +550,19 @@ private actor StubGitEngine: GitEngineProtocol {
     receivedSubmoduleMutations.append(mutation)
   }
 
+  func lfsRepositoryState(
+    at location: RepositoryLocation
+  ) async throws -> GitLFSRepositoryState {
+    repositoryGitLFS
+  }
+
+  func mutateLFS(
+    at location: RepositoryLocation,
+    mutation: GitLFSMutation
+  ) async throws {
+    receivedLFSMutations.append(mutation)
+  }
+
   func commit(
     at location: RepositoryLocation,
     request: CommitRequest
@@ -589,6 +635,10 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func submoduleMutations() -> [SubmoduleMutation] {
     receivedSubmoduleMutations
+  }
+
+  func lfsMutations() -> [GitLFSMutation] {
+    receivedLFSMutations
   }
 
   func commits() -> [CommitRequest] {
