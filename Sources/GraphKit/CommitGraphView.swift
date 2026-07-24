@@ -1,84 +1,129 @@
 import AppKit
-import CurrentDomain
 import SwiftUI
-
-public struct GraphRow: Identifiable, Hashable, Sendable {
-  public let id: String
-  public let subject: String
-  public let author: String
-
-  public init(id: String, subject: String, author: String) {
-    self.id = id
-    self.subject = subject
-    self.author = author
-  }
-
-  public init(commit: CommitSummary) {
-    self.init(
-      id: commit.oid,
-      subject: commit.subject,
-      author: commit.authorName
-    )
-  }
-}
 
 public struct CommitGraphView: NSViewRepresentable {
   private let rows: [GraphRow]
-  private let onSelection: (GraphRow?) -> Void
+  private let onSelection: ([GraphRow]) -> Void
+  private let onApproachingEnd: () -> Void
 
   public init(
     rows: [GraphRow],
-    onSelection: @escaping (GraphRow?) -> Void = { _ in }
+    onSelection: @escaping ([GraphRow]) -> Void = { _ in },
+    onApproachingEnd: @escaping () -> Void = {}
   ) {
     self.rows = rows
     self.onSelection = onSelection
+    self.onApproachingEnd = onApproachingEnd
   }
 
   public func makeCoordinator() -> Coordinator {
-    Coordinator(rows: rows, onSelection: onSelection)
+    Coordinator(
+      rows: rows,
+      onSelection: onSelection,
+      onApproachingEnd: onApproachingEnd
+    )
   }
 
   public func makeNSView(context: Context) -> NSScrollView {
     let table = NSTableView()
     table.usesAlternatingRowBackgroundColors = true
     table.allowsMultipleSelection = true
-    table.rowHeight = 26
+    table.allowsEmptySelection = true
+    table.rowHeight = 28
+    table.intercellSpacing = NSSize(width: 0, height: 1)
     table.delegate = context.coordinator
     table.dataSource = context.coordinator
 
-    let commit = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("commit"))
+    let graph = NSTableColumn(identifier: .graph)
+    graph.title = "Graph"
+    graph.width = Self.graphColumnWidth(for: rows)
+    graph.minWidth = 46
+    graph.maxWidth = 240
+    graph.resizingMask = []
+    table.addTableColumn(graph)
+
+    let commit = NSTableColumn(identifier: .commit)
     commit.title = "Commit"
-    commit.minWidth = 360
+    commit.minWidth = 300
     commit.resizingMask = .autoresizingMask
     table.addTableColumn(commit)
 
-    let author = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("author"))
+    let author = NSTableColumn(identifier: .author)
     author.title = "Author"
-    author.width = 160
-    author.minWidth = 100
+    author.width = 150
+    author.minWidth = 90
     table.addTableColumn(author)
+
+    let date = NSTableColumn(identifier: .date)
+    date.title = "Date"
+    date.width = 150
+    date.minWidth = 110
+    table.addTableColumn(date)
+
+    let sha = NSTableColumn(identifier: .sha)
+    sha.title = "SHA"
+    sha.width = 92
+    sha.minWidth = 78
+    table.addTableColumn(sha)
 
     let scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = true
     scrollView.autohidesScrollers = true
     scrollView.documentView = table
     return scrollView
   }
 
   public func updateNSView(_ scrollView: NSScrollView, context: Context) {
-    context.coordinator.rows = rows
+    guard let table = scrollView.documentView as? NSTableView else { return }
     context.coordinator.onSelection = onSelection
-    (scrollView.documentView as? NSTableView)?.reloadData()
-    scrollView.toolTip = "\(rows.count) commits"
+    context.coordinator.onApproachingEnd = onApproachingEnd
+    context.coordinator.apply(rows: rows, to: table)
+    table.tableColumn(withIdentifier: .graph)?.width =
+      Self.graphColumnWidth(for: rows)
+    scrollView.toolTip = "\(rows.filter { !$0.isWorkingCopy }.count) commits"
   }
 
+  private static func graphColumnWidth(for rows: [GraphRow]) -> CGFloat {
+    let lanes = rows.lazy.map(\.layout.laneCount).max() ?? 1
+    return min(max(CGFloat(lanes) * 14 + 18, 46), 240)
+  }
+
+  @MainActor
   public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var rows: [GraphRow]
-    var onSelection: (GraphRow?) -> Void
+    var onSelection: ([GraphRow]) -> Void
+    var onApproachingEnd: () -> Void
+    private var requestedEndForRowCount: Int?
+    private let dateFormatter: DateFormatter
 
-    init(rows: [GraphRow], onSelection: @escaping (GraphRow?) -> Void) {
+    init(
+      rows: [GraphRow],
+      onSelection: @escaping ([GraphRow]) -> Void,
+      onApproachingEnd: @escaping () -> Void
+    ) {
       self.rows = rows
       self.onSelection = onSelection
+      self.onApproachingEnd = onApproachingEnd
+      dateFormatter = DateFormatter()
+      dateFormatter.dateStyle = .medium
+      dateFormatter.timeStyle = .short
+    }
+
+    func apply(rows newRows: [GraphRow], to tableView: NSTableView) {
+      guard newRows != rows else { return }
+      let selectedIDs = tableView.selectedRowIndexes.compactMap { index in
+        rows.indices.contains(index) ? rows[index].id : nil
+      }
+      if newRows.count != rows.count {
+        requestedEndForRowCount = nil
+      }
+      rows = newRows
+      tableView.reloadData()
+      let indexes = IndexSet(
+        newRows.indices.filter { selectedIDs.contains(newRows[$0].id) }
+      )
+      tableView.selectRowIndexes(indexes, byExtendingSelection: false)
     }
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
@@ -91,42 +136,236 @@ public struct CommitGraphView: NSViewRepresentable {
       row: Int
     ) -> NSView? {
       guard rows.indices.contains(row), let tableColumn else { return nil }
+      requestMoreRowsIfNeeded(visibleRow: row)
       let item = rows[row]
       let identifier = tableColumn.identifier
-      let text = identifier.rawValue == "author" ? item.author : item.subject
 
-      if let reused = tableView.makeView(withIdentifier: identifier, owner: self)
-        as? NSTableCellView
-      {
-        reused.textField?.stringValue = text
-        reused.toolTip = text
-        return reused
+      if identifier == .graph {
+        let view =
+          tableView.makeView(withIdentifier: identifier, owner: self)
+          as? GraphLaneCellView
+          ?? GraphLaneCellView()
+        view.identifier = identifier
+        view.layout = item.layout
+        view.isWorkingCopy = item.isWorkingCopy
+        return view
       }
 
-      let cell = NSTableCellView()
-      cell.identifier = identifier
-      let field = NSTextField(labelWithString: text)
-      field.lineBreakMode = .byTruncatingTail
-      field.translatesAutoresizingMaskIntoConstraints = false
-      cell.addSubview(field)
-      cell.textField = field
-      NSLayoutConstraint.activate([
-        field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-        field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
-        field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-      ])
+      let cell =
+        tableView.makeView(withIdentifier: identifier, owner: self)
+        as? NSTableCellView
+        ?? makeTextCell(identifier: identifier)
+      let text = text(for: item, column: identifier)
+      cell.textField?.stringValue = text
+      cell.textField?.font =
+        identifier == .sha
+        ? NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        : item.isWorkingCopy
+          ? NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+          : NSFont.systemFont(ofSize: NSFont.systemFontSize)
       cell.toolTip = text
       return cell
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
-      guard let tableView = notification.object as? NSTableView,
-        rows.indices.contains(tableView.selectedRow)
-      else {
-        onSelection(nil)
+      guard let tableView = notification.object as? NSTableView else {
+        onSelection([])
         return
       }
-      onSelection(rows[tableView.selectedRow])
+      onSelection(
+        tableView.selectedRowIndexes.compactMap { index in
+          rows.indices.contains(index) ? rows[index] : nil
+        }
+      )
+    }
+
+    private func requestMoreRowsIfNeeded(visibleRow: Int) {
+      guard
+        rows.count >= 50,
+        visibleRow >= rows.count - 30,
+        requestedEndForRowCount != rows.count
+      else {
+        return
+      }
+      requestedEndForRowCount = rows.count
+      onApproachingEnd()
+    }
+
+    private func makeTextCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
+      let cell = NSTableCellView()
+      cell.identifier = identifier
+      let field = NSTextField(labelWithString: "")
+      field.lineBreakMode = .byTruncatingTail
+      field.translatesAutoresizingMaskIntoConstraints = false
+      cell.addSubview(field)
+      cell.textField = field
+      NSLayoutConstraint.activate([
+        field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 7),
+        field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -7),
+        field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      ])
+      return cell
+    }
+
+    private func text(
+      for row: GraphRow,
+      column: NSUserInterfaceItemIdentifier
+    ) -> String {
+      switch column {
+      case .commit:
+        let labels = row.decorations.map { "[\($0.label)]" }.joined(separator: " ")
+        return labels.isEmpty ? row.subject : "\(labels)  \(row.subject)"
+      case .author:
+        return row.author
+      case .date:
+        return row.authoredAt.map(dateFormatter.string) ?? "Now"
+      case .sha:
+        return row.commitOID.map { String($0.prefix(10)) } ?? "WIP"
+      default:
+        return ""
+      }
     }
   }
+}
+
+private final class GraphLaneCellView: NSView {
+  private static let palette: [NSColor] = [
+    .systemBlue,
+    .systemOrange,
+    .systemGreen,
+    .systemPurple,
+    .systemPink,
+    .systemTeal,
+    .systemRed,
+    .systemIndigo,
+  ]
+
+  var layout: GraphRowLayout? {
+    didSet {
+      needsDisplay = true
+      updateAccessibilityLabel()
+    }
+  }
+  var isWorkingCopy = false {
+    didSet { needsDisplay = true }
+  }
+
+  override var isFlipped: Bool { true }
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    configure()
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    configure()
+  }
+
+  private func configure() {
+    wantsLayer = true
+    layerContentsRedrawPolicy = .onSetNeedsDisplay
+    setAccessibilityElement(true)
+    setAccessibilityRole(.image)
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    guard
+      let layout,
+      let context = NSGraphicsContext.current?.cgContext
+    else {
+      return
+    }
+
+    let centerY = bounds.midY
+    if layout.hasIncomingEdge {
+      stroke(
+        pathFrom: point(lane: layout.lane, y: bounds.minY),
+        to: point(lane: layout.lane, y: centerY),
+        lane: layout.lane,
+        context: context
+      )
+    }
+
+    for edge in layout.edges {
+      let startY = edge.topLane == layout.lane ? centerY : bounds.minY
+      let start = point(lane: edge.topLane, y: startY)
+      let end = point(lane: edge.bottomLane, y: bounds.maxY)
+      let path = CGMutablePath()
+      path.move(to: start)
+      let controlY = start.y + ((end.y - start.y) * 0.58)
+      path.addCurve(
+        to: end,
+        control1: CGPoint(x: start.x, y: controlY),
+        control2: CGPoint(x: end.x, y: controlY)
+      )
+      context.saveGState()
+      context.addPath(path)
+      context.setStrokeColor(color(for: edge.topLane).cgColor)
+      context.setLineWidth(edge.isPrimaryParent ? 1.8 : 1.35)
+      context.setLineCap(.round)
+      context.strokePath()
+      context.restoreGState()
+    }
+
+    let nodeCenter = point(lane: layout.lane, y: centerY)
+    let nodeRect = CGRect(
+      x: nodeCenter.x - 4.5,
+      y: nodeCenter.y - 4.5,
+      width: 9,
+      height: 9
+    )
+    context.saveGState()
+    context.setFillColor(
+      (isWorkingCopy ? NSColor.controlBackgroundColor : color(for: layout.lane)).cgColor
+    )
+    context.setStrokeColor(color(for: layout.lane).cgColor)
+    context.setLineWidth(isWorkingCopy ? 2.2 : 1.2)
+    context.fillEllipse(in: nodeRect)
+    context.strokeEllipse(in: nodeRect)
+    context.restoreGState()
+  }
+
+  private func point(lane: Int, y: CGFloat) -> CGPoint {
+    CGPoint(x: 11 + CGFloat(lane) * 14, y: y)
+  }
+
+  private func stroke(
+    pathFrom start: CGPoint,
+    to end: CGPoint,
+    lane: Int,
+    context: CGContext
+  ) {
+    context.saveGState()
+    context.move(to: start)
+    context.addLine(to: end)
+    context.setStrokeColor(color(for: lane).cgColor)
+    context.setLineWidth(1.8)
+    context.setLineCap(.round)
+    context.strokePath()
+    context.restoreGState()
+  }
+
+  private func color(for lane: Int) -> NSColor {
+    Self.palette[lane % Self.palette.count]
+  }
+
+  private func updateAccessibilityLabel() {
+    guard let layout else {
+      setAccessibilityLabel(nil)
+      return
+    }
+    setAccessibilityLabel(
+      "Commit lane \(layout.lane + 1), \(layout.edges.count) outgoing connections"
+    )
+  }
+}
+
+extension NSUserInterfaceItemIdentifier {
+  fileprivate static let graph = Self("graph")
+  fileprivate static let commit = Self("commit")
+  fileprivate static let author = Self("author")
+  fileprivate static let date = Self("date")
+  fileprivate static let sha = Self("sha")
 }

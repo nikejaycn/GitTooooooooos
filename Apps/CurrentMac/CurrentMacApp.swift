@@ -12,6 +12,7 @@ struct CurrentMacApp: App {
         gitVersion: model.gitVersion,
         status: model.repositoryStatus,
         commits: model.commits,
+        graphRows: model.graphRows,
         references: model.references,
         stashes: model.stashes,
         remotes: model.remotes,

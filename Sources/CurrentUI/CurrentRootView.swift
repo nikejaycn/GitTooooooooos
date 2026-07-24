@@ -15,6 +15,7 @@ public struct CurrentRootView: View {
   private let gitVersion: String?
   private let status: RepositoryStatus?
   private let commits: [CommitSummary]
+  private let graphRows: [GraphRow]
   private let references: [GitReference]
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
@@ -67,6 +68,8 @@ public struct CurrentRootView: View {
   @State private var newBranchName = ""
   @State private var isCreatingBranch = false
   @State private var selectedCommitOID: String?
+  @State private var selectedCommitCount = 0
+  @State private var isWorkingCopySelected = false
   @State private var pendingHardResetOID: String?
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
@@ -77,6 +80,7 @@ public struct CurrentRootView: View {
     gitVersion: String?,
     status: RepositoryStatus?,
     commits: [CommitSummary],
+    graphRows: [GraphRow],
     references: [GitReference],
     stashes: [StashEntry],
     remotes: [GitRemote],
@@ -128,6 +132,7 @@ public struct CurrentRootView: View {
     self.gitVersion = gitVersion
     self.status = status
     self.commits = commits
+    self.graphRows = graphRows
     self.references = references
     self.stashes = stashes
     self.remotes = remotes
@@ -350,7 +355,10 @@ public struct CurrentRootView: View {
   private var content: some View {
     if isLoading {
       VStack(spacing: 14) {
-        ProgressView(isRepositoryOperation ? "Running repository operation…" : "Reading repository…")
+        ProgressView(
+          isRepositoryOperation
+            ? "Running repository operation…" : "Reading repository…"
+        )
         if isRepositoryOperation {
           Button("Cancel Operation", role: .cancel, action: cancelRepositoryOperation)
         }
@@ -823,7 +831,7 @@ public struct CurrentRootView: View {
     } else {
       VStack(spacing: 0) {
         HStack {
-          Text(selectedCommitOID.map { String($0.prefix(12)) } ?? "Select a commit")
+          Text(graphSelectionTitle)
             .font(.system(.body, design: .monospaced))
             .foregroundStyle(.secondary)
           Spacer()
@@ -855,11 +863,29 @@ public struct CurrentRootView: View {
         .padding(10)
         Divider()
         CommitGraphView(
-          rows: commits.map(GraphRow.init),
-          onSelection: { selectedCommitOID = $0?.id }
+          rows: graphRows,
+          onSelection: { rows in
+            let commitOIDs = rows.compactMap(\.commitOID)
+            selectedCommitCount = commitOIDs.count
+            isWorkingCopySelected = rows.contains(where: \.isWorkingCopy)
+            selectedCommitOID = commitOIDs.count == 1 ? commitOIDs[0] : nil
+          }
         )
       }
     }
+  }
+
+  private var graphSelectionTitle: String {
+    if selectedCommitCount > 1 {
+      return "\(selectedCommitCount) commits selected"
+    }
+    if let selectedCommitOID {
+      return String(selectedCommitOID.prefix(12))
+    }
+    if isWorkingCopySelected {
+      return "Working Copy"
+    }
+    return "Select a commit"
   }
 
   private func headTitle(_ head: HeadState) -> String {

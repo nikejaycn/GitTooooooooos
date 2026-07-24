@@ -88,5 +88,9 @@ let package = Package(
       name: "DiffKitTests",
       dependencies: ["DiffKit", "CurrentDomain"]
     ),
+    .testTarget(
+      name: "GraphKitTests",
+      dependencies: ["GraphKit", "CurrentDomain"]
+    ),
   ]
 )

@@ -3,6 +3,7 @@ import CurrentDomain
 import DiffKit
 import Foundation
 import GitEngine
+import GraphKit
 import Observation
 import RepositoryModel
 
@@ -18,6 +19,7 @@ final class AppModel {
   private(set) var gitFallbackReason: String?
   private(set) var repositoryStatus: RepositoryStatus?
   private(set) var commits: [CommitSummary] = []
+  private(set) var graphRows: [GraphRow] = []
   private(set) var references: [GitReference] = []
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
@@ -35,6 +37,8 @@ final class AppModel {
   private var repositoryWatchSession: RepositoryWatchSession?
   private var repositoryRefreshTask: Task<Void, Never>?
   private var repositorySessionID = UUID()
+  private var graphLayoutTask: Task<Void, Never>?
+  private var graphLayoutRequestID: UUID?
   private var diffRequestID: UUID?
   private var repositoryOperationTask: Task<Void, Never>?
 
@@ -424,6 +428,10 @@ final class AppModel {
     repositoryName = nil
     repositoryStatus = nil
     commits = []
+    graphLayoutTask?.cancel()
+    graphLayoutTask = nil
+    graphLayoutRequestID = nil
+    graphRows = []
     references = []
     stashes = []
     remotes = []
@@ -663,6 +671,7 @@ final class AppModel {
     references = snapshot.references
     stashes = snapshot.stashes
     remotes = snapshot.remotes
+    rebuildGraphRows(generation: snapshot.generation)
   }
 
   private func apply(_ status: RepositoryStatus) {
@@ -671,6 +680,34 @@ final class AppModel {
       return
     }
     repositoryStatus = status
+    rebuildGraphRows(generation: status.generation)
+  }
+
+  private func rebuildGraphRows(generation: RepositoryGeneration) {
+    let commits = self.commits
+    let references = self.references
+    let workingCopyChangeCount = repositoryStatus?.changes.count ?? 0
+    let requestID = UUID()
+    graphLayoutRequestID = requestID
+    graphLayoutTask?.cancel()
+    graphLayoutTask = Task {
+      let rows = await Task.detached(priority: .userInitiated) {
+        GraphRowBuilder().build(
+          commits: commits,
+          references: references,
+          workingCopyChangeCount: workingCopyChangeCount,
+          generation: generation
+        )
+      }.value
+      guard
+        !Task.isCancelled,
+        graphLayoutRequestID == requestID,
+        repositoryStatus?.generation == generation
+      else {
+        return
+      }
+      graphRows = rows
+    }
   }
 
   private func startWatchingRepository(_ opened: RepositoryActor) {
