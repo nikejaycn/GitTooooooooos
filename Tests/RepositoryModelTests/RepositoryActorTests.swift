@@ -1,4 +1,5 @@
 import CurrentDomain
+import DiffKit
 import Foundation
 import GitEngine
 import RepositoryModel
@@ -140,6 +141,20 @@ private actor StubGitEngine: GitEngineProtocol {
     request: CommitRequest
   ) async throws {
     receivedCommits.append(request)
+  }
+
+  func diff(
+    at location: RepositoryLocation,
+    path: GitPath,
+    source: DiffSource
+  ) async throws -> DiffDocument {
+    DiffDocument(
+      path: path,
+      source: source,
+      hunks: [],
+      isBinary: false,
+      rawText: ""
+    )
   }
 
   func mutations() -> [WorkingCopyMutation] {

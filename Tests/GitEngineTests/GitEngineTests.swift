@@ -1,4 +1,5 @@
 import CurrentDomain
+import DiffKit
 import Foundation
 import GitEngine
 import Testing
@@ -194,6 +195,36 @@ struct GitEngineTests {
     )
   }
 
+  @Test("Reads a staged file diff through the machine-safe pathspec")
+  func stagedDiff() async throws {
+    let output = """
+      diff --git a/file.txt b/file.txt
+      --- a/file.txt
+      +++ b/file.txt
+      @@ -1 +1 @@
+      -old
+      +new
+
+      """
+    let runner = StubRunner(results: [.success(output)])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let document = try await engine.diff(
+      at: location,
+      path: GitPath("file.txt"),
+      source: .staged
+    )
+
+    #expect(document.hunks.count == 1)
+    #expect(document.changedLineCount == 2)
+    let command = try #require(await runner.commands().first)
+    #expect(command.redactedDescription.contains("--cached -- file.txt"))
+  }
+
   @Test(
     "Live runner reads a real repository",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
@@ -249,6 +280,13 @@ struct GitEngineTests {
       generation: RepositoryGeneration(1)
     )
     #expect(status.changes.first?.isStaged == true)
+    let stagedDocument = try await engine.diff(
+      at: location,
+      path: path,
+      source: .staged
+    )
+    #expect(stagedDocument.hunks.count == 1)
+    #expect(stagedDocument.hunks[0].lines.contains { $0.kind == .addition })
 
     try await engine.mutateWorkingCopy(at: location, mutation: .unstage([path]))
     status = try await engine.status(
@@ -263,6 +301,12 @@ struct GitEngineTests {
       request: CommitRequest(message: "base")
     )
     try Data("changed\n".utf8).write(to: file)
+    let unstagedDocument = try await engine.diff(
+      at: location,
+      path: path,
+      source: .unstaged
+    )
+    #expect(unstagedDocument.changedLineCount == 2)
     try await engine.mutateWorkingCopy(at: location, mutation: .discardTracked([path]))
     #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
 

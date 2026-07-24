@@ -1,5 +1,6 @@
 import AppKit
 import CurrentDomain
+import DiffKit
 import Foundation
 import GitEngine
 import Observation
@@ -13,11 +14,14 @@ final class AppModel {
   private(set) var repositoryStatus: RepositoryStatus?
   private(set) var commits: [CommitSummary] = []
   private(set) var references: [GitReference] = []
+  private(set) var selectedDiff: DiffDocument?
+  private(set) var isDiffLoading = false
   private(set) var isLoading = false
   private(set) var errorMessage: String?
 
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
+  private var diffRequestID: UUID?
 
   init() {
     do {
@@ -96,6 +100,31 @@ final class AppModel {
     }
   }
 
+  func loadDiff(_ change: FileChange) {
+    guard let repository, change.kind != .untracked else {
+      selectedDiff = nil
+      return
+    }
+    let source: DiffSource = change.isUnstaged ? .unstaged : .staged
+    let requestID = UUID()
+    diffRequestID = requestID
+    isDiffLoading = true
+    Task {
+      do {
+        let document = try await repository.diff(for: change.path, source: source)
+        guard diffRequestID == requestID else { return }
+        selectedDiff = document
+      } catch {
+        guard diffRequestID == requestID else { return }
+        selectedDiff = nil
+        errorMessage = error.localizedDescription
+      }
+      if diffRequestID == requestID {
+        isDiffLoading = false
+      }
+    }
+  }
+
   private func loadGitVersion() async {
     guard let engine else { return }
     do {
@@ -124,6 +153,7 @@ final class AppModel {
       repositoryStatus = nil
       commits = []
       references = []
+      selectedDiff = nil
       errorMessage = error.localizedDescription
     }
     isLoading = false

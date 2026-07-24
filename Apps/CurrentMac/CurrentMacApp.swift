@@ -13,6 +13,8 @@ struct CurrentMacApp: App {
         status: model.repositoryStatus,
         commits: model.commits,
         references: model.references,
+        selectedDiff: model.selectedDiff,
+        isDiffLoading: model.isDiffLoading,
         isLoading: model.isLoading,
         errorMessage: model.errorMessage,
         openRepository: model.chooseRepository,
@@ -21,7 +23,8 @@ struct CurrentMacApp: App {
         unstage: model.unstage,
         discard: model.discard,
         ignore: model.ignore,
-        commit: model.commit
+        commit: model.commit,
+        loadDiff: model.loadDiff
       )
       .frame(minWidth: 880, minHeight: 560)
     }

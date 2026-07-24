@@ -15,6 +15,8 @@ public struct CurrentRootView: View {
   private let status: RepositoryStatus?
   private let commits: [CommitSummary]
   private let references: [GitReference]
+  private let selectedDiff: DiffDocument?
+  private let isDiffLoading: Bool
   private let isLoading: Bool
   private let errorMessage: String?
   private let openRepository: () -> Void
@@ -24,6 +26,7 @@ public struct CurrentRootView: View {
   private let discard: (GitPath) -> Void
   private let ignore: (GitPath) -> Void
   private let commit: (String) async throws -> Void
+  private let loadDiff: (FileChange) -> Void
   @State private var workspace: Workspace = .changes
   @State private var pendingDiscard: GitPath?
   @State private var commitMessage = ""
@@ -34,6 +37,8 @@ public struct CurrentRootView: View {
     status: RepositoryStatus?,
     commits: [CommitSummary],
     references: [GitReference],
+    selectedDiff: DiffDocument?,
+    isDiffLoading: Bool,
     isLoading: Bool,
     errorMessage: String?,
     openRepository: @escaping () -> Void,
@@ -42,13 +47,16 @@ public struct CurrentRootView: View {
     unstage: @escaping (GitPath) -> Void,
     discard: @escaping (GitPath) -> Void,
     ignore: @escaping (GitPath) -> Void,
-    commit: @escaping (String) async throws -> Void
+    commit: @escaping (String) async throws -> Void,
+    loadDiff: @escaping (FileChange) -> Void
   ) {
     self.repositoryName = repositoryName
     self.gitVersion = gitVersion
     self.status = status
     self.commits = commits
     self.references = references
+    self.selectedDiff = selectedDiff
+    self.isDiffLoading = isDiffLoading
     self.isLoading = isLoading
     self.errorMessage = errorMessage
     self.openRepository = openRepository
@@ -58,6 +66,7 @@ public struct CurrentRootView: View {
     self.discard = discard
     self.ignore = ignore
     self.commit = commit
+    self.loadDiff = loadDiff
   }
 
   public var body: some View {
@@ -223,50 +232,91 @@ public struct CurrentRootView: View {
         description: Text("There are no staged or unstaged changes.")
       )
     } else {
-      List(status.changes) { change in
+      HSplitView {
+        List(status.changes) { change in
+          HStack {
+            Text(String(change.indexStatusCharacter))
+              .frame(width: 16)
+            Text(String(change.worktreeStatusCharacter))
+              .frame(width: 16)
+            Button {
+              loadDiff(change)
+            } label: {
+              Text(change.path.displayString)
+                .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Text(change.kind.rawValue)
+              .foregroundStyle(.secondary)
+            if change.isStaged {
+              Button("Unstage") {
+                unstage(change.path)
+              }
+              .buttonStyle(.borderless)
+            }
+            if change.isUnstaged || change.kind == .untracked {
+              Button("Stage") {
+                stage(change.path)
+              }
+              .buttonStyle(.borderless)
+            }
+            if change.isUnstaged && change.kind != .untracked {
+              Button(role: .destructive) {
+                pendingDiscard = change.path
+              } label: {
+                Image(systemName: "arrow.uturn.backward")
+              }
+              .buttonStyle(.borderless)
+              .help("Discard unstaged changes")
+            }
+            if change.kind == .untracked {
+              Button {
+                ignore(change.path)
+              } label: {
+                Image(systemName: "eye.slash")
+              }
+              .buttonStyle(.borderless)
+              .help("Add an anchored rule to .gitignore")
+            }
+          }
+          .font(.system(.body, design: .monospaced))
+        }
+        .frame(minWidth: 360, idealWidth: 440)
+
+        diffPane
+          .frame(minWidth: 360)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var diffPane: some View {
+    if isDiffLoading {
+      ProgressView("Loading diff…")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if let selectedDiff {
+      VStack(alignment: .leading, spacing: 0) {
         HStack {
-          Text(String(change.indexStatusCharacter))
-            .frame(width: 16)
-          Text(String(change.worktreeStatusCharacter))
-            .frame(width: 16)
-          Text(change.path.displayString)
+          Text(selectedDiff.path.displayString)
+            .font(.headline)
             .lineLimit(1)
           Spacer()
-          Text(change.kind.rawValue)
+          Text(selectedDiff.source.rawValue.capitalized)
             .foregroundStyle(.secondary)
-          if change.isStaged {
-            Button("Unstage") {
-              unstage(change.path)
-            }
-            .buttonStyle(.borderless)
-          }
-          if change.isUnstaged || change.kind == .untracked {
-            Button("Stage") {
-              stage(change.path)
-            }
-            .buttonStyle(.borderless)
-          }
-          if change.isUnstaged && change.kind != .untracked {
-            Button(role: .destructive) {
-              pendingDiscard = change.path
-            } label: {
-              Image(systemName: "arrow.uturn.backward")
-            }
-            .buttonStyle(.borderless)
-            .help("Discard unstaged changes")
-          }
-          if change.kind == .untracked {
-            Button {
-              ignore(change.path)
-            } label: {
-              Image(systemName: "eye.slash")
-            }
-            .buttonStyle(.borderless)
-            .help("Add an anchored rule to .gitignore")
-          }
+          Text("\(selectedDiff.changedLineCount) changed lines")
+            .foregroundStyle(.secondary)
         }
-        .font(.system(.body, design: .monospaced))
+        .padding(10)
+        Divider()
+        DiffTextView(document: selectedDiff)
       }
+    } else {
+      ContentUnavailableView(
+        "Select a Changed File",
+        systemImage: "doc.text.magnifyingglass",
+        description: Text("Choose a tracked file to inspect its diff.")
+      )
     }
   }
 

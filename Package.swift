@@ -32,13 +32,14 @@ let package = Package(
       name: "GitEngine",
       dependencies: [
         "CurrentDomain",
+        "DiffKit",
         "GitParsers",
         .product(name: "Subprocess", package: "swift-subprocess"),
       ]
     ),
     .target(
       name: "RepositoryModel",
-      dependencies: ["CurrentDomain", "GitEngine"]
+      dependencies: ["CurrentDomain", "DiffKit", "GitEngine"]
     ),
     .target(
       name: "OperationKit",
@@ -70,15 +71,19 @@ let package = Package(
     ),
     .testTarget(
       name: "GitEngineTests",
-      dependencies: ["GitEngine", "CurrentDomain"]
+      dependencies: ["GitEngine", "CurrentDomain", "DiffKit"]
     ),
     .testTarget(
       name: "RepositoryModelTests",
-      dependencies: ["RepositoryModel", "GitEngine", "CurrentDomain"]
+      dependencies: ["RepositoryModel", "GitEngine", "CurrentDomain", "DiffKit"]
     ),
     .testTarget(
       name: "OperationKitTests",
       dependencies: ["OperationKit", "GitEngine", "CurrentDomain"]
+    ),
+    .testTarget(
+      name: "DiffKitTests",
+      dependencies: ["DiffKit", "CurrentDomain"]
     ),
   ]
 )

@@ -1,5 +1,6 @@
 import CurrentDomain
 import Darwin
+import DiffKit
 import Foundation
 import GitParsers
 
@@ -95,6 +96,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     request: CommitRequest
   ) async throws
+  func diff(
+    at location: RepositoryLocation,
+    path: GitPath,
+    source: DiffSource
+  ) async throws -> DiffDocument
 }
 
 public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol {
@@ -357,6 +363,49 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: .seconds(600)
       )
     )
+  }
+
+  public func diff(
+    at location: RepositoryLocation,
+    path: GitPath,
+    source: DiffSource
+  ) async throws -> DiffDocument {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository has no working-copy diff.")
+    }
+    guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
+      throw GitEngineError.invalidOutput("A diff path was empty or contained a NUL byte.")
+    }
+
+    var prefix = [
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--no-renames",
+      "--unified=3",
+    ]
+    if source == .staged {
+      prefix.append("--cached")
+    }
+    prefix.append("--")
+    let result = try await execute(
+      GitCommand(
+        rawArguments: prefix.map { Array($0.utf8) } + [path.rawBytes],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
+
+    do {
+      return try UnifiedDiffParser().parse(
+        result.standardOutput,
+        path: path,
+        source: source
+      )
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
   }
 
   private func appendIgnoreRules(

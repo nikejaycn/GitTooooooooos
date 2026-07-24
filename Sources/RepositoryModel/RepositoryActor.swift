@@ -1,4 +1,5 @@
 import CurrentDomain
+import DiffKit
 import Foundation
 import GitEngine
 
@@ -77,6 +78,13 @@ public actor RepositoryActor {
 
   public func snapshot() -> RepositorySnapshot? {
     cachedSnapshot
+  }
+
+  public func diff(
+    for path: GitPath,
+    source: DiffSource
+  ) async throws -> DiffDocument {
+    try await engine.diff(at: location, path: path, source: source)
   }
 
   @discardableResult
