@@ -19,6 +19,11 @@ public struct CurrentRootView: View {
     var id: Self { self }
   }
 
+  private struct StashRequest: Identifiable {
+    let id = UUID()
+    let paths: [GitPath]
+  }
+
   private let repositoryName: String?
   private let gitVersion: String?
   private let status: RepositoryStatus?
@@ -109,7 +114,7 @@ public struct CurrentRootView: View {
   private let undoLastOperation: () -> Void
   private let applyHunk: (DiffDocument, DiffHunk) -> Void
   private let applyLine: (DiffDocument, DiffHunk, Int) -> Void
-  private let saveStash: (String?) -> Void
+  private let saveStash: (String?, Bool, [GitPath]) -> Void
   private let popStash: (String) -> Void
   private let dropStash: (String) -> Void
   private let fetch: () -> Void
@@ -169,6 +174,8 @@ public struct CurrentRootView: View {
   @State private var remotePushURL = ""
   @State private var pendingRemoteRemoval: GitRemote?
   @State private var isConfirmingForcePush = false
+  @State private var selectedStashPaths: Set<GitPath> = []
+  @State private var stashRequest: StashRequest?
 
   public init(
     repositoryName: String?,
@@ -261,7 +268,7 @@ public struct CurrentRootView: View {
     undoLastOperation: @escaping () -> Void,
     applyHunk: @escaping (DiffDocument, DiffHunk) -> Void,
     applyLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
-    saveStash: @escaping (String?) -> Void,
+    saveStash: @escaping (String?, Bool, [GitPath]) -> Void,
     popStash: @escaping (String) -> Void,
     dropStash: @escaping (String) -> Void,
     fetch: @escaping () -> Void,
@@ -640,7 +647,7 @@ public struct CurrentRootView: View {
               .disabled(status?.upstream == nil)
               Divider()
               Button("Stash All Changes") {
-                saveStash(nil)
+                beginCreatingStash(paths: [])
               }
               .disabled(status?.changes.isEmpty != false)
               Button("Prune Stale Worktrees", action: pruneWorktrees)
@@ -874,6 +881,13 @@ public struct CurrentRootView: View {
       CommandPaletteView(
         actions: commandPaletteActions,
         dismiss: { isShowingCommandPalette = false }
+      )
+    }
+    .sheet(item: $stashRequest) { request in
+      StashCreationView(
+        paths: request.paths,
+        save: saveStash,
+        dismiss: { stashRequest = nil }
       )
     }
     .sheet(
@@ -1277,25 +1291,36 @@ public struct CurrentRootView: View {
         description: Text("Stashed changes will appear here.")
       )
     } else {
-      List(stashes) { stash in
+      VStack(spacing: 0) {
         HStack {
-          VStack(alignment: .leading, spacing: 3) {
-            Text(stash.subject)
-              .lineLimit(1)
-            Text(stash.selector)
-              .font(.caption.monospaced())
-              .foregroundStyle(.secondary)
+          Button("New Stash…") {
+            beginCreatingStash(paths: [])
           }
+          .disabled(status?.changes.isEmpty != false || isLoading)
           Spacer()
-          Button("Pop") {
-            popStash(stash.selector)
+        }
+        .padding(10)
+        Divider()
+        List(stashes) { stash in
+          HStack {
+            VStack(alignment: .leading, spacing: 3) {
+              Text(stash.subject)
+                .lineLimit(1)
+              Text(stash.selector)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Pop") {
+              popStash(stash.selector)
+            }
+            Button(role: .destructive) {
+              dropStash(stash.selector)
+            } label: {
+              Image(systemName: "trash")
+            }
+            .help("Drop stash")
           }
-          Button(role: .destructive) {
-            dropStash(stash.selector)
-          } label: {
-            Image(systemName: "trash")
-          }
-          .help("Drop stash")
         }
       }
     }
@@ -1337,65 +1362,91 @@ public struct CurrentRootView: View {
       )
     } else {
       HSplitView {
-        List(status.changes) { change in
+        VStack(spacing: 0) {
           HStack {
-            Text(String(change.indexStatusCharacter))
-              .frame(width: 16)
-            Text(String(change.worktreeStatusCharacter))
-              .frame(width: 16)
-            Button {
-              loadDiff(change)
-            } label: {
-              Text(change.path.displayString)
-                .lineLimit(1)
-            }
-            .buttonStyle(.plain)
-            .contextMenu {
-              Button("File History & Blame") {
-                openFileInsights(change.path)
-              }
-            }
+            Text(
+              activeSelectedStashPaths.isEmpty
+                ? "Select files with Command-click"
+                : "\(activeSelectedStashPaths.count) selected"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
             Spacer()
-            Text(change.kind.rawValue)
-              .foregroundStyle(.secondary)
-            if change.isStaged {
-              Button("Unstage") {
-                unstage(change.path)
-              }
-              .buttonStyle(.borderless)
+            Button("Stash Selected…") {
+              beginCreatingStash(paths: Array(activeSelectedStashPaths))
             }
-            if change.isUnstaged || change.kind == .untracked {
-              Button("Stage") {
-                stage(change.path)
-              }
-              .buttonStyle(.borderless)
-            }
-            if change.isUnstaged && change.kind != .untracked {
-              Button(role: .destructive) {
-                pendingDiscard = change.path
-              } label: {
-                Image(systemName: "arrow.uturn.backward")
-              }
-              .buttonStyle(.borderless)
-              .help("Discard unstaged changes")
-            }
-            if change.kind == .untracked {
-              Button {
-                ignore(change.path)
-              } label: {
-                Image(systemName: "eye.slash")
-              }
-              .buttonStyle(.borderless)
-              .help("Add an anchored rule to .gitignore")
-            }
+            .disabled(activeSelectedStashPaths.isEmpty || isLoading)
           }
-          .font(.system(.body, design: .monospaced))
+          .padding(.horizontal, 10)
+          .frame(height: 34)
+          Divider()
+          List(status.changes, selection: $selectedStashPaths) { change in
+            HStack {
+              Text(String(change.indexStatusCharacter))
+                .frame(width: 16)
+              Text(String(change.worktreeStatusCharacter))
+                .frame(width: 16)
+              Button {
+                loadDiff(change)
+              } label: {
+                Text(change.path.displayString)
+                  .lineLimit(1)
+              }
+              .buttonStyle(.plain)
+              .contextMenu {
+                Button("Stash This File…") {
+                  beginCreatingStash(paths: [change.path])
+                }
+                Button("File History & Blame") {
+                  openFileInsights(change.path)
+                }
+              }
+              Spacer()
+              Text(change.kind.rawValue)
+                .foregroundStyle(.secondary)
+              if change.isStaged {
+                Button("Unstage") {
+                  unstage(change.path)
+                }
+                .buttonStyle(.borderless)
+              }
+              if change.isUnstaged || change.kind == .untracked {
+                Button("Stage") {
+                  stage(change.path)
+                }
+                .buttonStyle(.borderless)
+              }
+              if change.isUnstaged && change.kind != .untracked {
+                Button(role: .destructive) {
+                  pendingDiscard = change.path
+                } label: {
+                  Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.borderless)
+                .help("Discard unstaged changes")
+              }
+              if change.kind == .untracked {
+                Button {
+                  ignore(change.path)
+                } label: {
+                  Image(systemName: "eye.slash")
+                }
+                .buttonStyle(.borderless)
+                .help("Add an anchored rule to .gitignore")
+              }
+            }
+            .font(.system(.body, design: .monospaced))
+            .tag(change.path)
+          }
         }
         .frame(minWidth: 280, idealWidth: 340, maxWidth: 440)
 
         diffPane
           .frame(minWidth: 440)
           .layoutPriority(1)
+      }
+      .onChange(of: status.changes.map(\.path)) { _, paths in
+        selectedStashPaths.formIntersection(paths)
       }
     }
   }
@@ -1517,6 +1568,17 @@ public struct CurrentRootView: View {
     let marker = line.kind == .addition ? "+" : "-"
     let number = line.newLineNumber ?? line.oldLineNumber ?? 0
     return "\(verb) \(marker)\(number): \(line.text)"
+  }
+
+  private func beginCreatingStash(paths: [GitPath]) {
+    let available = Set(status?.changes.map(\.path) ?? [])
+    stashRequest = StashRequest(
+      paths: paths.filter { available.contains($0) }
+    )
+  }
+
+  private var activeSelectedStashPaths: Set<GitPath> {
+    selectedStashPaths.intersection(status?.changes.map(\.path) ?? [])
   }
 
   private func openFileInsights(_ path: GitPath) {
@@ -2292,6 +2354,18 @@ public struct CurrentRootView: View {
         isCreatingBranch = true
       },
       CommandPaletteAction(
+        id: "repository.stash",
+        title: activeSelectedStashPaths.isEmpty
+          ? "Stash Working Copy…"
+          : "Stash \(activeSelectedStashPaths.count) Selected Paths…",
+        detail: activeSelectedStashPaths.isEmpty ? nil : "Partial stash",
+        systemImage: "archivebox",
+        keywords: "save changes partial selected files",
+        isEnabled: status?.changes.isEmpty == false && !isLoading
+      ) {
+        beginCreatingStash(paths: Array(activeSelectedStashPaths))
+      },
+      CommandPaletteAction(
         id: "remote.add",
         title: "Add Remote…",
         systemImage: "cloud.badge.plus",
@@ -2476,6 +2550,62 @@ public struct CurrentRootView: View {
     ]
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
+  }
+}
+
+private struct StashCreationView: View {
+  let paths: [GitPath]
+  let save: (String?, Bool, [GitPath]) -> Void
+  let dismiss: () -> Void
+
+  @State private var message = ""
+  @State private var includeUntracked = true
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(paths.isEmpty ? "Stash Working Copy" : "Stash Selected Paths")
+          .font(.title2.weight(.semibold))
+        Text(scopeDescription)
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
+
+      TextField("Message (optional)", text: $message)
+        .textFieldStyle(.roundedBorder)
+        .accessibilityLabel("Stash message")
+
+      Toggle("Include untracked files in this scope", isOn: $includeUntracked)
+
+      if !paths.isEmpty {
+        List(paths, id: \.self) { path in
+          Label(path.displayString, systemImage: "doc")
+            .lineLimit(1)
+        }
+        .frame(minHeight: 120)
+      }
+
+      HStack {
+        Spacer()
+        Button("Cancel", role: .cancel, action: dismiss)
+          .keyboardShortcut(.cancelAction)
+        Button("Create Stash") {
+          let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+          save(trimmed.isEmpty ? nil : trimmed, includeUntracked, paths)
+          dismiss()
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(20)
+    .frame(width: 500, height: paths.isEmpty ? 220 : 390)
+  }
+
+  private var scopeDescription: String {
+    if paths.isEmpty {
+      return "Save all working-copy changes and restore a clean worktree."
+    }
+    return "Save changes under \(paths.count) selected path\(paths.count == 1 ? "" : "s") only."
   }
 }
 

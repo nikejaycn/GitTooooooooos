@@ -17,7 +17,7 @@ public struct StashEntry: Hashable, Sendable, Codable, Identifiable {
 }
 
 public enum StashMutation: Hashable, Sendable {
-  case save(message: String?, includeUntracked: Bool)
+  case save(message: String?, includeUntracked: Bool, paths: [GitPath])
   case apply(selector: String, reinstateIndex: Bool)
   case pop(selector: String, reinstateIndex: Bool)
   case drop(selector: String)

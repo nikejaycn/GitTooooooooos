@@ -982,7 +982,17 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         [checkout ? "switch" : "branch", checkout ? "-c" : name]
         + (checkout ? [name] : [])
         + (startPoint.map { [$0] } ?? [])
-    case .checkout(let name):
+    case .checkout(let name, let autoStash):
+      if autoStash {
+        let currentStatus = try await status(
+          at: location,
+          generation: RepositoryGeneration(0)
+        )
+        if !currentStatus.changes.isEmpty {
+          try await checkoutWithAutoStash(name, at: location)
+          return
+        }
+      }
       arguments = ["switch", name]
     case .rename(let oldName, let newName):
       try await validateBranchName(newName, at: location)
@@ -1041,6 +1051,67 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: .seconds(600)
       )
     )
+  }
+
+  private func checkoutWithAutoStash(
+    _ branch: String,
+    at location: RepositoryLocation
+  ) async throws {
+    guard operationKind(at: location) == .none else {
+      throw GitEngineError.invalidRepository(
+        "Finish the current Git operation before checking out another branch."
+      )
+    }
+    let stashBefore = try? await resolveCommit("refs/stash", at: location)
+    let marker = "Current auto-stash before checkout \(UUID().uuidString)"
+    try await mutateStash(
+      at: location,
+      mutation: .save(
+        message: marker,
+        includeUntracked: true,
+        paths: []
+      )
+    )
+    let stashOID = try await resolveCommit("refs/stash", at: location)
+    guard stashOID != stashBefore else {
+      throw GitEngineError.invalidOutput(
+        "Git did not create the requested checkout auto-stash."
+      )
+    }
+
+    do {
+      _ = try await execute(
+        GitCommand(
+          arguments: ["switch", branch],
+          workingDirectory: location.worktreeURL,
+          timeout: .seconds(120)
+        )
+      )
+    } catch {
+      try? await restoreAutoStash(stashOID, at: location)
+      throw error
+    }
+
+    try await restoreAutoStash(stashOID, at: location)
+  }
+
+  private func restoreAutoStash(
+    _ oid: String,
+    at location: RepositoryLocation
+  ) async throws {
+    _ = try await execute(
+      GitCommand(
+        arguments: ["stash", "apply", "--index", oid],
+        workingDirectory: location.worktreeURL,
+        timeout: .seconds(300)
+      )
+    )
+    if let entry = try await stashes(at: location).first(where: { $0.oid == oid }) {
+      try await mutateStash(
+        at: location,
+        mutation: .drop(selector: entry.selector)
+      )
+    }
   }
 
   public func worktrees(
@@ -1477,7 +1548,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     }
     var arguments: [[UInt8]]
     switch mutation {
-    case .save(let message, let includeUntracked):
+    case .save(let message, let includeUntracked, let paths):
       arguments = ["stash", "push"].map { Array($0.utf8) }
       if includeUntracked {
         arguments.append(Array("--include-untracked".utf8))
@@ -1488,6 +1559,19 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         }
         arguments.append(Array("-m".utf8))
         arguments.append(Array(message.utf8))
+      }
+      if !paths.isEmpty {
+        guard
+          paths.allSatisfy({
+            !$0.rawBytes.isEmpty && !$0.rawBytes.contains(0)
+          })
+        else {
+          throw GitEngineError.invalidOutput(
+            "A partial stash path was empty or contained a NUL byte."
+          )
+        }
+        arguments.append(Array("--".utf8))
+        arguments.append(contentsOf: paths.map(\.rawBytes))
       }
     case .apply(let selector, let reinstateIndex):
       try validateStashSelector(selector)
@@ -1669,11 +1753,12 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
 
     let arguments: [String]
     switch mutation {
-    case .start(let branch, let squash, let noFastForward):
+    case .start(let branch, let squash, let noFastForward, let autoStash):
       arguments =
         ["merge", "--no-edit"]
         + (squash ? ["--squash"] : [])
         + (noFastForward ? ["--no-ff"] : [])
+        + (autoStash ? ["--autostash"] : [])
         + [branch]
     case .resolve(let path, let side):
       guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
@@ -1957,14 +2042,14 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
       return recovery
 
-    case .rebase(let onto):
+    case .rebase(let onto, let autoStash):
       let oid = try await resolveCommit(onto, at: location)
       let recovery = try await createRecoveryReference(
         reason: "rebase",
         at: location
       )
       let command = GitCommand(
-        arguments: ["rebase", oid],
+        arguments: ["rebase"] + (autoStash ? ["--autostash"] : []) + [oid],
         workingDirectory: location.worktreeURL,
         environmentOverrides: [
           "GIT_EDITOR": "true",
@@ -1981,8 +2066,20 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         message: command.redactingSecrets(in: result.errorDescription)
       )
 
-    case .interactiveRebase(let plan):
-      try await requireCleanWorkingCopy(at: location)
+    case .interactiveRebase(let plan, let autoStash):
+      if autoStash {
+        let currentStatus = try await status(
+          at: location,
+          generation: RepositoryGeneration(0)
+        )
+        guard !currentStatus.operation.isInProgress else {
+          throw GitEngineError.invalidRepository(
+            "Finish the current Git operation before starting interactive rebase."
+          )
+        }
+      } else {
+        try await requireCleanWorkingCopy(at: location)
+      }
       let current = try await interactiveRebasePlan(
         at: location,
         upstream: plan.upstreamOID
@@ -1997,7 +2094,9 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         at: location
       )
       let command = GitCommand(
-        arguments: ["rebase", "--interactive", plan.upstreamOID],
+        arguments: ["rebase", "--interactive"]
+          + (autoStash ? ["--autostash"] : [])
+          + [plan.upstreamOID],
         workingDirectory: location.worktreeURL,
         environmentOverrides: interactiveRebaseEnvironment(stateURL: stateURL),
         outputLimit: 32 * 1024 * 1024,

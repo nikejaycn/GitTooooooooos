@@ -15,6 +15,7 @@ final class AppModel {
   private static let useCustomGitKey = "Current.useCustomGit.v1"
   private static let customGitPathKey = "Current.customGitPath.v1"
   private static let appearanceKey = "Current.appearance.v1"
+  private static let autoStashEnabledKey = "Current.autoStashEnabled.v1"
   private static let historyPageSize = 200
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
@@ -34,6 +35,7 @@ final class AppModel {
   private(set) var useCustomGit = false
   private(set) var customGitPath = ""
   private(set) var appearance = AppAppearance.system
+  private(set) var autoStashEnabled = false
   private(set) var commitComparison: CommitComparison?
   private(set) var isCommitComparisonLoading = false
   private(set) var references: [GitReference] = []
@@ -80,6 +82,7 @@ final class AppModel {
     recentRepositories = Self.loadRecentRepositories()
     useCustomGit = UserDefaults.standard.bool(forKey: Self.useCustomGitKey)
     customGitPath = UserDefaults.standard.string(forKey: Self.customGitPathKey) ?? ""
+    autoStashEnabled = UserDefaults.standard.bool(forKey: Self.autoStashEnabledKey)
     appearance =
       UserDefaults.standard.string(forKey: Self.appearanceKey)
       .flatMap(AppAppearance.init(rawValue:)) ?? .system
@@ -607,11 +610,18 @@ final class AppModel {
   }
 
   func checkoutBranch(_ name: String) {
-    applyBranch(.checkout(name: name))
+    applyBranch(.checkout(name: name, autoStash: autoStashEnabled))
   }
 
   func mergeBranch(_ name: String) {
-    applyMerge(.start(branch: name, squash: false, noFastForward: false))
+    applyMerge(
+      .start(
+        branch: name,
+        squash: false,
+        noFastForward: false,
+        autoStash: autoStashEnabled
+      )
+    )
   }
 
   func createTag(name: String, target: String?, message: String?) {
@@ -822,7 +832,7 @@ final class AppModel {
   }
 
   func rebase(onto oid: String) {
-    applyHistory(.rebase(onto: oid))
+    applyHistory(.rebase(onto: oid, autoStash: autoStashEnabled))
   }
 
   func interactiveRebasePlan(onto oid: String) async throws -> InteractiveRebasePlan {
@@ -833,7 +843,14 @@ final class AppModel {
   }
 
   func runInteractiveRebase(_ plan: InteractiveRebasePlan) {
-    applyHistory(.interactiveRebase(plan: plan))
+    applyHistory(
+      .interactiveRebase(plan: plan, autoStash: autoStashEnabled)
+    )
+  }
+
+  func setAutoStashEnabled(_ enabled: Bool) {
+    autoStashEnabled = enabled
+    UserDefaults.standard.set(enabled, forKey: Self.autoStashEnabledKey)
   }
 
   func undoLastRecoverableOperation() {
@@ -1128,6 +1145,9 @@ final class AppModel {
         selectedDiff = nil
         finishActivity(activityID, state: .succeeded)
       } catch {
+        if let snapshot = try? await repository.refreshSnapshot() {
+          apply(snapshot)
+        }
         errorMessage = error.localizedDescription
         finishActivity(activityID, error: error)
       }
@@ -1152,8 +1172,18 @@ final class AppModel {
     }
   }
 
-  func saveStash(_ message: String?) {
-    applyStash(.save(message: message, includeUntracked: true))
+  func saveStash(
+    _ message: String?,
+    includeUntracked: Bool,
+    paths: [GitPath]
+  ) {
+    applyStash(
+      .save(
+        message: message,
+        includeUntracked: includeUntracked,
+        paths: paths
+      )
+    )
   }
 
   func popStash(_ selector: String) {
@@ -1252,6 +1282,9 @@ final class AppModel {
         apply(try await repository.applyStashMutation(mutation))
         finishActivity(activityID, state: .succeeded)
       } catch {
+        if let snapshot = try? await repository.refreshSnapshot() {
+          apply(snapshot)
+        }
         errorMessage = error.localizedDescription
         finishActivity(activityID, error: error)
       }
@@ -1363,6 +1396,9 @@ final class AppModel {
         apply(try await repository.applyMergeMutation(mutation))
         finishActivity(activityID, state: .succeeded)
       } catch {
+        if let snapshot = try? await repository.refreshSnapshot() {
+          apply(snapshot)
+        }
         errorMessage = error.localizedDescription
         finishActivity(activityID, error: error)
       }
@@ -1661,7 +1697,7 @@ final class AppModel {
   private func branchTitle(_ mutation: BranchMutation) -> String {
     switch mutation {
     case .create(let name, _, _): "Create branch \(name)"
-    case .checkout(let name): "Check out \(name)"
+    case .checkout(let name, _): "Check out \(name)"
     case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
     case .delete(let name, _): "Delete branch \(name)"
     }
@@ -1679,7 +1715,10 @@ final class AppModel {
 
   private func stashTitle(_ mutation: StashMutation) -> String {
     switch mutation {
-    case .save: "Stash working-copy changes"
+    case .save(_, _, let paths):
+      paths.isEmpty
+        ? "Stash working-copy changes"
+        : "Stash \(paths.count) selected path\(paths.count == 1 ? "" : "s")"
     case .apply(let selector, _): "Apply \(selector)"
     case .pop(let selector, _): "Pop \(selector)"
     case .drop(let selector): "Drop \(selector)"
@@ -1734,7 +1773,7 @@ final class AppModel {
 
   private func mergeTitle(_ mutation: MergeMutation) -> String {
     switch mutation {
-    case .start(let branch, _, _): "Merge \(branch)"
+    case .start(let branch, _, _, _): "Merge \(branch)"
     case .resolve(let path, let side): "Resolve \(path.displayString) using \(side.rawValue)"
     case .resolveContents(let path, _): "Resolve \(path.displayString)"
     case .continueOperation: "Continue Git operation"
@@ -1747,7 +1786,7 @@ final class AppModel {
     case .cherryPick(let oid): "Cherry-pick \(oid.prefix(12))"
     case .revert(let oid): "Revert \(oid.prefix(12))"
     case .reset(let target, let mode): "\(mode.rawValue.capitalized) reset to \(target.prefix(12))"
-    case .rebase(let onto): "Rebase onto \(onto.prefix(12))"
+    case .rebase(let onto, _): "Rebase onto \(onto.prefix(12))"
     case .interactiveRebase: "Run interactive rebase"
     case .undo: "Undo last recoverable operation"
     }

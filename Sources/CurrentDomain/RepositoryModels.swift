@@ -275,7 +275,7 @@ public struct CommitRequest: Hashable, Sendable {
 
 public enum BranchMutation: Hashable, Sendable {
   case create(name: String, startPoint: String?, checkout: Bool)
-  case checkout(name: String)
+  case checkout(name: String, autoStash: Bool)
   case rename(oldName: String, newName: String)
   case delete(name: String, force: Bool)
 }
@@ -445,7 +445,7 @@ public enum GitLFSMutation: Hashable, Sendable {
 }
 
 public enum MergeMutation: Hashable, Sendable {
-  case start(branch: String, squash: Bool, noFastForward: Bool)
+  case start(branch: String, squash: Bool, noFastForward: Bool, autoStash: Bool)
   case resolve(path: GitPath, side: ConflictSide)
   case resolveContents(path: GitPath, contents: [UInt8])
   case continueOperation
@@ -495,8 +495,8 @@ public enum HistoryMutation: Hashable, Sendable {
   case cherryPick(commit: String)
   case revert(commit: String)
   case reset(target: String, mode: ResetMode)
-  case rebase(onto: String)
-  case interactiveRebase(plan: InteractiveRebasePlan)
+  case rebase(onto: String, autoStash: Bool)
+  case interactiveRebase(plan: InteractiveRebasePlan, autoStash: Bool)
   case undo(reference: String)
 }
 

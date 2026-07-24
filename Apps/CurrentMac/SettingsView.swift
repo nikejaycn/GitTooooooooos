@@ -114,6 +114,21 @@ struct CurrentSettingsView: View {
           .foregroundStyle(.secondary)
       }
 
+      Section("Working Copy Protection") {
+        Toggle(
+          "Automatically stash before checkout, merge, and rebase",
+          isOn: Binding(
+            get: { model.autoStashEnabled },
+            set: { model.setAutoStashEnabled($0) }
+          )
+        )
+        Text(
+          "Current restores protected changes after a successful operation and keeps the stash when restoration conflicts. Checkout protection also includes untracked files."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
       Section("Privacy") {
         LabeledContent("Analytics", value: "Not collected")
         LabeledContent("Crash reports", value: "Not uploaded")

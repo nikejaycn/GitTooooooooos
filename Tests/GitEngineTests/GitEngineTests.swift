@@ -1138,7 +1138,10 @@ struct GitEngineTests {
       at: location,
       mutation: .rename(oldName: "feature", newName: "topic")
     )
-    try await engine.mutateBranch(at: location, mutation: .checkout(name: "main"))
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .checkout(name: "main", autoStash: false)
+    )
     try await engine.mutateBranch(
       at: location,
       mutation: .delete(name: "topic", force: false)
@@ -1173,7 +1176,11 @@ struct GitEngineTests {
     #expect(unstagedDocument.changedLineCount == 2)
     try await engine.mutateStash(
       at: location,
-      mutation: .save(message: "local work", includeUntracked: false)
+      mutation: .save(
+        message: "local work",
+        includeUntracked: false,
+        paths: []
+      )
     )
     let stashes = try await engine.stashes(at: location)
     #expect(stashes.count == 1)
@@ -1185,6 +1192,37 @@ struct GitEngineTests {
     #expect(try String(contentsOf: file, encoding: .utf8) == "changed\n")
     try await engine.mutateWorkingCopy(at: location, mutation: .discardTracked([path]))
     #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
+
+    let siblingPath = GitPath("sibling.txt")
+    let siblingFile = root.appendingPathComponent(siblingPath.displayString)
+    try Data("sibling base\n".utf8).write(to: siblingFile)
+    try await engine.mutateWorkingCopy(at: location, mutation: .stage([siblingPath]))
+    try await engine.commit(
+      at: location,
+      request: CommitRequest(message: "add sibling")
+    )
+    try Data("partial change\n".utf8).write(to: file)
+    try Data("sibling change\n".utf8).write(to: siblingFile)
+    try await engine.mutateStash(
+      at: location,
+      mutation: .save(
+        message: "only selected file",
+        includeUntracked: false,
+        paths: [path]
+      )
+    )
+    #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
+    #expect(try String(contentsOf: siblingFile, encoding: .utf8) == "sibling change\n")
+    let partialStash = try #require(try await engine.stashes(at: location).first)
+    try await engine.mutateStash(
+      at: location,
+      mutation: .apply(selector: partialStash.selector, reinstateIndex: true)
+    )
+    #expect(try String(contentsOf: file, encoding: .utf8) == "partial change\n")
+    try await engine.mutateWorkingCopy(
+      at: location,
+      mutation: .discardTracked([path, siblingPath])
+    )
 
     let ignoredPath = GitPath("[draft] note.txt")
     try Data("local\n".utf8).write(
@@ -1201,6 +1239,101 @@ struct GitEngineTests {
       encoding: .utf8
     )
     #expect(ignoreContents.contains("/\\[draft\\]\\ note.txt"))
+  }
+
+  @Test(
+    "Checkout auto-stash restores tracked, staged, and untracked changes",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveCheckoutAutoStash() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-checkout-autostash-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let tracked = root.appendingPathComponent("tracked.txt")
+    try Data("base\n".utf8).write(to: tracked)
+    try runGit(["-C", root.path, "add", "tracked.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try runGit(["-C", root.path, "branch", "topic"])
+
+    try Data("staged work\n".utf8).write(to: tracked)
+    try runGit(["-C", root.path, "add", "tracked.txt"])
+    let untracked = root.appendingPathComponent("untracked.txt")
+    try Data("untracked work\n".utf8).write(to: untracked)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .checkout(name: "topic", autoStash: true)
+    )
+
+    let status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.head == .branch("topic"))
+    #expect(status.changes.contains { $0.path.displayString == "tracked.txt" && $0.isStaged })
+    #expect(status.changes.contains { $0.path.displayString == "untracked.txt" })
+    #expect(try String(contentsOf: tracked, encoding: .utf8) == "staged work\n")
+    #expect(try String(contentsOf: untracked, encoding: .utf8) == "untracked work\n")
+    #expect(try await engine.stashes(at: location).isEmpty)
+  }
+
+  @Test(
+    "Merge auto-stash restores tracked changes after updating history",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveMergeAutoStash() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-merge-autostash-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let local = root.appendingPathComponent("local.txt")
+    try Data("base\n".utf8).write(to: local)
+    try runGit(["-C", root.path, "add", "local.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try runGit(["-C", root.path, "switch", "-c", "topic"])
+    try Data("topic\n".utf8).write(to: root.appendingPathComponent("topic.txt"))
+    try runGit(["-C", root.path, "add", "topic.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "topic"])
+    try runGit(["-C", root.path, "switch", "main"])
+    try Data("dirty local work\n".utf8).write(to: local)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateMerge(
+      at: location,
+      mutation: .start(
+        branch: "topic",
+        squash: false,
+        noFastForward: false,
+        autoStash: true
+      )
+    )
+
+    #expect(try String(contentsOf: local, encoding: .utf8) == "dirty local work\n")
+    #expect(
+      try String(
+        contentsOf: root.appendingPathComponent("topic.txt"),
+        encoding: .utf8
+      ) == "topic\n"
+    )
+    #expect(try await engine.stashes(at: location).isEmpty)
   }
 
   @Test(
@@ -1675,7 +1808,12 @@ struct GitEngineTests {
     let location = try await engine.locateRepository(at: root)
     try await engine.mutateMerge(
       at: location,
-      mutation: .start(branch: "topic", squash: false, noFastForward: false)
+      mutation: .start(
+        branch: "topic",
+        squash: false,
+        noFastForward: false,
+        autoStash: false
+      )
     )
 
     var status = try await engine.status(
@@ -1708,7 +1846,12 @@ struct GitEngineTests {
 
     try await engine.mutateMerge(
       at: location,
-      mutation: .start(branch: "topic", squash: false, noFastForward: false)
+      mutation: .start(
+        branch: "topic",
+        squash: false,
+        noFastForward: false,
+        autoStash: false
+      )
     )
     try await engine.mutateMerge(
       at: location,
@@ -1809,7 +1952,7 @@ struct GitEngineTests {
     let rebaseRecovery = try #require(
       try await engine.mutateHistory(
         at: location,
-        mutation: .rebase(onto: "main")
+        mutation: .rebase(onto: "main", autoStash: false)
       )
     )
     #expect(rebaseRecovery.targetOID == beforeRebase)
@@ -1846,7 +1989,10 @@ struct GitEngineTests {
     try runGit(["init", "--initial-branch=main", root.path])
     try runGit(["-C", root.path, "config", "user.name", "Current Test"])
     try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
-    try runGit(["-C", root.path, "commit", "--allow-empty", "-m", "base"])
+    let localWork = root.appendingPathComponent("local-work.txt")
+    try Data("base work\n".utf8).write(to: localWork)
+    try runGit(["-C", root.path, "add", "local-work.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
     let baseOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
     for (name, subject) in [
       ("a.txt", "commit A"),
@@ -1897,11 +2043,14 @@ struct GitEngineTests {
         action: .drop
       ),
     ]
+    try Data("dirty tracked work\n".utf8).write(to: localWork)
+    let untrackedWork = root.appendingPathComponent("untracked-work.txt")
+    try Data("preserve me\n".utf8).write(to: untrackedWork)
 
     let recovery = try #require(
       try await engine.mutateHistory(
         at: location,
-        mutation: .interactiveRebase(plan: plan)
+        mutation: .interactiveRebase(plan: plan, autoStash: true)
       )
     )
     #expect(recovery.targetOID == plan.originalHeadOID)
@@ -1913,6 +2062,8 @@ struct GitEngineTests {
     #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("b.txt").path))
     #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("c.txt").path))
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("d.txt").path))
+    #expect(try String(contentsOf: localWork, encoding: .utf8) == "dirty tracked work\n")
+    #expect(try String(contentsOf: untrackedWork, encoding: .utf8) == "preserve me\n")
     #expect(
       !FileManager.default.fileExists(
         atPath: location.gitDirectoryURL
@@ -1961,7 +2112,7 @@ struct GitEngineTests {
 
     _ = try await engine.mutateHistory(
       at: location,
-      mutation: .interactiveRebase(plan: plan)
+      mutation: .interactiveRebase(plan: plan, autoStash: false)
     )
     let conflicted = try await engine.status(
       at: location,
