@@ -118,6 +118,11 @@ public protocol GitEngineProtocol: Sendable {
     offset: Int,
     limit: Int
   ) async throws -> [CommitSummary]
+  func searchHistory(
+    at location: RepositoryLocation,
+    query: HistorySearchQuery,
+    limit: Int
+  ) async throws -> [CommitSummary]
   func references(at location: RepositoryLocation) async throws -> [GitReference]
   func mutateWorkingCopy(
     at location: RepositoryLocation,
@@ -187,6 +192,14 @@ extension GitEngineProtocol {
 
   public func lfsVersion() async throws -> String {
     throw GitEngineError.invalidOutput("Git LFS capability checking is not implemented.")
+  }
+
+  public func searchHistory(
+    at location: RepositoryLocation,
+    query: HistorySearchQuery,
+    limit: Int
+  ) async throws -> [CommitSummary] {
+    throw GitEngineError.invalidOutput("Repository history search is not implemented.")
   }
 
   public func conflictFile(
@@ -473,6 +486,59 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     } catch {
       throw GitEngineError.invalidOutput(String(describing: error))
     }
+  }
+
+  public func searchHistory(
+    at location: RepositoryLocation,
+    query: HistorySearchQuery,
+    limit: Int
+  ) async throws -> [CommitSummary] {
+    guard !query.isEmpty else { return [] }
+    let boundedLimit = min(max(limit, 1), 1_000)
+
+    var searches: [(message: String?, author: String?)] = []
+    if let text = query.text {
+      searches.append(
+        (
+          message: [query.message, text].compactMap(\.self).joined(separator: " "),
+          author: query.author
+        )
+      )
+      if query.author == nil {
+        searches.append((message: query.message, author: text))
+      }
+    } else {
+      searches.append((message: query.message, author: query.author))
+    }
+
+    var commitsByOID: [String: CommitSummary] = [:]
+    for search in searches {
+      let result = try await execute(
+        GitCommand(
+          arguments: historySearchArguments(
+            query: query,
+            message: search.message,
+            author: search.author,
+            limit: boundedLimit
+          ),
+          workingDirectory: location.worktreeURL,
+          outputLimit: 64 * 1024 * 1024
+        )
+      )
+      for commit in try parseHistory(result.standardOutput) {
+        commitsByOID[commit.oid] = commit
+      }
+    }
+
+    return commitsByOID.values
+      .sorted {
+        if $0.authoredAt == $1.authoredAt {
+          return $0.oid < $1.oid
+        }
+        return $0.authoredAt > $1.authoredAt
+      }
+      .prefix(boundedLimit)
+      .map(\.self)
   }
 
   public func references(
@@ -1423,6 +1489,73 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
     }
     return result
+  }
+
+  private func historySearchArguments(
+    query: HistorySearchQuery,
+    message: String?,
+    author: String?,
+    limit: Int
+  ) -> [String] {
+    var arguments = [
+      "log",
+      query.revision ?? "--all",
+      "--topo-order",
+      "--date-order",
+      "--regexp-ignore-case",
+      "--max-count=\(limit)",
+      "--format=%x1e%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00",
+    ]
+    if query.revision != nil {
+      arguments.append("--no-walk")
+    }
+    if let message {
+      arguments += [
+        "--fixed-strings",
+        "--all-match",
+        "--grep=\(message)",
+      ]
+    }
+    if let author {
+      arguments.append("--author=\(escapedBasicRegularExpression(author))")
+    }
+    if let after = query.after {
+      arguments.append("--since=\(after)")
+    }
+    if let before = query.before {
+      arguments.append("--until=\(before)")
+    }
+    if let path = query.path {
+      arguments += ["--", ":(literal)\(path)"]
+    }
+    return arguments
+  }
+
+  private func escapedBasicRegularExpression(_ value: String) -> String {
+    let metacharacters = CharacterSet(charactersIn: ".[\\*^$")
+    return value.unicodeScalars.reduce(into: "") { result, scalar in
+      if metacharacters.contains(scalar) {
+        result.append("\\")
+      }
+      result.unicodeScalars.append(scalar)
+    }
+  }
+
+  private func parseHistory(_ bytes: [UInt8]) throws -> [CommitSummary] {
+    do {
+      return try HistoryParser().parse(bytes).map { commit in
+        CommitSummary(
+          oid: commit.oid,
+          parentOIDs: commit.parentOIDs,
+          authorName: commit.authorName,
+          authorEmail: commit.authorEmail,
+          authoredAt: Date(timeIntervalSince1970: TimeInterval(commit.authoredAtUnixSeconds)),
+          subject: commit.subject
+        )
+      }
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
   }
 
   private func indexStage(

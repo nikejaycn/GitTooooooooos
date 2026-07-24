@@ -103,6 +103,43 @@ struct RepositoryActorTests {
     )
   }
 
+  @Test("Repository searches are bounded to the snapshot generation")
+  func historySearchGeneration() async throws {
+    let commit = CommitSummary(
+      oid: String(repeating: "c", count: 40),
+      parentOIDs: [],
+      authorName: "Grace",
+      authorEmail: "grace@example.com",
+      authoredAt: Date(timeIntervalSince1970: 1_700_000_000),
+      subject: "search result"
+    )
+    let engine = StubGitEngine(history: [commit])
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let snapshot = try await repository.refreshSnapshot(historyLimit: 1)
+    let query = try HistorySearchQuery.parse("search")
+
+    let result = try #require(
+      try await repository.searchHistory(
+        query: query,
+        limit: 10,
+        generation: snapshot.generation
+      )
+    )
+    #expect(result.commits == [commit])
+
+    await repository.invalidate()
+    #expect(
+      try await repository.searchHistory(
+        query: query,
+        limit: 10,
+        generation: snapshot.generation
+      ) == nil
+    )
+  }
+
   @Test("Commit comparisons publish only for the requested generation")
   func commitComparison() async throws {
     let files = [
@@ -249,6 +286,14 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func history(
     at location: RepositoryLocation,
+    limit: Int
+  ) async throws -> [CommitSummary] {
+    Array(historyCommits.prefix(limit))
+  }
+
+  func searchHistory(
+    at location: RepositoryLocation,
+    query: HistorySearchQuery,
     limit: Int
   ) async throws -> [CommitSummary] {
     Array(historyCommits.prefix(limit))

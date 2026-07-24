@@ -23,6 +23,8 @@ final class AppModel {
   private(set) var repositoryStatus: RepositoryStatus?
   private(set) var commits: [CommitSummary] = []
   private(set) var graphRows: [GraphRow] = []
+  private(set) var repositorySearchRows: [GraphRow] = []
+  private(set) var isRepositorySearchLoading = false
   private(set) var isHistoryPageLoading = false
   private(set) var hasMoreHistory = false
   private(set) var maximumLoadedCommitCount = 10_000
@@ -47,6 +49,8 @@ final class AppModel {
   private var repositorySessionID = UUID()
   private var graphLayoutTask: Task<Void, Never>?
   private var graphLayoutRequestID: UUID?
+  private var repositorySearchTask: Task<Void, Never>?
+  private var repositorySearchRequestID: UUID?
   private var historyPageTask: Task<Void, Never>?
   private var nextHistoryCursor: HistoryCursor?
   private var commitComparisonTask: Task<Void, Never>?
@@ -258,6 +262,83 @@ final class AppModel {
       nextHistoryCursor = HistoryCursor(offset: commits.count)
       hasMoreHistory = true
     }
+  }
+
+  func searchRepositoryHistory(_ rawQuery: String) {
+    repositorySearchTask?.cancel()
+    repositorySearchTask = nil
+    repositorySearchRequestID = nil
+
+    guard
+      let repository,
+      let generation = repositoryStatus?.generation
+    else {
+      return
+    }
+
+    let query: HistorySearchQuery
+    do {
+      query = try HistorySearchQuery.parse(rawQuery)
+    } catch {
+      repositorySearchRows = []
+      isRepositorySearchLoading = false
+      errorMessage = error.localizedDescription
+      return
+    }
+
+    let requestID = UUID()
+    let sessionID = repositorySessionID
+    repositorySearchRequestID = requestID
+    isRepositorySearchLoading = true
+    errorMessage = nil
+    repositorySearchTask = Task {
+      defer {
+        if repositorySearchRequestID == requestID {
+          isRepositorySearchLoading = false
+          repositorySearchTask = nil
+        }
+      }
+      do {
+        guard
+          let result = try await repository.searchHistory(
+            query: query,
+            limit: min(maximumLoadedCommitCount, 1_000),
+            generation: generation
+          ),
+          repositorySearchRequestID == requestID,
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+        repositorySearchRows = GraphRowBuilder().build(
+          commits: result.commits,
+          references: references,
+          workingCopyChangeCount: 0,
+          generation: result.generation
+        )
+      } catch is CancellationError {
+        return
+      } catch {
+        guard
+          repositorySearchRequestID == requestID,
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == generation
+        else {
+          return
+        }
+        repositorySearchRows = []
+        errorMessage = error.localizedDescription
+      }
+    }
+  }
+
+  func clearRepositoryHistorySearch() {
+    repositorySearchTask?.cancel()
+    repositorySearchTask = nil
+    repositorySearchRequestID = nil
+    repositorySearchRows = []
+    isRepositorySearchLoading = false
   }
 
   func compareSelectedCommits(_ commitOIDs: [String]) {
@@ -841,6 +922,7 @@ final class AppModel {
     historyPageTask?.cancel()
     historyPageTask = nil
     isHistoryPageLoading = false
+    clearRepositoryHistorySearch()
     clearCommitComparison()
     repositoryStatus = snapshot.status
     commits = Array(snapshot.commits.prefix(maximumLoadedCommitCount))
@@ -860,6 +942,7 @@ final class AppModel {
     else {
       return
     }
+    clearRepositoryHistorySearch()
     clearCommitComparison()
     repositoryStatus = status
     rebuildGraphRows(generation: status.generation)

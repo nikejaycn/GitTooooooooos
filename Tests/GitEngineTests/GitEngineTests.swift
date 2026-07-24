@@ -124,6 +124,61 @@ struct GitEngineTests {
     #expect(command.redactedDescription.contains("--max-count=201"))
   }
 
+  @Test("Repository history search uses structured option-safe filters")
+  func historySearchArguments() async throws {
+    let oid = String(repeating: "b", count: 40)
+    let output =
+      "\u{1e}\(oid)\0\0Grace\0grace@example.com\0"
+      + "1769904000\0parser fix\0"
+    let runner = StubRunner(results: [.success(output)])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+    let query = HistorySearchQuery(
+      message: "parser fix",
+      author: "Grace [Bot]",
+      path: "Sources/A B.swift",
+      after: "2026-01-01",
+      before: "2026-02-01"
+    )
+
+    let commits = try await engine.searchHistory(
+      at: location,
+      query: query,
+      limit: 200
+    )
+
+    #expect(commits.map(\.oid) == [oid])
+    let command = try #require(await runner.commands().first)
+    #expect(command.arguments.contains(Array("--regexp-ignore-case".utf8)))
+    #expect(command.arguments.contains(Array("--grep=parser fix".utf8)))
+    #expect(command.arguments.contains(Array("--author=Grace \\[Bot]".utf8)))
+    #expect(command.arguments.contains(Array("--since=2026-01-01".utf8)))
+    #expect(command.arguments.contains(Array("--until=2026-02-01".utf8)))
+    #expect(command.arguments.contains(Array(":(literal)Sources/A B.swift".utf8)))
+  }
+
+  @Test("Repository history search parses scopes and quoted phrases")
+  func historySearchQueryParsing() throws {
+    let query = try HistorySearchQuery.parse(
+      #"fix author:"Grace Hopper" file:"Sources/A B.swift" after:2026-01-01 sha:abcd1234"#
+    )
+
+    #expect(query.text == "fix")
+    #expect(query.author == "Grace Hopper")
+    #expect(query.path == "Sources/A B.swift")
+    #expect(query.after == "2026-01-01")
+    #expect(query.revision == "abcd1234")
+    #expect(throws: HistorySearchQueryError.self) {
+      try HistorySearchQuery.parse("before:2026-02-30")
+    }
+    #expect(throws: HistorySearchQueryError.self) {
+      try HistorySearchQuery.parse(#"author:"Grace Hopper"#)
+    }
+  }
+
   @Test("Commit comparison preserves rename paths from NUL output")
   func commitComparison() async throws {
     let base = String(repeating: "a", count: 40)

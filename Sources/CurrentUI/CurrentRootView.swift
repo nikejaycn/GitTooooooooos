@@ -11,11 +11,20 @@ public struct CurrentRootView: View {
     case operations
   }
 
+  private enum GraphSearchScope: String, CaseIterable, Identifiable {
+    case loaded = "Loaded"
+    case repository = "Repository"
+
+    var id: Self { self }
+  }
+
   private let repositoryName: String?
   private let gitVersion: String?
   private let status: RepositoryStatus?
   private let commits: [CommitSummary]
   private let graphRows: [GraphRow]
+  private let repositorySearchRows: [GraphRow]
+  private let isRepositorySearchLoading: Bool
   private let isHistoryPageLoading: Bool
   private let hasMoreHistory: Bool
   private let commitComparison: CommitComparison?
@@ -40,6 +49,8 @@ public struct CurrentRootView: View {
   private let cancelRepositoryOperation: () -> Void
   private let refresh: () -> Void
   private let loadNextHistoryPage: () -> Void
+  private let searchRepositoryHistory: (String) -> Void
+  private let clearRepositoryHistorySearch: () -> Void
   private let compareSelectedCommits: ([String]) -> Void
   private let stage: (GitPath) -> Void
   private let unstage: (GitPath) -> Void
@@ -78,6 +89,8 @@ public struct CurrentRootView: View {
   @State private var isWorkingCopySelected = false
   @State private var selectedGraphRows: [GraphRow] = []
   @State private var graphSearchText = ""
+  @State private var graphSearchScope: GraphSearchScope = .loaded
+  @State private var hasSubmittedRepositorySearch = false
   @State private var pendingHardResetOID: String?
   @State private var conflictEditorPath: GitPath?
   @State private var isCloningRepository = false
@@ -89,6 +102,8 @@ public struct CurrentRootView: View {
     status: RepositoryStatus?,
     commits: [CommitSummary],
     graphRows: [GraphRow],
+    repositorySearchRows: [GraphRow],
+    isRepositorySearchLoading: Bool,
     isHistoryPageLoading: Bool,
     hasMoreHistory: Bool,
     commitComparison: CommitComparison?,
@@ -113,6 +128,8 @@ public struct CurrentRootView: View {
     cancelRepositoryOperation: @escaping () -> Void,
     refresh: @escaping () -> Void,
     loadNextHistoryPage: @escaping () -> Void,
+    searchRepositoryHistory: @escaping (String) -> Void,
+    clearRepositoryHistorySearch: @escaping () -> Void,
     compareSelectedCommits: @escaping ([String]) -> Void,
     stage: @escaping (GitPath) -> Void,
     unstage: @escaping (GitPath) -> Void,
@@ -147,6 +164,8 @@ public struct CurrentRootView: View {
     self.status = status
     self.commits = commits
     self.graphRows = graphRows
+    self.repositorySearchRows = repositorySearchRows
+    self.isRepositorySearchLoading = isRepositorySearchLoading
     self.isHistoryPageLoading = isHistoryPageLoading
     self.hasMoreHistory = hasMoreHistory
     self.commitComparison = commitComparison
@@ -171,6 +190,8 @@ public struct CurrentRootView: View {
     self.cancelRepositoryOperation = cancelRepositoryOperation
     self.refresh = refresh
     self.loadNextHistoryPage = loadNextHistoryPage
+    self.searchRepositoryHistory = searchRepositoryHistory
+    self.clearRepositoryHistorySearch = clearRepositoryHistorySearch
     self.compareSelectedCommits = compareSelectedCommits
     self.stage = stage
     self.unstage = unstage
@@ -855,14 +876,29 @@ public struct CurrentRootView: View {
             .font(.system(.body, design: .monospaced))
             .foregroundStyle(.secondary)
           Spacer()
+          Picker("Search scope", selection: $graphSearchScope) {
+            ForEach(GraphSearchScope.allCases) { scope in
+              Text(scope.rawValue)
+                .tag(scope)
+            }
+          }
+          .labelsHidden()
+          .frame(width: 108)
           HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
               .foregroundStyle(.secondary)
-            TextField("Search loaded history", text: $graphSearchText)
+            TextField(graphSearchPlaceholder, text: $graphSearchText)
               .textFieldStyle(.plain)
+              .onSubmit {
+                guard graphSearchScope == .repository else { return }
+                hasSubmittedRepositorySearch = true
+                searchRepositoryHistory(graphSearchText)
+              }
             if !graphSearchText.isEmpty {
               Button {
                 graphSearchText = ""
+                hasSubmittedRepositorySearch = false
+                clearRepositoryHistorySearch()
               } label: {
                 Image(systemName: "xmark.circle.fill")
               }
@@ -874,9 +910,10 @@ public struct CurrentRootView: View {
           .padding(.horizontal, 8)
           .padding(.vertical, 5)
           .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-          .frame(width: 220)
+          .frame(width: 240)
+          .help(repositorySearchHelp)
           if !graphSearchText.isEmpty {
-            Text("\(graphSearchMatchCount)/\(commits.count)")
+            Text(graphSearchCount)
               .font(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
           }
@@ -910,8 +947,8 @@ public struct CurrentRootView: View {
         HSplitView {
           ZStack(alignment: .bottomTrailing) {
             CommitGraphView(
-              rows: graphRows,
-              searchQuery: graphSearchText,
+              rows: activeGraphRows,
+              searchQuery: graphSearchScope == .loaded ? graphSearchText : "",
               onSelection: { rows in
                 let commitOIDs = rows.compactMap(\.commitOID)
                 selectedGraphRows = rows
@@ -923,9 +960,31 @@ public struct CurrentRootView: View {
                   : nil
                 compareSelectedCommits(commitOIDs)
               },
-              onApproachingEnd: loadNextHistoryPage
+              onApproachingEnd: graphSearchScope == .loaded ? loadNextHistoryPage : {}
             )
-            if isHistoryPageLoading {
+            if graphSearchScope == .repository, isRepositorySearchLoading {
+              ProgressView("Searching repository…")
+                .controlSize(.small)
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(10)
+                .allowsHitTesting(false)
+            } else if graphSearchScope == .repository,
+              hasSubmittedRepositorySearch,
+              repositorySearchRows.isEmpty
+            {
+              ContentUnavailableView.search(text: graphSearchText)
+                .allowsHitTesting(false)
+            } else if graphSearchScope == .repository,
+              !hasSubmittedRepositorySearch
+            {
+              ContentUnavailableView(
+                "Search Entire Repository",
+                systemImage: "text.magnifyingglass",
+                description: Text("Enter a query and press Return.")
+              )
+              .allowsHitTesting(false)
+            } else if isHistoryPageLoading {
               ProgressView()
                 .controlSize(.small)
                 .padding(8)
@@ -943,6 +1002,20 @@ public struct CurrentRootView: View {
           .frame(minWidth: 360)
           graphInspector
         }
+      }
+      .onChange(of: graphSearchScope) {
+        selectedGraphRows = []
+        selectedCommitOID = nil
+        selectedCommitCount = 0
+        isWorkingCopySelected = false
+        hasSubmittedRepositorySearch = false
+        clearRepositoryHistorySearch()
+        compareSelectedCommits([])
+      }
+      .onChange(of: graphSearchText) {
+        guard graphSearchScope == .repository else { return }
+        hasSubmittedRepositorySearch = false
+        clearRepositoryHistorySearch()
       }
     }
   }
@@ -1137,6 +1210,32 @@ public struct CurrentRootView: View {
     graphRows.lazy.filter {
       !$0.isWorkingCopy && $0.matches(searchQuery: graphSearchText)
     }.count
+  }
+
+  private var activeGraphRows: [GraphRow] {
+    graphSearchScope == .repository ? repositorySearchRows : graphRows
+  }
+
+  private var graphSearchPlaceholder: String {
+    graphSearchScope == .repository
+      ? "Search repository, then press Return"
+      : "Search loaded history"
+  }
+
+  private var graphSearchCount: String {
+    if graphSearchScope == .repository {
+      return isRepositorySearchLoading ? "…" : "\(repositorySearchRows.count)"
+    }
+    return "\(graphSearchMatchCount)/\(commits.count)"
+  }
+
+  private var repositorySearchHelp: String {
+    if graphSearchScope == .loaded {
+      return "Filters the commits already loaded in the graph."
+    }
+    return
+      "Searches all refs. Use message:, author:, file:, after:YYYY-MM-DD, "
+      + "before:YYYY-MM-DD, or sha:. Quote phrases containing spaces."
   }
 
   private func headTitle(_ head: HeadState) -> String {

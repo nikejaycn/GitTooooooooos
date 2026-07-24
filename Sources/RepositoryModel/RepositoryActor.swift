@@ -112,6 +112,25 @@ public actor RepositoryActor {
     )
   }
 
+  public func searchHistory(
+    query: HistorySearchQuery,
+    limit: Int,
+    generation requestedGeneration: RepositoryGeneration
+  ) async throws -> HistorySearchResult? {
+    guard requestedGeneration == generation else { return nil }
+    let commits = try await engine.searchHistory(
+      at: location,
+      query: query,
+      limit: min(max(limit, 1), 1_000)
+    )
+    guard requestedGeneration == generation else { return nil }
+    return HistorySearchResult(
+      generation: requestedGeneration,
+      query: query,
+      commits: commits
+    )
+  }
+
   public func diff(
     for path: GitPath,
     source: DiffSource
