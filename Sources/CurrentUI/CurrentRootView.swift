@@ -8,6 +8,7 @@ public struct CurrentRootView: View {
     case changes
     case history
     case stashes
+    case operations
   }
 
   private let repositoryName: String?
@@ -17,6 +18,7 @@ public struct CurrentRootView: View {
   private let references: [GitReference]
   private let stashes: [StashEntry]
   private let remotes: [GitRemote]
+  private let activities: [OperationActivity]
   private let selectedDiff: DiffDocument?
   private let isDiffLoading: Bool
   private let isLoading: Bool
@@ -51,6 +53,7 @@ public struct CurrentRootView: View {
     references: [GitReference],
     stashes: [StashEntry],
     remotes: [GitRemote],
+    activities: [OperationActivity],
     selectedDiff: DiffDocument?,
     isDiffLoading: Bool,
     isLoading: Bool,
@@ -79,6 +82,7 @@ public struct CurrentRootView: View {
     self.references = references
     self.stashes = stashes
     self.remotes = remotes
+    self.activities = activities
     self.selectedDiff = selectedDiff
     self.isDiffLoading = isDiffLoading
     self.isLoading = isLoading
@@ -114,6 +118,8 @@ public struct CurrentRootView: View {
             .tag(Workspace.history)
           Label("Stashes", systemImage: "archivebox")
             .tag(Workspace.stashes)
+          Label("Operations", systemImage: "list.bullet.rectangle")
+            .tag(Workspace.operations)
         }
         if !references.isEmpty {
           Section("References") {
@@ -254,6 +260,8 @@ public struct CurrentRootView: View {
           history
         case .stashes:
           stashList
+        case .operations:
+          operationConsole
         }
 
         Divider()
@@ -272,6 +280,60 @@ public struct CurrentRootView: View {
         systemImage: "point.3.connected.trianglepath.dotted",
         description: Text("Choose a local repository to inspect its working copy.")
       )
+    }
+  }
+
+  @ViewBuilder
+  private var operationConsole: some View {
+    if activities.isEmpty {
+      ContentUnavailableView(
+        "No Operations Yet",
+        systemImage: "list.bullet.rectangle",
+        description: Text("Git write and remote operations will appear here.")
+      )
+    } else {
+      List(activities) { activity in
+        HStack(alignment: .top, spacing: 10) {
+          Image(systemName: activityIcon(activity.state))
+            .foregroundStyle(activityColor(activity.state))
+            .frame(width: 18)
+          VStack(alignment: .leading, spacing: 4) {
+            HStack {
+              Text(activity.title)
+                .fontWeight(.medium)
+              Spacer()
+              Text(activity.startedAt, style: .time)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            if let detail = activity.detail, !detail.isEmpty {
+              Text(detail)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            }
+          }
+        }
+        .padding(.vertical, 3)
+      }
+    }
+  }
+
+  private func activityIcon(_ state: OperationActivityState) -> String {
+    switch state {
+    case .running: "progress.indicator"
+    case .succeeded: "checkmark.circle.fill"
+    case .failed: "xmark.octagon.fill"
+    case .cancelled: "stop.circle.fill"
+    }
+  }
+
+  private func activityColor(_ state: OperationActivityState) -> Color {
+    switch state {
+    case .running: .accentColor
+    case .succeeded: .green
+    case .failed: .red
+    case .cancelled: .orange
     }
   }
 

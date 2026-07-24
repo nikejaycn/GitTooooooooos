@@ -42,3 +42,50 @@ public enum RemoteMutation: Hashable, Sendable {
   case pull(remote: String?, branch: String?, rebase: Bool)
   case push(remote: String, branch: String, setUpstream: Bool)
 }
+
+public enum OperationActivityState: String, Hashable, Sendable, Codable {
+  case running
+  case succeeded
+  case failed
+  case cancelled
+}
+
+public struct OperationActivity: Hashable, Sendable, Identifiable {
+  public let id: UUID
+  public let title: String
+  public let startedAt: Date
+  public let finishedAt: Date?
+  public let state: OperationActivityState
+  public let detail: String?
+
+  public init(
+    id: UUID = UUID(),
+    title: String,
+    startedAt: Date = Date(),
+    finishedAt: Date? = nil,
+    state: OperationActivityState = .running,
+    detail: String? = nil
+  ) {
+    self.id = id
+    self.title = title
+    self.startedAt = startedAt
+    self.finishedAt = finishedAt
+    self.state = state
+    self.detail = detail
+  }
+
+  public func finishing(
+    as state: OperationActivityState,
+    detail: String? = nil,
+    at date: Date = Date()
+  ) -> Self {
+    Self(
+      id: id,
+      title: title,
+      startedAt: startedAt,
+      finishedAt: date,
+      state: state,
+      detail: detail
+    )
+  }
+}

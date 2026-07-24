@@ -15,6 +15,7 @@ struct CurrentMacApp: App {
         references: model.references,
         stashes: model.stashes,
         remotes: model.remotes,
+        activities: model.activities,
         selectedDiff: model.selectedDiff,
         isDiffLoading: model.isDiffLoading,
         isLoading: model.isLoading,

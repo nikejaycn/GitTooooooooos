@@ -16,6 +16,7 @@ final class AppModel {
   private(set) var references: [GitReference] = []
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
+  private(set) var activities: [OperationActivity] = []
   private(set) var selectedDiff: DiffDocument?
   private(set) var isDiffLoading = false
   private(set) var isLoading = false
@@ -86,6 +87,7 @@ final class AppModel {
 
   func commit(_ message: String) async throws {
     guard let repository else { return }
+    let activityID = beginActivity("Commit staged changes")
     isLoading = true
     errorMessage = nil
     defer { isLoading = false }
@@ -94,8 +96,10 @@ final class AppModel {
         CommitRequest(message: message)
       )
       apply(snapshot)
+      finishActivity(activityID, state: .succeeded)
     } catch {
       errorMessage = error.localizedDescription
+      finishActivity(activityID, error: error)
       throw error
     }
   }
@@ -182,13 +186,16 @@ final class AppModel {
 
   private func apply(_ mutation: WorkingCopyMutation) {
     guard let repository else { return }
+    let activityID = beginActivity(workingCopyTitle(mutation))
     Task {
       isLoading = true
       errorMessage = nil
       do {
         repositoryStatus = try await repository.applyWorkingCopyMutation(mutation)
+        finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
       }
       isLoading = false
     }
@@ -196,6 +203,7 @@ final class AppModel {
 
   private func applyBranch(_ mutation: BranchMutation) {
     guard let repository else { return }
+    let activityID = beginActivity(branchTitle(mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -203,8 +211,10 @@ final class AppModel {
         let snapshot = try await repository.applyBranchMutation(mutation)
         apply(snapshot)
         selectedDiff = nil
+        finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
       }
       isLoading = false
     }
@@ -256,13 +266,16 @@ final class AppModel {
 
   private func applyStash(_ mutation: StashMutation) {
     guard let repository else { return }
+    let activityID = beginActivity(stashTitle(mutation))
     Task {
       isLoading = true
       errorMessage = nil
       do {
         apply(try await repository.applyStashMutation(mutation))
+        finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
       }
       isLoading = false
     }
@@ -270,13 +283,16 @@ final class AppModel {
 
   private func applyRemote(_ mutation: RemoteMutation) {
     guard let repository else { return }
+    let activityID = beginActivity(remoteTitle(mutation))
     Task {
       isLoading = true
       errorMessage = nil
       do {
         apply(try await repository.applyRemoteMutation(mutation))
+        finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
       }
       isLoading = false
     }
@@ -288,5 +304,66 @@ final class AppModel {
     references = snapshot.references
     stashes = snapshot.stashes
     remotes = snapshot.remotes
+  }
+
+  private func beginActivity(_ title: String) -> UUID {
+    let activity = OperationActivity(title: title)
+    activities.insert(activity, at: 0)
+    if activities.count > 100 {
+      activities.removeLast(activities.count - 100)
+    }
+    return activity.id
+  }
+
+  private func finishActivity(
+    _ id: UUID,
+    state: OperationActivityState,
+    detail: String? = nil
+  ) {
+    guard let index = activities.firstIndex(where: { $0.id == id }) else { return }
+    activities[index] = activities[index].finishing(as: state, detail: detail)
+  }
+
+  private func finishActivity(_ id: UUID, error: Error) {
+    finishActivity(
+      id,
+      state: error is CancellationError ? .cancelled : .failed,
+      detail: error.localizedDescription
+    )
+  }
+
+  private func workingCopyTitle(_ mutation: WorkingCopyMutation) -> String {
+    switch mutation {
+    case .stage: "Stage files"
+    case .unstage: "Unstage files"
+    case .discardTracked: "Discard working-copy changes"
+    case .ignore: "Update .gitignore"
+    }
+  }
+
+  private func branchTitle(_ mutation: BranchMutation) -> String {
+    switch mutation {
+    case .create(let name, _, _): "Create branch \(name)"
+    case .checkout(let name): "Check out \(name)"
+    case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
+    case .delete(let name, _): "Delete branch \(name)"
+    }
+  }
+
+  private func stashTitle(_ mutation: StashMutation) -> String {
+    switch mutation {
+    case .save: "Stash working-copy changes"
+    case .apply(let selector, _): "Apply \(selector)"
+    case .pop(let selector, _): "Pop \(selector)"
+    case .drop(let selector): "Drop \(selector)"
+    }
+  }
+
+  private func remoteTitle(_ mutation: RemoteMutation) -> String {
+    switch mutation {
+    case .fetch(let remote, _): "Fetch \(remote ?? "all remotes")"
+    case .pull(let remote, _, _): "Pull \(remote ?? "upstream")"
+    case .push(let remote, let branch, _): "Push \(branch) to \(remote)"
+    }
   }
 }
