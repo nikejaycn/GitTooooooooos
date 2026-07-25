@@ -2067,6 +2067,124 @@ struct GitEngineTests {
   }
 
   @Test(
+    "Reset modes preserve the documented index and worktree semantics including detached HEAD",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveResetModes() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-reset-modes-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("reset.txt")
+    try Data("one\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "reset.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "first"])
+    let firstOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    try Data("two\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "commit", "-am", "second"])
+    let secondOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+
+    let softRecovery = try #require(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .reset(target: firstOID, mode: .soft)
+      )
+    )
+    #expect(softRecovery.targetOID == secondOID)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == firstOID)
+    #expect(try runGitOutput(["-C", root.path, "diff", "--cached", "--name-only"]) == "reset.txt")
+    #expect(try String(contentsOf: file, encoding: .utf8) == "two\n")
+    try runGit(["-C", root.path, "reset", "--hard", secondOID])
+
+    let mixedRecovery = try #require(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .reset(target: firstOID, mode: .mixed)
+      )
+    )
+    #expect(mixedRecovery.targetOID == secondOID)
+    #expect(try runGitOutput(["-C", root.path, "diff", "--cached", "--name-only"]).isEmpty)
+    #expect(try runGitOutput(["-C", root.path, "diff", "--name-only"]) == "reset.txt")
+    #expect(try String(contentsOf: file, encoding: .utf8) == "two\n")
+    try runGit(["-C", root.path, "reset", "--hard", secondOID])
+
+    try runGit(["-C", root.path, "checkout", "--detach", secondOID])
+    #expect(try runGitOutput(["-C", root.path, "status", "--porcelain=v2"]).isEmpty)
+    let detachedStatus = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(0)
+    )
+    #expect(detachedStatus.changes.isEmpty)
+    #expect(!detachedStatus.operation.isInProgress)
+    let detachedRecovery = try #require(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .reset(target: firstOID, mode: .hard)
+      )
+    )
+    #expect(detachedRecovery.targetOID == secondOID)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == firstOID)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "--abbrev-ref", "HEAD"]) == "HEAD")
+    #expect(try String(contentsOf: file, encoding: .utf8) == "one\n")
+  }
+
+  @Test(
+    "Dropping a stash creates an applyable recovery reference",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveStashDropRecovery() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-stash-drop-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("stash.txt")
+    try Data("base\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "stash.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try Data("recover me\n".utf8).write(to: file)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateStash(
+      at: location,
+      mutation: .save(message: "drop recovery", includeUntracked: false, paths: [])
+    )
+    let stash = try #require(try await engine.stashes(at: location).first)
+    try await engine.mutateStash(
+      at: location,
+      mutation: .drop(selector: stash.selector)
+    )
+    #expect(try await engine.stashes(at: location).isEmpty)
+
+    let recoveryRef = try runGitOutput([
+      "-C", root.path, "for-each-ref", "--format=%(refname)", "refs/current/undo",
+    ])
+    let reference = try #require(
+      recoveryRef.split(separator: "\n").map(String.init).last
+    )
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", reference]) == stash.oid)
+    try runGit(["-C", root.path, "stash", "apply", reference])
+    #expect(try String(contentsOf: file, encoding: .utf8) == "recover me\n")
+  }
+
+  @Test(
     "Live interactive rebase reorders, rewords, squashes, and drops commits",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
   func liveInteractiveRebaseActions() async throws {

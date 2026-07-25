@@ -24,6 +24,8 @@ stash、执行操作、再恢复，容易漏掉 staged 状态或未跟踪文件�
 - Merge、普通 Rebase 与 Interactive Rebase 使用 Git 原生 `--autostash`，让 Git 在冲突、
   Continue 和 Abort 状态中管理恢复时机。未跟踪文件不会被原生 autostash 删除；若会被目标
   写入，Git 仍会安全拒绝而不是覆盖。
+- Drop 在删除 stash 前解析其 OID，并创建 `refs/current/undo/*` 恢复引用。即使 stash
+  reflog 已删除，该引用仍可交给 `git stash apply` 恢复内容。
 
 ## 后果
 
@@ -41,4 +43,7 @@ stash、执行操作、再恢复，容易漏掉 staged 状态或未跟踪文件�
 - 真实仓库测试验证只移走选定文件，其他 tracked 改动留在工作区，apply 后内容正确恢复。
 - Checkout 测试同时验证 tracked、staged、untracked 恢复且临时 stash 被清理。
 - Merge 与 Interactive Rebase 测试验证历史更新后 dirty tracked 内容恢复。
+- Drop 测试验证 stash 列表已删除，同时恢复引用仍指向原 stash OID 且可以重新 apply。
+- Reset 测试验证 soft、mixed、hard 在分支和 detached HEAD 下的 HEAD、index 与 worktree
+  语义。
 - 实际 App 验收覆盖选择计数、scope 表单、消息、创建后剩余改动、Stash 列表和 Settings 开关。

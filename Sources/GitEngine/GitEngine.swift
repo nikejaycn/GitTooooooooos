@@ -1640,6 +1640,12 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       arguments.append(Array(selector.utf8))
     case .drop(let selector):
       try validateStashSelector(selector)
+      let stashOID = try await resolveCommit(selector, at: location)
+      _ = try await createRecoveryReference(
+        reason: "stash-drop",
+        targetOID: stashOID,
+        at: location
+      )
       arguments = ["stash", "drop", selector].map { Array($0.utf8) }
     }
     _ = try await execute(
@@ -2771,9 +2777,15 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
 
   private func createRecoveryReference(
     reason: String,
+    targetOID: String? = nil,
     at location: RepositoryLocation
   ) async throws -> RecoveryReference {
-    let head = try await resolveCommit("HEAD", at: location)
+    let target: String
+    if let targetOID {
+      target = targetOID
+    } else {
+      target = try await resolveCommit("HEAD", at: location)
+    }
     let timestamp = Int(Date().timeIntervalSince1970)
     let identifier = UUID().uuidString.lowercased()
     let name = "refs/current/undo/\(timestamp)-\(identifier)"
@@ -2784,12 +2796,12 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           "-m",
           "Current recovery before \(reason)",
           name,
-          head,
+          target,
         ],
         workingDirectory: location.worktreeURL
       )
     )
-    return RecoveryReference(name: name, targetOID: head)
+    return RecoveryReference(name: name, targetOID: target)
   }
 
   private func requireCleanWorkingCopy(
