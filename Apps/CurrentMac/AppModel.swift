@@ -51,6 +51,7 @@ final class AppModel {
   private(set) var gitSourceDescription: String?
   private(set) var gitFallbackReason: String?
   private(set) var repositoryStatus: RepositoryStatus?
+  private(set) var commitTemplate: String?
   private(set) var commits: [CommitSummary] = []
   private(set) var graphRows: [GraphRow] = []
   private(set) var repositorySearchRows: [GraphRow] = []
@@ -686,7 +687,7 @@ final class AppModel {
     apply(.ignore([path]))
   }
 
-  func commit(_ message: String) async throws {
+  func commit(_ request: CommitRequest) async throws {
     guard let repository else { return }
     let activityID = beginActivity("Commit staged changes")
     isLoading = true
@@ -694,7 +695,7 @@ final class AppModel {
     defer { isLoading = false }
     do {
       let snapshot = try await repository.createCommit(
-        CommitRequest(message: message)
+        request
       )
       apply(snapshot)
       finishActivity(activityID, state: .succeeded)
@@ -1434,10 +1435,12 @@ final class AppModel {
   ) async throws {
     let opened = try await RepositoryActor.open(at: url, engine: engine)
     let snapshot = try await opened.refreshSnapshot()
+    let template = try? await opened.commitTemplate()
     try Task.checkCancellation()
     repository = opened
     repositorySessionID = UUID()
     repositoryName = opened.location.worktreeURL.lastPathComponent
+    commitTemplate = template
     apply(snapshot)
     selectedDiff = nil
     startWatchingRepository(opened)
@@ -1454,6 +1457,7 @@ final class AppModel {
     repository = nil
     repositoryName = nil
     repositoryStatus = nil
+    commitTemplate = nil
     commits = []
     graphLayoutTask?.cancel()
     graphLayoutTask = nil

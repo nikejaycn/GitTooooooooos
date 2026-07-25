@@ -839,6 +839,61 @@ struct GitEngineTests {
     )
   }
 
+  @Test("Commit options remain structured and append validated co-author trailers")
+  func advancedCommitOptions() async throws {
+    let runner = StubRunner(results: [.success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.commit(
+      at: location,
+      request: CommitRequest(
+        message: "Pair change",
+        skipHooks: true,
+        sign: true,
+        coAuthors: [
+          CommitCoAuthor(name: "Grace Hopper", email: "grace@example.invalid")
+        ]
+      )
+    )
+
+    let command = try #require(await runner.commands().first)
+    #expect(
+      command.arguments == [
+        Array("commit".utf8),
+        Array("--no-verify".utf8),
+        Array("-S".utf8),
+        Array("-m".utf8),
+        Array("Pair change\n\nCo-authored-by: Grace Hopper <grace@example.invalid>".utf8),
+      ]
+    )
+  }
+
+  @Test(
+    "Reads a bounded repository commit template",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveCommitTemplate() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-template-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try runGit(["init", "--initial-branch=main", root.path])
+    let templateURL = root.appendingPathComponent(".commit-template")
+    try Data("Subject\n\nWhy:\n".utf8).write(to: templateURL)
+    try runGit(["-C", root.path, "config", "commit.template", ".commit-template"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    #expect(try await engine.commitTemplate(at: location) == "Subject\n\nWhy:\n")
+  }
+
   @Test("Reads a staged file diff through the machine-safe pathspec")
   func stagedDiff() async throws {
     let output = """

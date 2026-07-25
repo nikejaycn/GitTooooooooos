@@ -26,6 +26,7 @@ public struct CurrentRootView: View {
 
   private let repositoryName: String?
   private let gitVersion: String?
+  private let commitTemplate: String?
   private let status: RepositoryStatus?
   private let commits: [CommitSummary]
   private let graphRows: [GraphRow]
@@ -78,7 +79,7 @@ public struct CurrentRootView: View {
   private let unstage: (GitPath) -> Void
   private let discard: (GitPath) -> Void
   private let ignore: (GitPath) -> Void
-  private let commit: (String) async throws -> Void
+  private let commit: (CommitRequest) async throws -> Void
   private let loadDiff: (FileChange) -> Void
   private let openExternalDiff: (DiffDocument) -> Void
   private let loadFileInsights: (GitPath) -> Void
@@ -141,6 +142,12 @@ public struct CurrentRootView: View {
   @State private var pendingDiscard: GitPath?
   @State private var graphJumpOID: String?
   @State private var commitMessage = ""
+  @State private var amendCommit = false
+  @State private var skipCommitHooks = false
+  @State private var signCommit = false
+  @State private var coAuthorName = ""
+  @State private var coAuthorEmail = ""
+  @State private var showCommitOptions = false
   @State private var newBranchName = ""
   @State private var isCreatingBranch = false
   @State private var isCreatingTag = false
@@ -193,6 +200,7 @@ public struct CurrentRootView: View {
   public init(
     repositoryName: String?,
     gitVersion: String?,
+    commitTemplate: String?,
     status: RepositoryStatus?,
     commits: [CommitSummary],
     graphRows: [GraphRow],
@@ -245,7 +253,7 @@ public struct CurrentRootView: View {
     unstage: @escaping (GitPath) -> Void,
     discard: @escaping (GitPath) -> Void,
     ignore: @escaping (GitPath) -> Void,
-    commit: @escaping (String) async throws -> Void,
+    commit: @escaping (CommitRequest) async throws -> Void,
     loadDiff: @escaping (FileChange) -> Void,
     openExternalDiff: @escaping (DiffDocument) -> Void,
     loadFileInsights: @escaping (GitPath) -> Void,
@@ -307,6 +315,7 @@ public struct CurrentRootView: View {
   ) {
     self.repositoryName = repositoryName
     self.gitVersion = gitVersion
+    self.commitTemplate = commitTemplate
     self.status = status
     self.commits = commits
     self.graphRows = graphRows
@@ -1377,29 +1386,114 @@ public struct CurrentRootView: View {
   }
 
   private func commitPanel(_ status: RepositoryStatus) -> some View {
-    HStack(alignment: .bottom, spacing: 12) {
-      TextField("Commit message", text: $commitMessage, axis: .vertical)
-        .lineLimit(2...5)
-        .textFieldStyle(.roundedBorder)
-      Button("Commit") {
-        let message = commitMessage
-        Task {
-          do {
-            try await commit(message)
-            commitMessage = ""
-          } catch {
-            // AppModel publishes the actionable Git or hook error.
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .top, spacing: 8) {
+        TextField("Commit message", text: $commitMessage, axis: .vertical)
+          .lineLimit(2...7)
+          .textFieldStyle(.roundedBorder)
+        if let commitTemplate,
+          !commitTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+          Button("Use Template") {
+            commitMessage =
+              commitTemplate
+              .split(separator: "\n", omittingEmptySubsequences: false)
+              .filter {
+                !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
+              }
+              .joined(separator: "\n")
+              .trimmingCharacters(in: .whitespacesAndNewlines)
           }
+          .disabled(!commitMessage.isEmpty)
+          .help("Insert the repository's configured commit.template")
         }
       }
-      .keyboardShortcut(.return, modifiers: [.command])
-      .disabled(
-        isLoading
-          || !status.changes.contains(where: \.isStaged)
-          || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      )
+
+      DisclosureGroup("Commit Options", isExpanded: $showCommitOptions) {
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+          GridRow {
+            Toggle("Amend HEAD", isOn: $amendCommit)
+            Toggle("Sign commit", isOn: $signCommit)
+            Toggle("Skip hooks", isOn: $skipCommitHooks)
+          }
+          GridRow {
+            Text("Co-author")
+              .foregroundStyle(.secondary)
+            TextField("Name", text: $coAuthorName)
+              .textFieldStyle(.roundedBorder)
+            TextField("Email", text: $coAuthorEmail)
+              .textFieldStyle(.roundedBorder)
+          }
+        }
+        .padding(.top, 4)
+      }
+      .font(.caption)
+
+      HStack {
+        if !coAuthorFieldsValid {
+          Text("Enter both co-author name and email.")
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+        Spacer()
+        Button("Commit", action: { performCommit(pushAfter: false) })
+          .keyboardShortcut(.return, modifiers: [.command])
+        Button("Commit & Push", action: { performCommit(pushAfter: true) })
+          .disabled(remotes.isEmpty || commitDisabled(status))
+      }
+      .disabled(commitDisabled(status))
     }
     .padding(12)
+  }
+
+  private var coAuthorFieldsValid: Bool {
+    let hasName = !coAuthorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasEmail = !coAuthorEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    return hasName == hasEmail
+  }
+
+  private func commitDisabled(_ status: RepositoryStatus) -> Bool {
+    isLoading
+      || (!amendCommit && !status.changes.contains(where: \.isStaged))
+      || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      || !coAuthorFieldsValid
+  }
+
+  private func performCommit(pushAfter: Bool) {
+    var coAuthors: [CommitCoAuthor] = []
+    if coAuthorFieldsValid,
+      !coAuthorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      coAuthors.append(
+        CommitCoAuthor(
+          name: coAuthorName,
+          email: coAuthorEmail
+        )
+      )
+    }
+    let request = CommitRequest(
+      message: commitMessage,
+      amend: amendCommit,
+      skipHooks: skipCommitHooks,
+      sign: signCommit,
+      coAuthors: coAuthors
+    )
+    Task {
+      do {
+        try await commit(request)
+        commitMessage = ""
+        amendCommit = false
+        skipCommitHooks = false
+        signCommit = false
+        coAuthorName = ""
+        coAuthorEmail = ""
+        if pushAfter {
+          push()
+        }
+      } catch {
+        // AppModel publishes the actionable Git, signing, or hook error and keeps all input.
+      }
+    }
   }
 
   @ViewBuilder

@@ -10,6 +10,7 @@ struct CurrentMacApp: App {
       CurrentRootView(
         repositoryName: model.repositoryName,
         gitVersion: model.gitVersion,
+        commitTemplate: model.commitTemplate,
         status: model.repositoryStatus,
         commits: model.commits,
         graphRows: model.graphRows,

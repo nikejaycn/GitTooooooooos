@@ -132,6 +132,7 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     request: CommitRequest
   ) async throws
+  func commitTemplate(at location: RepositoryLocation) async throws -> String?
   func diff(
     at location: RepositoryLocation,
     path: GitPath,
@@ -222,6 +223,10 @@ public protocol GitEngineProtocol: Sendable {
 }
 
 extension GitEngineProtocol {
+  public func commitTemplate(at location: RepositoryLocation) async throws -> String? {
+    nil
+  }
+
   public func interactiveRebasePlan(
     at location: RepositoryLocation,
     upstream: String
@@ -785,7 +790,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     at location: RepositoryLocation,
     request: CommitRequest
   ) async throws {
-    let message = request.message.trimmingCharacters(in: .whitespacesAndNewlines)
+    var message = request.message.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !message.isEmpty else {
       throw GitEngineError.invalidOutput("A commit message is required.")
     }
@@ -793,9 +798,39 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       throw GitEngineError.invalidOutput("A commit message cannot contain a NUL byte.")
     }
 
+    var trailers: [String] = []
+    for coAuthor in request.coAuthors {
+      let name = coAuthor.name.trimmingCharacters(in: .whitespacesAndNewlines)
+      let email = coAuthor.email.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard
+        !name.isEmpty,
+        !email.isEmpty,
+        !name.contains(where: \.isNewline),
+        !email.contains(where: { $0.isWhitespace || $0.isNewline }),
+        !name.contains("<"),
+        !name.contains(">"),
+        !email.contains("<"),
+        !email.contains(">"),
+        !name.utf8.contains(0),
+        !email.utf8.contains(0)
+      else {
+        throw GitEngineError.invalidOutput("A co-author name or email is invalid.")
+      }
+      trailers.append("Co-authored-by: \(name) <\(email)>")
+    }
+    if !trailers.isEmpty {
+      message += "\n\n" + trailers.joined(separator: "\n")
+    }
+
     var rawArguments = [Array("commit".utf8)]
     if request.amend {
       rawArguments.append(Array("--amend".utf8))
+    }
+    if request.skipHooks {
+      rawArguments.append(Array("--no-verify".utf8))
+    }
+    if request.sign {
+      rawArguments.append(Array("-S".utf8))
     }
     rawArguments.append(Array("-m".utf8))
     rawArguments.append(Array(message.utf8))
@@ -807,6 +842,47 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: .seconds(600)
       )
     )
+  }
+
+  public func commitTemplate(
+    at location: RepositoryLocation
+  ) async throws -> String? {
+    let command = GitCommand(
+      arguments: ["config", "--path", "--get", "commit.template"],
+      workingDirectory: location.worktreeURL
+    )
+    let result = try await runner.run(command)
+    guard result.succeeded else {
+      if result.termination == .exited(1) {
+        return nil
+      }
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: command.redactingSecrets(in: result.errorDescription)
+      )
+    }
+    let configuredPath = String(decoding: result.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !configuredPath.isEmpty, !configuredPath.utf8.contains(0) else {
+      return nil
+    }
+    let templateURL: URL
+    if configuredPath.hasPrefix("/") {
+      templateURL = URL(fileURLWithPath: configuredPath)
+    } else {
+      templateURL = location.worktreeURL.appendingPathComponent(configuredPath)
+    }
+    let attributes = try FileManager.default.attributesOfItem(atPath: templateURL.path)
+    guard
+      attributes[.type] as? FileAttributeType == .typeRegular,
+      let size = attributes[.size] as? NSNumber,
+      size.intValue <= 1_048_576
+    else {
+      throw GitEngineError.invalidOutput(
+        "The configured commit template must be a regular file no larger than 1 MB."
+      )
+    }
+    return String(decoding: try Data(contentsOf: templateURL), as: UTF8.self)
   }
 
   public func diff(

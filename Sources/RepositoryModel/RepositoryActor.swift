@@ -329,6 +329,10 @@ public actor RepositoryActor {
     return snapshot
   }
 
+  public func commitTemplate() async throws -> String? {
+    try await engine.commitTemplate(at: location)
+  }
+
   @discardableResult
   public func applyBranchMutation(
     _ mutation: BranchMutation,
