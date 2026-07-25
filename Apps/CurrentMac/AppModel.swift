@@ -46,6 +46,7 @@ final class AppModel {
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
   private(set) var repositoryName: String?
+  private(set) var repositoryPath: String?
   private(set) var gitVersion: String?
   private(set) var gitLFSVersion: String?
   private(set) var gitSourceDescription: String?
@@ -114,7 +115,7 @@ final class AppModel {
   private var repositoryOperationTask: Task<Void, Never>?
   private var externalDiffProcesses: [UUID: Process] = [:]
 
-  init() {
+  init(initialRepositoryPath: String? = nil) {
     recentRepositories = Self.loadRecentRepositories()
     useCustomGit = UserDefaults.standard.bool(forKey: Self.useCustomGitKey)
     customGitPath = UserDefaults.standard.string(forKey: Self.customGitPathKey) ?? ""
@@ -170,7 +171,7 @@ final class AppModel {
       Task {
         await loadGitToolchainVersions()
       }
-      if let path = CommandLine.arguments.dropFirst().first, !path.isEmpty {
+      if let path = initialRepositoryPath, !path.isEmpty {
         Task {
           await openRepository(at: URL(fileURLWithPath: path))
         }
@@ -1492,6 +1493,7 @@ final class AppModel {
     repository = opened
     repositorySessionID = UUID()
     repositoryName = opened.location.worktreeURL.lastPathComponent
+    repositoryPath = opened.location.worktreeURL.standardizedFileURL.path
     commitTemplate = template
     apply(snapshot)
     selectedDiff = nil
@@ -1508,6 +1510,7 @@ final class AppModel {
     repositorySessionID = UUID()
     repository = nil
     repositoryName = nil
+    repositoryPath = nil
     repositoryStatus = nil
     commitTemplate = nil
     commits = []

@@ -64,6 +64,7 @@ public struct CurrentRootView: View {
   private let initializeRepository: () -> Void
   private let cloneRepository: (String) -> Void
   private let openRecentRepository: (RecentRepository) -> Void
+  private let openRecentRepositoryInNewWindow: (RecentRepository) -> Void
   private let toggleFavoriteRepository: (RecentRepository) -> Void
   private let removeRecentRepository: (RecentRepository) -> Void
   private let cancelRepositoryOperation: () -> Void
@@ -240,6 +241,7 @@ public struct CurrentRootView: View {
     initializeRepository: @escaping () -> Void,
     cloneRepository: @escaping (String) -> Void,
     openRecentRepository: @escaping (RecentRepository) -> Void,
+    openRecentRepositoryInNewWindow: @escaping (RecentRepository) -> Void,
     toggleFavoriteRepository: @escaping (RecentRepository) -> Void,
     removeRecentRepository: @escaping (RecentRepository) -> Void,
     cancelRepositoryOperation: @escaping () -> Void,
@@ -357,6 +359,7 @@ public struct CurrentRootView: View {
     self.initializeRepository = initializeRepository
     self.cloneRepository = cloneRepository
     self.openRecentRepository = openRecentRepository
+    self.openRecentRepositoryInNewWindow = openRecentRepositoryInNewWindow
     self.toggleFavoriteRepository = toggleFavoriteRepository
     self.removeRecentRepository = removeRecentRepository
     self.cancelRepositoryOperation = cancelRepositoryOperation
@@ -1228,6 +1231,9 @@ public struct CurrentRootView: View {
                 .help(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites")
               }
               .contextMenu {
+                Button("Open in New Window") {
+                  openRecentRepositoryInNewWindow(recent)
+                }
                 Button(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
                   toggleFavoriteRepository(recent)
                 }
