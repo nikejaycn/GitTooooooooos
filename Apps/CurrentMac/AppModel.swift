@@ -195,6 +195,16 @@ final class AppModel {
     }
   }
 
+  func openRepositoryURL(_ url: URL) {
+    guard url.isFileURL else {
+      errorMessage = "Current can only open local repository folders."
+      return
+    }
+    Task {
+      await openRepository(at: url)
+    }
+  }
+
   func chooseInitializationDirectory() {
     let panel = NSOpenPanel()
     panel.title = "Initialize Git Repository"

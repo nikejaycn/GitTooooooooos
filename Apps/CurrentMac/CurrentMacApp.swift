@@ -127,6 +127,7 @@ struct CurrentMacApp: App {
       )
       .frame(minWidth: 880, minHeight: 560)
       .preferredColorScheme(model.appearance.colorScheme)
+      .onOpenURL(perform: model.openRepositoryURL)
     }
     .commands {
       CommandGroup(after: .newItem) {

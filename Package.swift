@@ -9,8 +9,10 @@ let package = Package(
   ],
   products: [
     .executable(name: "current-benchmark", targets: ["CurrentBenchmarkCLI"]),
+    .executable(name: "current", targets: ["CurrentCLI"]),
     .library(name: "CurrentDomain", targets: ["CurrentDomain"]),
     .library(name: "BenchmarkKit", targets: ["BenchmarkKit"]),
+    .library(name: "CurrentCLIKit", targets: ["CurrentCLIKit"]),
     .library(name: "GitParsers", targets: ["GitParsers"]),
     .library(name: "GitEngine", targets: ["GitEngine"]),
     .library(name: "RepositoryModel", targets: ["RepositoryModel"]),
@@ -88,6 +90,14 @@ let package = Package(
     .executableTarget(
       name: "CurrentBenchmarkCLI",
       dependencies: ["BenchmarkKit"]
+    ),
+    .target(
+      name: "CurrentCLIKit",
+      linkerSettings: [.linkedFramework("AppKit")]
+    ),
+    .executableTarget(
+      name: "CurrentCLI",
+      dependencies: ["CurrentCLIKit"]
     ),
     .target(name: "GitParsers"),
     .target(
@@ -172,6 +182,10 @@ let package = Package(
     .testTarget(
       name: "CurrentDomainTests",
       dependencies: ["CurrentDomain"]
+    ),
+    .testTarget(
+      name: "CurrentCLIKitTests",
+      dependencies: ["CurrentCLIKit"]
     ),
     .testTarget(
       name: "BenchmarkKitTests",
