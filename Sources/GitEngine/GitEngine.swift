@@ -133,6 +133,8 @@ public protocol GitEngineProtocol: Sendable {
     request: CommitRequest
   ) async throws
   func commitTemplate(at location: RepositoryLocation) async throws -> String?
+  func createPatch(at location: RepositoryLocation, commit: String) async throws -> [UInt8]
+  func applyPatch(at location: RepositoryLocation, fileURL: URL) async throws
   func diff(
     at location: RepositoryLocation,
     path: GitPath,
@@ -225,6 +227,20 @@ public protocol GitEngineProtocol: Sendable {
 extension GitEngineProtocol {
   public func commitTemplate(at location: RepositoryLocation) async throws -> String? {
     nil
+  }
+
+  public func createPatch(
+    at location: RepositoryLocation,
+    commit: String
+  ) async throws -> [UInt8] {
+    throw GitEngineError.invalidOutput("Patch export is not implemented.")
+  }
+
+  public func applyPatch(
+    at location: RepositoryLocation,
+    fileURL: URL
+  ) async throws {
+    throw GitEngineError.invalidOutput("Patch application is not implemented.")
   }
 
   public func interactiveRebasePlan(
@@ -883,6 +899,53 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
     }
     return String(decoding: try Data(contentsOf: templateURL), as: UTF8.self)
+  }
+
+  public func createPatch(
+    at location: RepositoryLocation,
+    commit: String
+  ) async throws -> [UInt8] {
+    let oid = try await resolveCommit(commit, at: location)
+    let result = try await execute(
+      GitCommand(
+        arguments: ["format-patch", "--stdout", "--no-signature", "-1", oid],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: .seconds(300)
+      )
+    )
+    guard !result.standardOutput.isEmpty else {
+      throw GitEngineError.invalidOutput("Git produced an empty patch.")
+    }
+    return result.standardOutput
+  }
+
+  public func applyPatch(
+    at location: RepositoryLocation,
+    fileURL: URL
+  ) async throws {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository cannot apply a working-copy patch.")
+    }
+    let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+    guard
+      attributes[.type] as? FileAttributeType == .typeRegular,
+      let size = attributes[.size] as? NSNumber,
+      size.intValue <= 64 * 1024 * 1024
+    else {
+      throw GitEngineError.invalidOutput(
+        "A patch must be a regular file no larger than 64 MB."
+      )
+    }
+    _ = try await execute(
+      GitCommand(
+        rawArguments: ["apply", "--index", "--"].map { Array($0.utf8) }
+          + [Array(fileURL.path.utf8)],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 32 * 1024 * 1024,
+        timeout: .seconds(300)
+      )
+    )
   }
 
   public func diff(

@@ -333,6 +333,19 @@ public actor RepositoryActor {
     try await engine.commitTemplate(at: location)
   }
 
+  public func createPatch(commit: String) async throws -> [UInt8] {
+    try await engine.createPatch(at: location, commit: commit)
+  }
+
+  @discardableResult
+  public func applyPatch(fileURL: URL, historyLimit: Int = 200) async throws
+    -> RepositorySnapshot
+  {
+    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+      try await engine.applyPatch(at: location, fileURL: fileURL)
+    }
+  }
+
   @discardableResult
   public func applyBranchMutation(
     _ mutation: BranchMutation,

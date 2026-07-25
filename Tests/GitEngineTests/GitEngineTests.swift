@@ -894,6 +894,44 @@ struct GitEngineTests {
     #expect(try await engine.commitTemplate(at: location) == "Subject\n\nWhy:\n")
   }
 
+  @Test(
+    "Exports and applies a commit patch without creating a commit",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func livePatchRoundTrip() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-patch-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("patch.txt")
+    try Data("before\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "patch.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    let baseOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    try Data("after\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "commit", "-am", "patch change"])
+    let commitOID = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    let patch = try await engine.createPatch(at: location, commit: commitOID)
+    #expect(String(decoding: patch, as: UTF8.self).contains("Subject: [PATCH] patch change"))
+    try runGit(["-C", root.path, "reset", "--hard", baseOID])
+    let patchURL = root.appendingPathComponent("review patch.patch")
+    try Data(patch).write(to: patchURL)
+
+    try await engine.applyPatch(at: location, fileURL: patchURL)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == baseOID)
+    #expect(try runGitOutput(["-C", root.path, "diff", "--cached", "--name-only"]) == "patch.txt")
+    #expect(try String(contentsOf: file, encoding: .utf8) == "after\n")
+  }
+
   @Test("Reads a staged file diff through the machine-safe pathspec")
   func stagedDiff() async throws {
     let output = """

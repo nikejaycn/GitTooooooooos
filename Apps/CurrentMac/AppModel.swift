@@ -706,6 +706,48 @@ final class AppModel {
     }
   }
 
+  func exportPatch(_ commitOID: String) {
+    guard let repository else { return }
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [.data]
+    panel.nameFieldStringValue = "\(String(commitOID.prefix(12))).patch"
+    panel.canCreateDirectories = true
+    guard panel.runModal() == .OK, let destination = panel.url else { return }
+    let activityID = beginActivity("Export patch")
+    Task {
+      do {
+        let bytes = try await repository.createPatch(commit: commitOID)
+        try Data(bytes).write(to: destination, options: .atomic)
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+    }
+  }
+
+  func choosePatchToApply() {
+    guard let repository else { return }
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = [.data]
+    guard panel.runModal() == .OK, let fileURL = panel.url else { return }
+    let activityID = beginActivity("Apply patch to index")
+    isLoading = true
+    Task {
+      defer { isLoading = false }
+      do {
+        apply(try await repository.applyPatch(fileURL: fileURL))
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+    }
+  }
+
   func loadDiff(_ change: FileChange) {
     guard let repository, change.kind != .untracked else {
       selectedDiff = nil

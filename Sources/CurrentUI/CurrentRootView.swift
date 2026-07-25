@@ -80,6 +80,8 @@ public struct CurrentRootView: View {
   private let discard: (GitPath) -> Void
   private let ignore: (GitPath) -> Void
   private let commit: (CommitRequest) async throws -> Void
+  private let exportPatch: (String) -> Void
+  private let applyPatch: () -> Void
   private let loadDiff: (FileChange) -> Void
   private let openExternalDiff: (DiffDocument) -> Void
   private let loadFileInsights: (GitPath) -> Void
@@ -254,6 +256,8 @@ public struct CurrentRootView: View {
     discard: @escaping (GitPath) -> Void,
     ignore: @escaping (GitPath) -> Void,
     commit: @escaping (CommitRequest) async throws -> Void,
+    exportPatch: @escaping (String) -> Void,
+    applyPatch: @escaping () -> Void,
     loadDiff: @escaping (FileChange) -> Void,
     openExternalDiff: @escaping (DiffDocument) -> Void,
     loadFileInsights: @escaping (GitPath) -> Void,
@@ -369,6 +373,8 @@ public struct CurrentRootView: View {
     self.discard = discard
     self.ignore = ignore
     self.commit = commit
+    self.exportPatch = exportPatch
+    self.applyPatch = applyPatch
     self.loadDiff = loadDiff
     self.openExternalDiff = openExternalDiff
     self.loadFileInsights = loadFileInsights
@@ -696,6 +702,13 @@ public struct CurrentRootView: View {
                 beginCreatingStash(paths: [])
               }
               .disabled(status?.changes.isEmpty != false)
+              Button("Export Selected Commit as Patch…") {
+                if let selectedCommitOID {
+                  exportPatch(selectedCommitOID)
+                }
+              }
+              .disabled(selectedCommitOID == nil)
+              Button("Apply Patch to Index…", action: applyPatch)
               Button("Prune Stale Worktrees", action: pruneWorktrees)
               Menu("Repository Maintenance") {
                 Button("Run Recommended Maintenance") {

@@ -64,6 +64,8 @@ struct CurrentMacApp: App {
         discard: model.discard,
         ignore: model.ignore,
         commit: model.commit,
+        exportPatch: model.exportPatch,
+        applyPatch: model.choosePatchToApply,
         loadDiff: model.loadDiff,
         openExternalDiff: model.openExternalDiff,
         loadFileInsights: model.loadFileInsights,
