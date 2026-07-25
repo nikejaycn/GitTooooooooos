@@ -908,11 +908,30 @@ final class AppModel {
     applyBranch(.checkout(name: name, autoStash: autoStashEnabled))
   }
 
+  func renameBranch(oldName: String, newName: String) {
+    applyBranch(.rename(oldName: oldName, newName: newName))
+  }
+
+  func deleteBranch(_ name: String) {
+    applyBranch(.delete(name: name, force: false))
+  }
+
   func mergeBranch(_ name: String) {
     applyMerge(
       .start(
         branch: name,
         squash: false,
+        noFastForward: false,
+        autoStash: autoStashEnabled
+      )
+    )
+  }
+
+  func squashMergeBranch(_ name: String) {
+    applyMerge(
+      .start(
+        branch: name,
+        squash: true,
         noFastForward: false,
         autoStash: autoStashEnabled
       )

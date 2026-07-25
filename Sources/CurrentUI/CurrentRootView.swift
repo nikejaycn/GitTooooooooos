@@ -3,6 +3,64 @@ import DiffKit
 import GraphKit
 import SwiftUI
 
+private struct BranchDialogsModifier: ViewModifier {
+  @Binding var branchToRename: GitReference?
+  @Binding var renamedBranchName: String
+  @Binding var pendingBranchDeletion: GitReference?
+  let renameBranch: (String, String) -> Void
+  let deleteBranch: (String) -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .alert(
+        "Rename Branch",
+        isPresented: Binding(
+          get: { branchToRename != nil },
+          set: { if !$0 { branchToRename = nil } }
+        )
+      ) {
+        TextField("New branch name", text: $renamedBranchName)
+        Button("Rename") {
+          if let branchToRename {
+            renameBranch(branchToRename.shortName, renamedBranchName)
+          }
+          branchToRename = nil
+        }
+        .disabled(
+          renamedBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || renamedBranchName == branchToRename?.shortName
+        )
+        Button("Cancel", role: .cancel) {
+          branchToRename = nil
+        }
+      } message: {
+        Text("This renames the local branch. Remote branches are unchanged.")
+      }
+      .confirmationDialog(
+        "Delete \(pendingBranchDeletion?.shortName ?? "this branch")?",
+        isPresented: Binding(
+          get: { pendingBranchDeletion != nil },
+          set: { if !$0 { pendingBranchDeletion = nil } }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button("Delete Merged Branch", role: .destructive) {
+          if let pendingBranchDeletion {
+            deleteBranch(pendingBranchDeletion.shortName)
+          }
+          pendingBranchDeletion = nil
+        }
+        Button("Cancel", role: .cancel) {
+          pendingBranchDeletion = nil
+        }
+      } message: {
+        Text(
+          "Current uses Git's safe delete and refuses if the branch contains unmerged commits."
+        )
+      }
+  }
+}
+
 public struct CurrentRootView: View {
   private enum Workspace: Hashable {
     case changes
@@ -90,7 +148,10 @@ public struct CurrentRootView: View {
   private let loadNextBlamePage: () -> Void
   private let createBranch: (String) -> Void
   private let checkoutBranch: (String) -> Void
+  private let renameBranch: (String, String) -> Void
+  private let deleteBranch: (String) -> Void
   private let mergeBranch: (String) -> Void
+  private let squashMergeBranch: (String) -> Void
   private let createTag: (String, String?, String?) -> Void
   private let deleteTag: (GitReference) -> Void
   private let pushTag: (GitReference, GitRemote) -> Void
@@ -153,6 +214,9 @@ public struct CurrentRootView: View {
   @State private var showCommitOptions = false
   @State private var newBranchName = ""
   @State private var isCreatingBranch = false
+  @State private var branchToRename: GitReference?
+  @State private var renamedBranchName = ""
+  @State private var pendingBranchDeletion: GitReference?
   @State private var isCreatingTag = false
   @State private var newTagName = ""
   @State private var newTagTarget = ""
@@ -267,7 +331,10 @@ public struct CurrentRootView: View {
     loadNextBlamePage: @escaping () -> Void,
     createBranch: @escaping (String) -> Void,
     checkoutBranch: @escaping (String) -> Void,
+    renameBranch: @escaping (String, String) -> Void,
+    deleteBranch: @escaping (String) -> Void,
     mergeBranch: @escaping (String) -> Void,
+    squashMergeBranch: @escaping (String) -> Void,
     createTag: @escaping (String, String?, String?) -> Void,
     deleteTag: @escaping (GitReference) -> Void,
     pushTag: @escaping (GitReference, GitRemote) -> Void,
@@ -385,7 +452,10 @@ public struct CurrentRootView: View {
     self.loadNextBlamePage = loadNextBlamePage
     self.createBranch = createBranch
     self.checkoutBranch = checkoutBranch
+    self.renameBranch = renameBranch
+    self.deleteBranch = deleteBranch
     self.mergeBranch = mergeBranch
+    self.squashMergeBranch = squashMergeBranch
     self.createTag = createTag
     self.deleteTag = deleteTag
     self.pushTag = pushTag
@@ -459,25 +529,7 @@ public struct CurrentRootView: View {
         if references.contains(where: { $0.kind != .tag }) {
           Section("References") {
             ForEach(references.filter { $0.kind != .tag }.prefix(20)) { reference in
-              if reference.kind == .localBranch {
-                Button {
-                  checkoutBranch(reference.shortName)
-                } label: {
-                  Label(reference.shortName, systemImage: referenceIcon(reference.kind))
-                }
-                .buttonStyle(.plain)
-                .disabled(reference.isHEAD || isLoading)
-                .help(reference.isHEAD ? "Current branch" : "Check out \(reference.shortName)")
-                .contextMenu {
-                  Button("Merge into Current Branch") {
-                    mergeBranch(reference.shortName)
-                  }
-                  .disabled(reference.isHEAD || isLoading)
-                }
-              } else {
-                Label(reference.shortName, systemImage: referenceIcon(reference.kind))
-                  .help(reference.fullName)
-              }
+              referenceSidebarRow(reference)
             }
           }
         }
@@ -743,6 +795,15 @@ public struct CurrentRootView: View {
         } message: {
           Text("The new branch starts at the current HEAD.")
         }
+        .modifier(
+          BranchDialogsModifier(
+            branchToRename: $branchToRename,
+            renamedBranchName: $renamedBranchName,
+            pendingBranchDeletion: $pendingBranchDeletion,
+            renameBranch: renameBranch,
+            deleteBranch: deleteBranch
+          )
+        )
         .alert("Create Worktree", isPresented: $isCreatingWorktree) {
           TextField("New branch name", text: $newWorktreeBranch)
           TextField("Start point (optional, defaults to HEAD)", text: $newWorktreeStartPoint)
@@ -2481,6 +2542,43 @@ public struct CurrentRootView: View {
     remoteFetchURL = remote?.fetchURL ?? ""
     remotePushURL = remote?.pushURL ?? ""
     isEditingRemote = true
+  }
+
+  @ViewBuilder
+  private func referenceSidebarRow(_ reference: GitReference) -> some View {
+    if reference.kind == .localBranch {
+      Button {
+        checkoutBranch(reference.shortName)
+      } label: {
+        Label(reference.shortName, systemImage: referenceIcon(reference.kind))
+      }
+      .buttonStyle(.plain)
+      .disabled(reference.isHEAD || isLoading)
+      .help(reference.isHEAD ? "Current branch" : "Check out \(reference.shortName)")
+      .contextMenu {
+        Button("Merge into Current Branch") {
+          mergeBranch(reference.shortName)
+        }
+        .disabled(reference.isHEAD || isLoading)
+        Button("Squash into Current Working Copy") {
+          squashMergeBranch(reference.shortName)
+        }
+        .disabled(reference.isHEAD || isLoading)
+        Divider()
+        Button("Rename…") {
+          renamedBranchName = reference.shortName
+          branchToRename = reference
+        }
+        .disabled(isLoading)
+        Button("Delete…", role: .destructive) {
+          pendingBranchDeletion = reference
+        }
+        .disabled(reference.isHEAD || isLoading)
+      }
+    } else {
+      Label(reference.shortName, systemImage: referenceIcon(reference.kind))
+        .help(reference.fullName)
+    }
   }
 
   @ViewBuilder

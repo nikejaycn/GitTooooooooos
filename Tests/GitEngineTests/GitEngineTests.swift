@@ -1519,6 +1519,56 @@ struct GitEngineTests {
   }
 
   @Test(
+    "Squash merge stages the selected branch without moving HEAD",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveSquashMerge() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-squash-merge-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    try Data("base\n".utf8).write(to: root.appendingPathComponent("base.txt"))
+    try runGit(["-C", root.path, "add", "base.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    let originalHead = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+    try runGit(["-C", root.path, "switch", "-c", "topic"])
+    try Data("topic\n".utf8).write(to: root.appendingPathComponent("topic.txt"))
+    try runGit(["-C", root.path, "add", "topic.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "topic"])
+    try runGit(["-C", root.path, "switch", "main"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateMerge(
+      at: location,
+      mutation: .start(
+        branch: "topic",
+        squash: true,
+        noFastForward: false,
+        autoStash: false
+      )
+    )
+
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == originalHead)
+    let status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(
+      status.changes.contains {
+        $0.path.displayString == "topic.txt" && $0.isStaged
+      })
+    #expect(status.operation.kind == .none)
+  }
+
+  @Test(
     "Live init and clone produce repositories that can be loaded",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
   func liveInitializeAndClone() async throws {
