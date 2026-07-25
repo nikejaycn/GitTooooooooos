@@ -44,13 +44,16 @@ public enum GraphRowDensity: String, CaseIterable, Hashable, Sendable, Codable, 
 public struct GraphDisplayConfiguration: Hashable, Sendable {
   public let visibleOptionalColumns: Set<GraphOptionalColumn>
   public let density: GraphRowDensity
+  public let scale: Double
 
   public init(
     visibleOptionalColumns: Set<GraphOptionalColumn> = Set(GraphOptionalColumn.allCases),
-    density: GraphRowDensity = .comfortable
+    density: GraphRowDensity = .comfortable,
+    scale: Double = 1
   ) {
     self.visibleOptionalColumns = visibleOptionalColumns
     self.density = density
+    self.scale = min(max(scale, 0.75), 1.5)
   }
 }
 
@@ -91,7 +94,8 @@ public struct CommitGraphView: NSViewRepresentable {
     table.usesAlternatingRowBackgroundColors = true
     table.allowsMultipleSelection = true
     table.allowsEmptySelection = true
-    table.rowHeight = displayConfiguration.density.rowHeight
+    table.rowHeight =
+      displayConfiguration.density.rowHeight * CGFloat(displayConfiguration.scale)
     table.intercellSpacing = NSSize(width: 0, height: 1)
     table.delegate = context.coordinator
     table.dataSource = context.coordinator
@@ -100,7 +104,7 @@ public struct CommitGraphView: NSViewRepresentable {
     graph.title = "Graph"
     graph.width = Self.graphColumnWidth(
       for: rows,
-      density: displayConfiguration.density
+      configuration: displayConfiguration
     )
     graph.minWidth = 46
     graph.maxWidth = 240
@@ -136,23 +140,25 @@ public struct CommitGraphView: NSViewRepresentable {
     context.coordinator.apply(rows: rows, to: table)
     context.coordinator.apply(searchQuery: searchQuery, to: table)
     context.coordinator.displayConfiguration = displayConfiguration
-    table.rowHeight = displayConfiguration.density.rowHeight
+    table.rowHeight =
+      displayConfiguration.density.rowHeight * CGFloat(displayConfiguration.scale)
     Self.synchronizeOptionalColumns(
       in: table,
       configuration: displayConfiguration
     )
     table.tableColumn(withIdentifier: .graph)?.width =
-      Self.graphColumnWidth(for: rows, density: displayConfiguration.density)
+      Self.graphColumnWidth(for: rows, configuration: displayConfiguration)
     context.coordinator.scroll(to: scrollToCommitOID, in: table)
     scrollView.toolTip = "\(rows.filter { !$0.isWorkingCopy }.count) commits"
   }
 
   private static func graphColumnWidth(
     for rows: [GraphRow],
-    density: GraphRowDensity
+    configuration: GraphDisplayConfiguration
   ) -> CGFloat {
     let lanes = rows.lazy.map(\.layout.laneCount).max() ?? 1
-    return min(max(CGFloat(lanes) * density.laneSpacing + 18, 46), 280)
+    let laneSpacing = configuration.density.laneSpacing * CGFloat(configuration.scale)
+    return min(max(CGFloat(lanes) * laneSpacing + 18, 46), 360)
   }
 
   private static func synchronizeOptionalColumns(
@@ -248,7 +254,8 @@ public struct CommitGraphView: NSViewRepresentable {
         view.layout = item.layout
         view.isWorkingCopy = item.isWorkingCopy
         view.isSearchMatch = item.matches(searchQuery: searchQuery)
-        view.laneSpacing = displayConfiguration.density.laneSpacing
+        view.laneSpacing =
+          displayConfiguration.density.laneSpacing * CGFloat(displayConfiguration.scale)
         return view
       }
 

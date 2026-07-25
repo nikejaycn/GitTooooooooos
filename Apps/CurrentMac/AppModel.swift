@@ -40,6 +40,7 @@ final class AppModel {
   private static let customMergeToolPathKey = "Current.customMergeToolPath.v1"
   private static let graphColumnsKey = "Current.graphColumns.v1"
   private static let graphDensityKey = "Current.graphDensity.v1"
+  private static let graphScaleKey = "Current.graphScale.v1"
   private static let hiddenGraphReferencesKey = "Current.hiddenGraphReferences.v1"
   private static let soloGraphReferenceKey = "Current.soloGraphReference.v1"
   private static let pinnedGraphReferencesKey = "Current.pinnedGraphReferences.v1"
@@ -139,9 +140,11 @@ final class AppModel {
     let graphDensity =
       UserDefaults.standard.string(forKey: Self.graphDensityKey)
       .flatMap(GraphRowDensity.init(rawValue:)) ?? .comfortable
+    let savedGraphScale = UserDefaults.standard.double(forKey: Self.graphScaleKey)
     graphDisplayConfiguration = GraphDisplayConfiguration(
       visibleOptionalColumns: visibleGraphColumns,
-      density: graphDensity
+      density: graphDensity,
+      scale: savedGraphScale == 0 ? 1 : savedGraphScale
     )
     hiddenGraphReferences = Set(
       UserDefaults.standard.stringArray(forKey: Self.hiddenGraphReferencesKey) ?? []
@@ -429,7 +432,8 @@ final class AppModel {
     }
     graphDisplayConfiguration = GraphDisplayConfiguration(
       visibleOptionalColumns: columns,
-      density: graphDisplayConfiguration.density
+      density: graphDisplayConfiguration.density,
+      scale: graphDisplayConfiguration.scale
     )
     UserDefaults.standard.set(
       GraphOptionalColumn.allCases
@@ -443,9 +447,21 @@ final class AppModel {
     guard density != graphDisplayConfiguration.density else { return }
     graphDisplayConfiguration = GraphDisplayConfiguration(
       visibleOptionalColumns: graphDisplayConfiguration.visibleOptionalColumns,
-      density: density
+      density: density,
+      scale: graphDisplayConfiguration.scale
     )
     UserDefaults.standard.set(density.rawValue, forKey: Self.graphDensityKey)
+  }
+
+  func setGraphScale(_ scale: Double) {
+    let configuration = GraphDisplayConfiguration(
+      visibleOptionalColumns: graphDisplayConfiguration.visibleOptionalColumns,
+      density: graphDisplayConfiguration.density,
+      scale: scale
+    )
+    guard configuration.scale != graphDisplayConfiguration.scale else { return }
+    graphDisplayConfiguration = configuration
+    UserDefaults.standard.set(configuration.scale, forKey: Self.graphScaleKey)
   }
 
   func toggleHiddenGraphReference(_ name: String) {

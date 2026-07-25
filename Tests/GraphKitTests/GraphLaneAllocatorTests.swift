@@ -5,6 +5,13 @@ import Testing
 
 @Suite("Incremental graph lane allocator")
 struct GraphLaneAllocatorTests {
+  @Test("Graph scale is bounded to the supported readable range")
+  func graphScaleBounds() {
+    #expect(GraphDisplayConfiguration(scale: 0.2).scale == 0.75)
+    #expect(GraphDisplayConfiguration(scale: 1.15).scale == 1.15)
+    #expect(GraphDisplayConfiguration(scale: 4).scale == 1.5)
+  }
+
   @Test("Keeps a linear history in one lane")
   func linearHistory() {
     var allocator = GraphLaneAllocator()

@@ -130,6 +130,25 @@ struct CurrentSettingsView: View {
           }
         }
 
+        LabeledContent("Graph scale") {
+          HStack {
+            Slider(
+              value: Binding(
+                get: { model.graphDisplayConfiguration.scale },
+                set: { model.setGraphScale($0) }
+              ),
+              in: 0.75...1.5,
+              step: 0.05
+            )
+            .frame(width: 180)
+            Text(
+              model.graphDisplayConfiguration.scale, format: .percent.precision(.fractionLength(0))
+            )
+            .monospacedDigit()
+            .frame(width: 48, alignment: .trailing)
+          }
+        }
+
         LabeledContent("Visible columns") {
           HStack {
             ForEach(GraphOptionalColumn.allCases) { column in
