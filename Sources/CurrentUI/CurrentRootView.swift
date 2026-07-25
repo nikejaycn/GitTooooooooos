@@ -125,6 +125,8 @@ public struct CurrentRootView: View {
   private let openRecentRepositoryInNewWindow: (RecentRepository) -> Void
   private let toggleFavoriteRepository: (RecentRepository) -> Void
   private let removeRecentRepository: (RecentRepository) -> Void
+  private let revealRepositoryInFinder: () -> Void
+  private let chooseExternalApplication: () -> Void
   private let cancelRepositoryOperation: () -> Void
   private let refresh: () -> Void
   private let loadNextHistoryPage: () -> Void
@@ -308,6 +310,8 @@ public struct CurrentRootView: View {
     openRecentRepositoryInNewWindow: @escaping (RecentRepository) -> Void,
     toggleFavoriteRepository: @escaping (RecentRepository) -> Void,
     removeRecentRepository: @escaping (RecentRepository) -> Void,
+    revealRepositoryInFinder: @escaping () -> Void,
+    chooseExternalApplication: @escaping () -> Void,
     cancelRepositoryOperation: @escaping () -> Void,
     refresh: @escaping () -> Void,
     loadNextHistoryPage: @escaping () -> Void,
@@ -429,6 +433,8 @@ public struct CurrentRootView: View {
     self.openRecentRepositoryInNewWindow = openRecentRepositoryInNewWindow
     self.toggleFavoriteRepository = toggleFavoriteRepository
     self.removeRecentRepository = removeRecentRepository
+    self.revealRepositoryInFinder = revealRepositoryInFinder
+    self.chooseExternalApplication = chooseExternalApplication
     self.cancelRepositoryOperation = cancelRepositoryOperation
     self.refresh = refresh
     self.loadNextHistoryPage = loadNextHistoryPage
@@ -764,6 +770,10 @@ public struct CurrentRootView: View {
               }
               .disabled(selectedCommitOID == nil)
               Button("Apply Patch to Index…", action: applyPatch)
+              Divider()
+              Button("Show Repository in Finder", action: revealRepositoryInFinder)
+              Button("Open Repository With…", action: chooseExternalApplication)
+              Divider()
               Button("Prune Stale Worktrees", action: pruneWorktrees)
               Menu("Repository Maintenance") {
                 Button("Run Recommended Maintenance") {
@@ -2692,6 +2702,22 @@ public struct CurrentRootView: View {
         systemImage: "arrow.clockwise",
         isEnabled: status != nil && !isLoading,
         perform: refresh
+      ),
+      CommandPaletteAction(
+        id: "repository.reveal",
+        title: "Show Repository in Finder",
+        systemImage: "folder.badge.gearshape",
+        keywords: "reveal file browser",
+        isEnabled: status != nil,
+        perform: revealRepositoryInFinder
+      ),
+      CommandPaletteAction(
+        id: "repository.open-with",
+        title: "Open Repository With…",
+        systemImage: "macwindow.on.rectangle",
+        keywords: "external editor ide xcode",
+        isEnabled: status != nil,
+        perform: chooseExternalApplication
       ),
       CommandPaletteAction(
         id: "repository.fetch",

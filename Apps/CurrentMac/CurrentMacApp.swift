@@ -195,6 +195,8 @@ private struct CurrentWorkspaceWindow: View {
       },
       toggleFavoriteRepository: model.toggleFavoriteRepository,
       removeRecentRepository: model.removeRecentRepository,
+      revealRepositoryInFinder: model.revealRepositoryInFinder,
+      chooseExternalApplication: model.chooseExternalApplication,
       cancelRepositoryOperation: model.cancelRepositoryOperation,
       refresh: model.refresh,
       loadNextHistoryPage: model.loadNextHistoryPage,

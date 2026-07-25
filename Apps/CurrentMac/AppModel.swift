@@ -6,6 +6,7 @@ import GitEngine
 import GraphKit
 import Observation
 import RepositoryModel
+import UniformTypeIdentifiers
 
 private enum ExternalToolError: LocalizedError {
   case notConfigured(String)
@@ -241,6 +242,39 @@ final class AppModel {
   func openRecentRepository(_ recent: RecentRepository) {
     Task {
       await openRepository(at: URL(fileURLWithPath: recent.path, isDirectory: true))
+    }
+  }
+
+  func revealRepositoryInFinder() {
+    guard let repositoryURL = repository?.location.worktreeURL else { return }
+    NSWorkspace.shared.activateFileViewerSelecting([repositoryURL])
+  }
+
+  func chooseExternalApplication() {
+    guard let repositoryURL = repository?.location.worktreeURL else { return }
+    let panel = NSOpenPanel()
+    panel.title = "Open Repository With"
+    panel.message = "Choose an editor or IDE application."
+    panel.prompt = "Open"
+    panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+    panel.allowedContentTypes = [.application]
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowsMultipleSelection = false
+    panel.resolvesAliases = true
+
+    guard panel.runModal() == .OK, let applicationURL = panel.url else { return }
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = true
+    NSWorkspace.shared.open(
+      [repositoryURL],
+      withApplicationAt: applicationURL,
+      configuration: configuration
+    ) { [weak self] _, error in
+      guard let error else { return }
+      Task { @MainActor in
+        self?.errorMessage = error.localizedDescription
+      }
     }
   }
 
