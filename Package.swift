@@ -8,7 +8,9 @@ let package = Package(
     .macOS(.v14)
   ],
   products: [
+    .executable(name: "current-benchmark", targets: ["CurrentBenchmarkCLI"]),
     .library(name: "CurrentDomain", targets: ["CurrentDomain"]),
+    .library(name: "BenchmarkKit", targets: ["BenchmarkKit"]),
     .library(name: "GitParsers", targets: ["GitParsers"]),
     .library(name: "GitEngine", targets: ["GitEngine"]),
     .library(name: "RepositoryModel", targets: ["RepositoryModel"]),
@@ -79,6 +81,14 @@ let package = Package(
   ],
   targets: [
     .target(name: "CurrentDomain"),
+    .target(
+      name: "BenchmarkKit",
+      dependencies: ["CurrentDomain", "GitParsers", "GraphKit", "DiffKit"]
+    ),
+    .executableTarget(
+      name: "CurrentBenchmarkCLI",
+      dependencies: ["BenchmarkKit"]
+    ),
     .target(name: "GitParsers"),
     .target(
       name: "GitEngine",
@@ -162,6 +172,10 @@ let package = Package(
     .testTarget(
       name: "CurrentDomainTests",
       dependencies: ["CurrentDomain"]
+    ),
+    .testTarget(
+      name: "BenchmarkKitTests",
+      dependencies: ["BenchmarkKit"]
     ),
     .testTarget(
       name: "CurrentUITests",
