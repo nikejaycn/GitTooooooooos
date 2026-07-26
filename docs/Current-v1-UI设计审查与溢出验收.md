@@ -16,7 +16,7 @@
 | 约束 | 规则 |
 | --- | --- |
 | 主窗口 | 最小 `880 × 560`，由 `CurrentUILayout` 统一定义 |
-| 侧边栏 | 最小 180、理想 220；系统 `NavigationSplitView` 使用 `.balanced`，展开时压缩正文而不覆盖正文 |
+| 侧边栏 | 固定 220；使用确定性可折叠 `HStack`，展开时真实占据宽度，正文仅使用剩余空间 |
 | Changes | 文件列表固定 300、Diff 最小 300；使用确定性双栏并靠左占满正文，避免侧边栏切换后错位或压缩 |
 | File History | 历史列表最小 230、Blame 最小 320 |
 | History | 提交图最小 320、Inspector 最小 220 |
@@ -40,7 +40,7 @@
 | Unified / Split Diff | 长路径、外部工具名、Whitespace、hunk/line 操作 | 文件与空白选项使用紧凑 Menu；显示模式独立成行；hunk 操作栏显式横向滚动；正文使用 TextKit 滚动视图 | 通过 |
 | Commit 面板 | 多行消息、Co-author、校验信息、两个提交动作 | 消息限制 2–7 行；Grid 保持对齐；Commit 为主按钮，Commit & Push 为带 help/辅助标签的紧凑按钮 | 通过 |
 | History 搜索与操作 | 选择摘要、搜索框、多个历史操作 | 工具栏拆为两行；Graph Options 与 Commit Actions 分组；搜索框可伸缩 | 通过 |
-| Commit Graph | 长 decoration、主题、作者、多列 | AppKit table 单元尾部截断并提供 tooltip；列可调整；表格有横向滚动 | 通过 |
+| Commit Graph | 长 decoration、主题、作者、多列、AppKit 表格边界 | 外层确定性分栏保证表格不进入侧边栏；首次显示、选择提交和状态刷新后恢复 Graph / Commit 首列；用户仍可主动横滚查看可选列 | 通过 |
 | Commit Inspector / Compare | 长主题、作者邮件、路径、旧路径 | 主题和字段限制行数并提供 help；文件路径中部截断 | 通过 |
 | File History | 长文件路径、主题、作者 | 输入框伸缩；列表主题最多两行；作者和历史路径截断；完整详情在 help | 通过 |
 | Blame | 长路径、作者和源码行 | 顶部路径截断；源码区域显式横向/纵向滚动；固定元数据列保持对齐 | 通过 |
@@ -83,7 +83,7 @@
 ## 本次验收证据
 
 - `CurrentUILayoutTests`：4 项通过。
-- 完整 `swift test`：152 项通过；3 项因运行环境缺少 FSEvents / bundled LFS 条件而按设计跳过。
+- 完整 `swift test`：154 项通过；3 项因运行环境缺少 FSEvents / bundled LFS 条件而按设计跳过。
 - macOS arm64 Debug：`xcodebuild build` 通过。
 - 极端内容夹具：Changes、Unified Diff、History、Operations、Command Palette、Settings 深色与系统外观均完成运行态检查。
 - `git diff --check`：通过。

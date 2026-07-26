@@ -357,6 +357,7 @@ public struct CurrentRootView: View {
   private let removeRemote: (GitRemote) -> Void
   private let forcePushWithLease: () -> Void
   @State private var workspace: Workspace = .changes
+  @State private var isSidebarVisible = true
   @State private var pendingDiscard: GitPath?
   @State private var pendingPartialDiscard: PartialDiscardRequest?
   @State private var workingCopyFilter = ""
@@ -688,8 +689,9 @@ public struct CurrentRootView: View {
   }
 
   public var body: some View {
-    NavigationSplitView {
-      List(selection: $workspace) {
+    HStack(spacing: 0) {
+      if isSidebarVisible {
+        List(selection: $workspace) {
         Section("Repository") {
           Label {
             Text(repositoryName ?? "No repository open")
@@ -906,15 +908,29 @@ public struct CurrentRootView: View {
         }
         lfsSidebarSection
         hooksSidebarSection
+        }
+        .listStyle(.sidebar)
+        .frame(width: CurrentUILayout.sidebarIdealWidth)
+
+        Divider()
       }
-      .navigationSplitViewColumnWidth(
-        min: CurrentUILayout.sidebarMinimumWidth,
-        ideal: CurrentUILayout.sidebarIdealWidth
-      )
-    } detail: {
+
       content
         .clipped()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar {
+          ToolbarItem(placement: .navigation) {
+            Button {
+              isSidebarVisible.toggle()
+            } label: {
+              Label(
+                isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+                systemImage: "sidebar.left"
+              )
+            }
+            .help(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            .keyboardShortcut("s", modifiers: [.control, .command])
+          }
           ToolbarItemGroup {
             Button(action: openRepository) {
               Label("Open Repository", systemImage: "folder")
@@ -1233,8 +1249,6 @@ public struct CurrentRootView: View {
           )
         )
     }
-    // Showing the sidebar must resize the detail column instead of covering it.
-    .navigationSplitViewStyle(.balanced)
     .sheet(
       isPresented: Binding(
         get: { conflictEditorPath != nil },

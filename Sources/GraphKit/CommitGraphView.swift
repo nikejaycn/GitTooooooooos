@@ -149,7 +149,24 @@ public struct CommitGraphView: NSViewRepresentable {
     table.tableColumn(withIdentifier: .graph)?.width =
       Self.graphColumnWidth(for: rows, configuration: displayConfiguration)
     context.coordinator.scroll(to: scrollToCommitOID, in: table)
+    Self.restoreLeadingColumns(in: scrollView)
+    DispatchQueue.main.async { [weak scrollView] in
+      guard let scrollView else { return }
+      Self.restoreLeadingColumns(in: scrollView)
+    }
     scrollView.toolTip = "\(rows.filter { !$0.isWorkingCopy }.count) commits"
+  }
+
+  static func restoreLeadingColumns(in scrollView: NSScrollView) {
+    let clipView = scrollView.contentView
+    guard abs(clipView.bounds.origin.x) > 0.5 else { return }
+    clipView.scroll(
+      to: NSPoint(
+        x: 0,
+        y: clipView.bounds.origin.y
+      )
+    )
+    scrollView.reflectScrolledClipView(clipView)
   }
 
   private static func graphColumnWidth(
@@ -280,6 +297,13 @@ public struct CommitGraphView: NSViewRepresentable {
       guard let tableView = notification.object as? NSTableView else {
         onSelection([])
         return
+      }
+      if let scrollView = tableView.enclosingScrollView {
+        CommitGraphView.restoreLeadingColumns(in: scrollView)
+        DispatchQueue.main.async { [weak scrollView] in
+          guard let scrollView else { return }
+          CommitGraphView.restoreLeadingColumns(in: scrollView)
+        }
       }
       onSelection(
         tableView.selectedRowIndexes.compactMap { index in
