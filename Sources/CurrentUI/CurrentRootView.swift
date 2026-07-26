@@ -952,7 +952,7 @@ public struct CurrentRootView: View {
         } message: {
           Text(
             forceWorktreeRemoval
-              ? "This can delete uncommitted changes inside the selected worktree. Locked and current worktrees remain protected."
+              ? "Current first verifies the worktree has no tracked, untracked, or ignored changes. Locked and current worktrees remain protected."
               : "Git refuses removal when the selected worktree is dirty or locked."
           )
         }

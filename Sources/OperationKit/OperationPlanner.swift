@@ -4,6 +4,179 @@ import Foundation
 import GitEngine
 
 public enum OperationPlanner {
+  public static func worktree(
+    _ mutation: WorktreeMutation,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    let kind: String
+    let title: String
+    let commands: [OperationCommand]
+    let affectedRefs: [String]
+    let impact: WorkingTreeImpact
+    let risk: OperationRisk
+    let recovery: RecoveryStrategy
+    let preconditions: [String]
+
+    switch mutation {
+    case .create(let path, let branch, let startPoint):
+      var arguments = [
+        Array("worktree".utf8),
+        Array("add".utf8),
+        Array("-b".utf8),
+        Array(branch.utf8),
+        Array("--".utf8),
+        path.rawBytes,
+      ]
+      if startPoint != nil {
+        arguments.append(Array("<resolved-start-oid>".utf8))
+      }
+      kind = "worktree.create"
+      title = "Create worktree"
+      commands = [
+        .git(
+          GitCommand(
+            rawArguments: arguments,
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      affectedRefs = ["refs/heads/\(branch)"]
+      impact = .none
+      risk = .localSafe
+      recovery = .none
+      preconditions = [
+        "The destination is an absolute NUL-free path",
+        "The new branch name and optional start point pass Git validation",
+      ]
+    case .lock(let path, let reason):
+      var arguments = [
+        Array("worktree".utf8),
+        Array("lock".utf8),
+      ]
+      if reason?.isEmpty == false {
+        arguments += [
+          Array("--reason".utf8),
+          Array("<lock-reason>".utf8),
+        ]
+      }
+      arguments += [Array("--".utf8), path.rawBytes]
+      kind = "worktree.lock"
+      title = "Lock worktree"
+      commands = [
+        .git(
+          GitCommand(
+            rawArguments: arguments,
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      affectedRefs = []
+      impact = .none
+      risk = .localSafe
+      recovery = .none
+      preconditions = ["The worktree path and optional reason pass validation"]
+    case .unlock(let path):
+      kind = "worktree.unlock"
+      title = "Unlock worktree"
+      commands = [
+        .git(
+          GitCommand(
+            rawArguments: [
+              Array("worktree".utf8),
+              Array("unlock".utf8),
+              Array("--".utf8),
+              path.rawBytes,
+            ],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      affectedRefs = []
+      impact = .none
+      risk = .localSafe
+      recovery = .none
+      preconditions = ["The absolute worktree path passes validation"]
+    case .remove(let path, let force):
+      var remove = [
+        Array("worktree".utf8),
+        Array("remove".utf8),
+      ]
+      if force {
+        remove.append(Array("--force".utf8))
+      }
+      remove += [Array("--".utf8), path.rawBytes]
+      var plannedCommands: [OperationCommand] = []
+      if force {
+        plannedCommands.append(
+          .git(
+            GitCommand(
+              rawArguments: [
+                Array("-C".utf8),
+                path.rawBytes,
+                Array("status".utf8),
+                Array("--porcelain=v2".utf8),
+                Array("-z".utf8),
+                Array("--untracked-files=all".utf8),
+                Array("--ignored=matching".utf8),
+              ],
+              workingDirectory: location.worktreeURL
+            )
+          )
+        )
+      }
+      plannedCommands.append(
+        .git(
+          GitCommand(
+            rawArguments: remove,
+            workingDirectory: location.worktreeURL
+          )
+        )
+      )
+      kind = force ? "worktree.remove.force" : "worktree.remove"
+      title = force ? "Force remove worktree" : "Remove worktree"
+      commands = plannedCommands
+      affectedRefs = []
+      impact = .worktreeOnly
+      risk = .localDestructive
+      recovery = .retainedGitMetadata
+      preconditions = [
+        "The selected worktree is neither current nor locked",
+        force
+          ? "A porcelain status scan proves there are no tracked, untracked, or ignored changes"
+          : "Git refuses removal unless the worktree is clean",
+      ]
+    case .prune:
+      kind = "worktree.prune"
+      title = "Prune stale worktree metadata"
+      commands = [
+        .git(
+          GitCommand(
+            arguments: ["worktree", "prune", "--expire", "now"],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      affectedRefs = []
+      impact = .none
+      risk = .localSafe
+      recovery = .none
+      preconditions = ["Git prunes metadata only for missing worktrees"]
+    }
+
+    return try OperationPlan(
+      kind: kind,
+      title: title,
+      repositoryGeneration: generation,
+      preconditions: preconditions,
+      commands: commands,
+      affectedRefs: affectedRefs,
+      workingTreeImpact: impact,
+      risk: risk,
+      recoveryStrategy: recovery
+    )
+  }
+
   public static func stash(
     _ mutation: StashMutation,
     generation: RepositoryGeneration,

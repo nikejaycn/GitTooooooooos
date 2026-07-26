@@ -489,9 +489,18 @@ public actor RepositoryActor {
     _ mutation: WorktreeMutation,
     historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
-      try await engine.mutateWorktree(at: location, mutation: mutation)
-    }
+    try await applyRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.worktree(
+          mutation,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
+        try await engine.mutateWorktree(at: location, mutation: mutation)
+      }
   }
 
   @discardableResult

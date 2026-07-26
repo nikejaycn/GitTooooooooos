@@ -1402,6 +1402,29 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       guard !worktreePath(path, matches: location.worktreeURL) else {
         throw GitEngineError.invalidRepository("The currently open worktree cannot remove itself.")
       }
+      if force {
+        let status = try await execute(
+          GitCommand(
+            rawArguments: [
+              Array("-C".utf8),
+              path.rawBytes,
+              Array("status".utf8),
+              Array("--porcelain=v2".utf8),
+              Array("-z".utf8),
+              Array("--untracked-files=all".utf8),
+              Array("--ignored=matching".utf8),
+            ],
+            workingDirectory: location.worktreeURL,
+            outputLimit: 8 * 1024 * 1024,
+            timeout: .seconds(60)
+          )
+        )
+        guard status.standardOutput.isEmpty else {
+          throw GitEngineError.invalidRepository(
+            "Force Remove requires a clean worktree with no untracked or ignored files."
+          )
+        }
+      }
       arguments =
         [
           Array("worktree".utf8),

@@ -331,6 +331,20 @@ struct RepositoryActorTests {
     #expect(snapshot.worktrees == [worktree])
     #expect(await engine.worktreeMutations() == [mutation])
     #expect(snapshot.generation == RepositoryGeneration(1))
+    let lockPlan = try #require(await repository.lastOperationPlan())
+    #expect(lockPlan.kind == "worktree.lock")
+    #expect(lockPlan.risk == .localSafe)
+
+    _ = try await repository.applyWorktreeMutation(
+      .remove(path: path, force: true)
+    )
+    let removePlan = try #require(await repository.lastOperationPlan())
+    #expect(removePlan.kind == "worktree.remove.force")
+    #expect(removePlan.risk == .localDestructive)
+    #expect(removePlan.recoveryStrategy == .retainedGitMetadata)
+    #expect(removePlan.confirmationPolicy == .single)
+    #expect(removePlan.commands.count == 2)
+    #expect(removePlan.commands[0].preview.contains("--ignored=matching"))
   }
 
   @Test("Submodule mutation uses the repository queue and refreshes nested state")

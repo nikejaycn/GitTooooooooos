@@ -489,6 +489,8 @@ struct GitEngineTests {
         .success(""),
         .success(""),
         .success(""),
+        .success(""),
+        .success(""),
       ]
     )
     let engine = BundledGitCLIEngine(runner: runner)
@@ -520,6 +522,10 @@ struct GitEngineTests {
       at: location,
       mutation: .remove(path: path, force: false)
     )
+    try await engine.mutateWorktree(
+      at: location,
+      mutation: .remove(path: path, force: true)
+    )
 
     let commands = await runner.commands()
     #expect(commands[0].redactedDescription == "worktree list --porcelain -z")
@@ -534,6 +540,8 @@ struct GitEngineTests {
       ])
     #expect(commands[3].arguments.last == path.rawBytes)
     #expect(!commands[5].arguments.contains(Array("--force".utf8)))
+    #expect(commands[6].arguments.contains(Array("--ignored=matching".utf8)))
+    #expect(commands[7].arguments.contains(Array("--force".utf8)))
   }
 
   @Test("Submodule listing and mutations preserve raw option-safe paths")
@@ -1992,7 +2000,35 @@ struct GitEngineTests {
     #expect(dirtyRemovalRejected)
     #expect(FileManager.default.fileExists(atPath: topic.path))
 
+    var dirtyForceRemovalRejected = false
+    do {
+      try await engine.mutateWorktree(
+        at: location,
+        mutation: .remove(path: GitPath(topic.path), force: true)
+      )
+    } catch {
+      dirtyForceRemovalRejected = true
+    }
+    #expect(dirtyForceRemovalRejected)
+    #expect(FileManager.default.fileExists(atPath: topic.path))
+
     try runGit(["-C", topic.path, "restore", "tracked.txt"])
+    let exclude = root
+      .appendingPathComponent(".git", isDirectory: true)
+      .appendingPathComponent("info", isDirectory: true)
+      .appendingPathComponent("exclude")
+    try Data("ignored.tmp\n".utf8).write(to: exclude)
+    let ignored = topic.appendingPathComponent("ignored.tmp")
+    try Data("local cache\n".utf8).write(to: ignored)
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateWorktree(
+        at: location,
+        mutation: .remove(path: GitPath(topic.path), force: true)
+      )
+    }
+    #expect(FileManager.default.fileExists(atPath: ignored.path))
+    try FileManager.default.removeItem(at: ignored)
+
     try await engine.mutateWorktree(
       at: location,
       mutation: .lock(path: GitPath(topic.path), reason: "fixture")

@@ -19,6 +19,8 @@ NUL 的绝对路径，并以原始字节作为独立进程参数传递；所有�
 
 - 普通 Remove 不传 `--force`，让 Git 拒绝 dirty 或 locked worktree。
 - Force Remove 只在用户二次确认后传单个 `--force`，不会绕过 locked worktree。
+- Force Remove 执行前使用目标 worktree 的 porcelain v2 状态检查 tracked、untracked 和
+  ignored 内容；任一类别非空都拒绝删除，不能把 `--force` 当作数据丢失通道。
 - 当前打开的 worktree 无论普通或强制模式都禁止删除。
 - locked worktree 必须先显式 Unlock，界面不提供直接强制删除。
 
@@ -42,5 +44,5 @@ detached/bare 状态和路径。用户可创建并选择本机目标目录、打
   当前 worktree 自删除保护，以及 `/tmp`/`/private/tmp` 路径别名。
 - RepositoryActor 测试覆盖 mutation queue、快照刷新和 generation 更新。
 - 原生 UI QA 验证当前 worktree 的 Open/Remove/Force Remove 均禁用，locked worktree
-  只能 Open/Unlock。
+  只能 Open/Unlock；Force Remove 对 dirty、untracked 和 ignored fixture 均拒绝。
 - 完整 Swift 测试、Debug/Release universal 构建均须通过。
