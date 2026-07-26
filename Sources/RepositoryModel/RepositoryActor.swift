@@ -555,8 +555,17 @@ public actor RepositoryActor {
   public func applyMergeMutation(
     _ mutation: MergeMutation,
     historyLimit: Int = 200
-  ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+  ) async throws -> HistoryMutationResult {
+    try await applyRecoverableRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.merge(
+          mutation,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
       try await engine.mutateMerge(at: location, mutation: mutation)
     }
   }

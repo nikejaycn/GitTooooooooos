@@ -1232,10 +1232,10 @@ final class AppModel {
     errorMessage = nil
     defer { isLoading = false }
     do {
-      let snapshot = try await repository.applyMergeMutation(
+      let result = try await repository.applyMergeMutation(
         .resolveContents(path: path, contents: Array(result.utf8))
       )
-      apply(snapshot)
+      apply(result.snapshot)
       finishActivity(activityID, state: .succeeded)
     } catch {
       errorMessage = error.localizedDescription
@@ -1284,10 +1284,10 @@ final class AppModel {
         throw ExternalToolError.failed(externalMergeTool.title, status)
       }
       let resolved = Array(try Data(contentsOf: resultURL))
-      let snapshot = try await repository.applyMergeMutation(
+      let result = try await repository.applyMergeMutation(
         .resolveContents(path: path, contents: resolved)
       )
-      apply(snapshot)
+      apply(result.snapshot)
       finishActivity(activityID, state: .succeeded)
     } catch {
       errorMessage = error.localizedDescription
@@ -2033,7 +2033,11 @@ final class AppModel {
       isLoading = true
       errorMessage = nil
       do {
-        apply(try await repository.applyMergeMutation(mutation))
+        let result = try await repository.applyMergeMutation(mutation)
+        apply(result.snapshot)
+        if let recovery = result.recoveryReference {
+          lastRecoveryReference = recovery
+        }
         finishActivity(activityID, state: .succeeded)
       } catch {
         if let snapshot = try? await repository.refreshSnapshot() {

@@ -61,6 +61,45 @@ private struct BranchDialogsModifier: ViewModifier {
   }
 }
 
+private struct PendingMergeRequest {
+  let branch: String
+  let squash: Bool
+}
+
+private struct MergeStartDialogModifier: ViewModifier {
+  @Binding var request: PendingMergeRequest?
+  let merge: (String) -> Void
+  let squashMerge: (String) -> Void
+
+  func body(content: Content) -> some View {
+    content.confirmationDialog(
+      request?.squash == true ? "Squash merge branch?" : "Merge branch?",
+      isPresented: Binding(
+        get: { request != nil },
+        set: { if !$0 { request = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      Button(
+        request?.squash == true ? "Squash Merge" : "Merge",
+        role: .destructive
+      ) {
+        if let request {
+          request.squash ? squashMerge(request.branch) : merge(request.branch)
+        }
+        request = nil
+      }
+      Button("Cancel", role: .cancel) {
+        request = nil
+      }
+    } message: {
+      Text(
+        "Current resolves the target before execution and preserves the current HEAD in a hidden recovery reference. Without auto-stash, the operation requires a clean working copy."
+      )
+    }
+  }
+}
+
 public struct CurrentRootView: View {
   private enum Workspace: Hashable {
     case changes
@@ -227,6 +266,7 @@ public struct CurrentRootView: View {
   @State private var branchToRename: GitReference?
   @State private var renamedBranchName = ""
   @State private var pendingBranchDeletion: GitReference?
+  @State private var pendingMergeRequest: PendingMergeRequest?
   @State private var isCreatingTag = false
   @State private var newTagName = ""
   @State private var newTagTarget = ""
@@ -834,6 +874,13 @@ public struct CurrentRootView: View {
             pendingBranchDeletion: $pendingBranchDeletion,
             renameBranch: renameBranch,
             deleteBranch: deleteBranch
+          )
+        )
+        .modifier(
+          MergeStartDialogModifier(
+            request: $pendingMergeRequest,
+            merge: mergeBranch,
+            squashMerge: squashMergeBranch
           )
         )
         .alert("Create Worktree", isPresented: $isCreatingWorktree) {
@@ -2670,11 +2717,17 @@ public struct CurrentRootView: View {
       .help(reference.isHEAD ? "Current branch" : "Check out \(reference.shortName)")
       .contextMenu {
         Button("Merge into Current Branch") {
-          mergeBranch(reference.shortName)
+          pendingMergeRequest = PendingMergeRequest(
+            branch: reference.shortName,
+            squash: false
+          )
         }
         .disabled(reference.isHEAD || isLoading)
         Button("Squash into Current Working Copy") {
-          squashMergeBranch(reference.shortName)
+          pendingMergeRequest = PendingMergeRequest(
+            branch: reference.shortName,
+            squash: true
+          )
         }
         .disabled(reference.isHEAD || isLoading)
         Divider()

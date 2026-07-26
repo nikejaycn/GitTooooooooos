@@ -641,6 +641,7 @@ public struct InteractiveRebasePlan: Hashable, Sendable, Codable {
 public struct RecoveryReference: Hashable, Sendable, Codable {
   public enum Kind: String, Hashable, Sendable, Codable {
     case history
+    case merge
     case stash
     case stashEntry
     case reference

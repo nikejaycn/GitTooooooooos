@@ -199,10 +199,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: RemoteMutation
   ) async throws
+  @discardableResult
   func mutateMerge(
     at location: RepositoryLocation,
     mutation: MergeMutation
-  ) async throws
+  ) async throws -> RecoveryReference?
   func conflictFile(
     at location: RepositoryLocation,
     path: GitPath
@@ -2074,23 +2075,34 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  @discardableResult
   public func mutateMerge(
     at location: RepositoryLocation,
     mutation: MergeMutation
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     guard location.kind != .bare else {
       throw GitEngineError.invalidRepository("A bare repository cannot perform a merge.")
     }
 
     let arguments: [String]
+    var recovery: RecoveryReference?
     switch mutation {
     case .start(let branch, let squash, let noFastForward, let autoStash):
+      let targetOID = try await resolveCommit(branch, at: location)
+      if !autoStash {
+        try await requireCleanWorkingCopy(at: location)
+      }
+      recovery = try await createRecoveryReference(
+        reason: squash ? "squash merge" : "merge",
+        kind: .merge,
+        at: location
+      )
       arguments =
         ["merge", "--no-edit"]
         + (squash ? ["--squash"] : [])
         + (noFastForward ? ["--no-ff"] : [])
         + (autoStash ? ["--autostash"] : [])
-        + [branch]
+        + [targetOID]
     case .resolve(let path, let side):
       guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
         throw GitEngineError.invalidOutput("A conflict path was empty or contained a NUL byte.")
@@ -2130,7 +2142,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           )
         )
       }
-      return
+      return nil
     case .resolveContents(let path, let contents):
       let fileURL = try workingTreeFileURL(at: location, path: path)
       do {
@@ -2150,7 +2162,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           workingDirectory: location.worktreeURL
         )
       )
-      return
+      return nil
     case .continueOperation:
       switch operationKind(at: location) {
       case .merge: arguments = ["merge", "--continue"]
@@ -2190,19 +2202,19 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       if operationBeforeCommand == .rebase {
         removeInteractiveRebaseState(at: location)
       }
-      return
+      return recovery
     }
 
     // A merge that stopped on conflicts is a valid state transition. The
     // conflicted index and MERGE_HEAD are the authoritative result.
     if case .start = mutation, operationKind(at: location) == .merge {
-      return
+      return recovery
     }
     if case .continueOperation = mutation,
       operationBeforeCommand != .none,
       operationKind(at: location) == operationBeforeCommand
     {
-      return
+      return nil
     }
     if case .abortOperation = mutation, operationBeforeCommand == .rebase {
       removeInteractiveRebaseState(at: location)
@@ -2498,6 +2510,21 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           )
         )
         return inverse
+      case .merge:
+        guard reference.name.hasPrefix("refs/current/undo/"),
+          !reference.name.utf8.contains(0)
+        else {
+          throw GitEngineError.invalidOutput("Invalid Current merge recovery reference.")
+        }
+        let target = try await resolveCommit(reference.name, at: location)
+        _ = try await execute(
+          GitCommand(
+            arguments: ["reset", "--merge", target],
+            workingDirectory: location.worktreeURL,
+            timeout: .seconds(300)
+          )
+        )
+        return nil
       case .stash:
         guard reference.name == "refs/stash",
           isFullObjectID(reference.targetOID),

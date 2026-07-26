@@ -1662,6 +1662,100 @@ struct GitEngineTests {
   }
 
   @Test(
+    "Clean merge creates a recovery ref that restores the previous HEAD",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveMergeRecovery() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-merge-recovery-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    try Data("base\n".utf8).write(to: root.appendingPathComponent("base.txt"))
+    try runGit(["-C", root.path, "add", "base.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try runGit(["-C", root.path, "switch", "-c", "topic"])
+    try Data("topic\n".utf8).write(to: root.appendingPathComponent("topic.txt"))
+    try runGit(["-C", root.path, "add", "topic.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "topic"])
+    try runGit(["-C", root.path, "switch", "main"])
+    let originalHead = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    let recovery = try #require(
+      try await engine.mutateMerge(
+        at: location,
+        mutation: .start(
+          branch: "topic",
+          squash: false,
+          noFastForward: true,
+          autoStash: false
+        )
+      )
+    )
+
+    #expect(recovery.kind == .merge)
+    #expect(recovery.targetOID == originalHead)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) != originalHead)
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("topic.txt").path))
+
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .undo(reference: recovery)
+    )
+
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == originalHead)
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("topic.txt").path))
+  }
+
+  @Test(
+    "Merge without auto-stash requires a clean working copy",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveMergeRequiresCleanWorkingCopy() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-merge-clean-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let tracked = root.appendingPathComponent("tracked.txt")
+    try Data("base\n".utf8).write(to: tracked)
+    try runGit(["-C", root.path, "add", "tracked.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    try runGit(["-C", root.path, "branch", "topic"])
+    try Data("local work\n".utf8).write(to: tracked)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateMerge(
+        at: location,
+        mutation: .start(
+          branch: "topic",
+          squash: false,
+          noFastForward: false,
+          autoStash: false
+        )
+      )
+    }
+    #expect(try String(contentsOf: tracked, encoding: .utf8) == "local work\n")
+  }
+
+  @Test(
     "Squash merge stages the selected branch without moving HEAD",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
   func liveSquashMerge() async throws {
@@ -1689,13 +1783,15 @@ struct GitEngineTests {
       )
     )
     let location = try await engine.locateRepository(at: root)
-    try await engine.mutateMerge(
-      at: location,
-      mutation: .start(
-        branch: "topic",
-        squash: true,
-        noFastForward: false,
-        autoStash: false
+    let recovery = try #require(
+      try await engine.mutateMerge(
+        at: location,
+        mutation: .start(
+          branch: "topic",
+          squash: true,
+          noFastForward: false,
+          autoStash: false
+        )
       )
     )
 
@@ -1709,6 +1805,18 @@ struct GitEngineTests {
         $0.path.displayString == "topic.txt" && $0.isStaged
       })
     #expect(status.operation.kind == .none)
+
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .undo(reference: recovery)
+    )
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == originalHead)
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("topic.txt").path))
+    let restoredStatus = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(2)
+    )
+    #expect(restoredStatus.changes.isEmpty)
   }
 
   @Test(

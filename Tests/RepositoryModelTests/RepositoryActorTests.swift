@@ -556,6 +556,32 @@ struct RepositoryActorTests {
     #expect(plan.confirmationPolicy == .single)
   }
 
+  @Test("Merge start publishes a confirmed Git-reference recovery plan")
+  func mergeOperationPlan() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    _ = try await repository.applyMergeMutation(
+      .start(
+        branch: "topic",
+        squash: false,
+        noFastForward: true,
+        autoStash: false
+      )
+    )
+
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "merge.start")
+    #expect(plan.risk == .localDestructive)
+    #expect(plan.recoveryStrategy == .gitReference)
+    #expect(plan.confirmationPolicy == .single)
+    #expect(plan.affectedRefs.contains("HEAD"))
+    #expect(plan.commands.first?.preview.contains("<resolved-target-oid>") == true)
+  }
+
   @Test("Branch plans allow safe delete and reject unrecoverable force delete")
   func branchOperationPlans() async throws {
     let engine = StubGitEngine()
@@ -874,7 +900,9 @@ private actor StubGitEngine: GitEngineProtocol {
   func mutateMerge(
     at location: RepositoryLocation,
     mutation: MergeMutation
-  ) async throws {}
+  ) async throws -> RecoveryReference? {
+    nil
+  }
 
   func mutateHistory(
     at location: RepositoryLocation,
