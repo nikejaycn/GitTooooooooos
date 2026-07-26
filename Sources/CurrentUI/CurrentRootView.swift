@@ -1233,6 +1233,8 @@ public struct CurrentRootView: View {
           )
         )
     }
+    // Showing the sidebar must resize the detail column instead of covering it.
+    .navigationSplitViewStyle(.balanced)
     .sheet(
       isPresented: Binding(
         get: { conflictEditorPath != nil },
@@ -2109,6 +2111,7 @@ public struct CurrentRootView: View {
         diffPane
           .frame(minWidth: CurrentUILayout.diffMinimumWidth)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
       .onChange(of: status.changes.map(\.path)) { _, paths in
         selectedStashPaths.formIntersection(paths)
       }

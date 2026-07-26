@@ -16,8 +16,8 @@
 | 约束 | 规则 |
 | --- | --- |
 | 主窗口 | 最小 `880 × 560`，由 `CurrentUILayout` 统一定义 |
-| 侧边栏 | 最小 180、理想 220；使用系统 `NavigationSplitView` 和 sidebar List |
-| Changes | 文件列表固定 300、Diff 最小 300；使用确定性双栏，避免系统分栏恢复状态把列表压缩到不可用宽度 |
+| 侧边栏 | 最小 180、理想 220；系统 `NavigationSplitView` 使用 `.balanced`，展开时压缩正文而不覆盖正文 |
+| Changes | 文件列表固定 300、Diff 最小 300；使用确定性双栏并靠左占满正文，避免侧边栏切换后错位或压缩 |
 | File History | 历史列表最小 230、Blame 最小 320 |
 | History | 提交图最小 320、Inspector 最小 220 |
 | 路径、分支、引用、URL | 单行、中部截断、完整 help |
