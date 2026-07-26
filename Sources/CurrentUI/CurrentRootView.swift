@@ -274,6 +274,7 @@ public struct CurrentRootView: View {
   @State private var isConfirmingForcePush = false
   @State private var selectedStashPaths: Set<GitPath> = []
   @State private var stashRequest: StashRequest?
+  @State private var pendingStashDrop: StashEntry?
 
   public init(
     repositoryName: String?,
@@ -1020,6 +1021,12 @@ public struct CurrentRootView: View {
           )
         )
         .modifier(
+          StashDropDialogModifier(
+            pendingDrop: $pendingStashDrop,
+            drop: dropStash
+          )
+        )
+        .modifier(
           LFSDialogsModifier(
             isTracking: $isTrackingLFS,
             pattern: $newLFSPattern,
@@ -1490,7 +1497,7 @@ public struct CurrentRootView: View {
               popStash(stash.selector)
             }
             Button(role: .destructive) {
-              dropStash(stash.selector)
+              pendingStashDrop = stash
             } label: {
               Image(systemName: "trash")
             }
@@ -3392,6 +3399,36 @@ private struct TagDialogsModifier: ViewModifier {
           "Current will verify the remote tag has not changed since inspection. This deletion cannot be undone locally."
         )
       }
+  }
+}
+
+private struct StashDropDialogModifier: ViewModifier {
+  @Binding var pendingDrop: StashEntry?
+  let drop: (String) -> Void
+
+  func body(content: Content) -> some View {
+    content.confirmationDialog(
+      "Drop \(pendingDrop?.selector ?? "stash")?",
+      isPresented: Binding(
+        get: { pendingDrop != nil },
+        set: { if !$0 { pendingDrop = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      Button("Drop Stash", role: .destructive) {
+        if let pendingDrop {
+          drop(pendingDrop.selector)
+        }
+        pendingDrop = nil
+      }
+      Button("Cancel", role: .cancel) {
+        pendingDrop = nil
+      }
+    } message: {
+      Text(
+        "Current keeps a hidden recovery reference so this stash can be restored with Undo."
+      )
+    }
   }
 }
 

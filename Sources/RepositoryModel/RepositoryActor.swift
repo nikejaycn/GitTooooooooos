@@ -469,10 +469,19 @@ public actor RepositoryActor {
   public func applyStashMutation(
     _ mutation: StashMutation,
     historyLimit: Int = 200
-  ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
-      try await engine.mutateStash(at: location, mutation: mutation)
-    }
+  ) async throws -> HistoryMutationResult {
+    try await applyRecoverableRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.stash(
+          mutation,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
+        try await engine.mutateStash(at: location, mutation: mutation)
+      }
   }
 
   @discardableResult

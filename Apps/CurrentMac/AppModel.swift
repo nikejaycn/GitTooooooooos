@@ -1915,7 +1915,11 @@ final class AppModel {
       isLoading = true
       errorMessage = nil
       do {
-        apply(try await repository.applyStashMutation(mutation))
+        let result = try await repository.applyStashMutation(mutation)
+        apply(result.snapshot)
+        if let recovery = result.recoveryReference {
+          lastRecoveryReference = recovery
+        }
         finishActivity(activityID, state: .succeeded)
       } catch {
         if let snapshot = try? await repository.refreshSnapshot() {

@@ -189,10 +189,11 @@ public protocol GitEngineProtocol: Sendable {
     task: RepositoryMaintenanceTask
   ) async throws -> String
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry]
+  @discardableResult
   func mutateStash(
     at location: RepositoryLocation,
     mutation: StashMutation
-  ) async throws
+  ) async throws -> RecoveryReference?
   func remotes(at location: RepositoryLocation) async throws -> [GitRemote]
   func mutateRemote(
     at location: RepositoryLocation,
@@ -1778,10 +1779,11 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     }
   }
 
+  @discardableResult
   public func mutateStash(
     at location: RepositoryLocation,
     mutation: StashMutation
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     guard location.kind != .bare else {
       throw GitEngineError.invalidRepository("A bare repository has no changes to stash.")
     }
@@ -1825,12 +1827,21 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     case .drop(let selector):
       try validateStashSelector(selector)
       let stashOID = try await resolveCommit(selector, at: location)
-      _ = try await createRecoveryReference(
+      let recovery = try await createRecoveryReference(
         reason: "stash-drop",
         targetOID: stashOID,
+        kind: .stashEntry,
         at: location
       )
       arguments = ["stash", "drop", selector].map { Array($0.utf8) }
+      _ = try await execute(
+        GitCommand(
+          rawArguments: arguments,
+          workingDirectory: location.worktreeURL,
+          timeout: .seconds(300)
+        )
+      )
+      return recovery
     }
     _ = try await execute(
       GitCommand(
@@ -1839,6 +1850,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: .seconds(300)
       )
     )
+    return nil
   }
 
   public func remotes(
@@ -2446,6 +2458,25 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
             ] + reference.paths.map(\.rawBytes),
             workingDirectory: location.worktreeURL,
             timeout: .seconds(300)
+          )
+        )
+        return nil
+      case .stashEntry:
+        guard reference.name.hasPrefix("refs/current/undo/"),
+          isFullObjectID(reference.targetOID)
+        else {
+          throw GitEngineError.invalidOutput(
+            "Invalid Current stash-entry recovery."
+          )
+        }
+        _ = try await execute(
+          GitCommand(
+            arguments: [
+              "stash", "store", "-m", "Recovered by Current",
+              reference.targetOID,
+            ],
+            workingDirectory: location.worktreeURL,
+            timeout: .seconds(120)
           )
         )
         return nil

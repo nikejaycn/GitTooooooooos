@@ -2464,7 +2464,7 @@ struct GitEngineTests {
   }
 
   @Test(
-    "Dropping a stash creates an applyable recovery reference",
+    "Dropping a stash returns an undoable stash-entry recovery",
     .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
   func liveStashDropRecovery() async throws {
     let root = FileManager.default.temporaryDirectory
@@ -2492,20 +2492,24 @@ struct GitEngineTests {
       mutation: .save(message: "drop recovery", includeUntracked: false, paths: [])
     )
     let stash = try #require(try await engine.stashes(at: location).first)
-    try await engine.mutateStash(
+    let recovery = try #require(await engine.mutateStash(
       at: location,
       mutation: .drop(selector: stash.selector)
-    )
+    ))
     #expect(try await engine.stashes(at: location).isEmpty)
+    #expect(recovery.kind == .stashEntry)
+    #expect(recovery.targetOID == stash.oid)
 
-    let recoveryRef = try runGitOutput([
-      "-C", root.path, "for-each-ref", "--format=%(refname)", "refs/current/undo",
-    ])
-    let reference = try #require(
-      recoveryRef.split(separator: "\n").map(String.init).last
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .undo(reference: recovery)
     )
-    #expect(try runGitOutput(["-C", root.path, "rev-parse", reference]) == stash.oid)
-    try runGit(["-C", root.path, "stash", "apply", reference])
+    let restored = try #require(try await engine.stashes(at: location).first)
+    #expect(restored.oid == stash.oid)
+    try await engine.mutateStash(
+      at: location,
+      mutation: .apply(selector: restored.selector, reinstateIndex: true)
+    )
     #expect(try String(contentsOf: file, encoding: .utf8) == "recover me\n")
   }
 

@@ -642,6 +642,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
   public enum Kind: String, Hashable, Sendable, Codable {
     case history
     case stash
+    case stashEntry
     case reference
   }
 

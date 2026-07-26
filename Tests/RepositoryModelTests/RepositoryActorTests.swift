@@ -425,6 +425,24 @@ struct RepositoryActorTests {
     #expect(remoteDeletePlan.confirmationPolicy == .double)
   }
 
+  @Test("Stash drop publishes a recoverable destructive plan")
+  func stashDropPlan() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    _ = try await repository.applyStashMutation(.drop(selector: "stash@{0}"))
+
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "stash.drop")
+    #expect(plan.risk == .localDestructive)
+    #expect(plan.recoveryStrategy == .gitReference)
+    #expect(plan.confirmationPolicy == .single)
+    #expect(plan.affectedRefs == ["refs/stash"])
+  }
+
   @Test("Commit runs through the mutation queue and refreshes the full snapshot")
   func commitRefresh() async throws {
     let engine = StubGitEngine()
@@ -775,7 +793,9 @@ private actor StubGitEngine: GitEngineProtocol {
   func mutateStash(
     at location: RepositoryLocation,
     mutation: StashMutation
-  ) async throws {}
+  ) async throws -> RecoveryReference? {
+    nil
+  }
 
   func remotes(at location: RepositoryLocation) async throws -> [GitRemote] {
     []
