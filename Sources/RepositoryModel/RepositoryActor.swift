@@ -508,9 +508,18 @@ public actor RepositoryActor {
     _ mutation: SubmoduleMutation,
     historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
-      try await engine.mutateSubmodule(at: location, mutation: mutation)
-    }
+    try await applyRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.submodule(
+          mutation,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
+        try await engine.mutateSubmodule(at: location, mutation: mutation)
+      }
   }
 
   @discardableResult

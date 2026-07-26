@@ -979,7 +979,7 @@ public struct CurrentRootView: View {
         } message: {
           Text(
             forceSubmoduleRemoval
-              ? "This can delete uncommitted files inside the nested repository. Its cached Git directory remains available for recovery."
+              ? "Current first verifies the initialized nested repository has no tracked, untracked, or ignored changes. Its Git object store remains cached."
               : "Git refuses removal when the submodule contains uncommitted or untracked changes."
           )
         }

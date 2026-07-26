@@ -23,7 +23,9 @@ OID 解析，不解析可能含空格或换行的显示路径。recorded gitlink
 - Update from Remote 使用 `--remote --checkout`，更新嵌套 checkout 后让父仓库显示待暂存
   的 pointer change。
 - Remove 使用 `git rm -- <raw-path>`，默认由 Git 拒绝 dirty/untracked 内容。
-- Force Remove 仅在二次确认后添加 `--force`；`.git/modules` 缓存保留以便恢复。
+- Force Remove 仅在二次确认后添加 `--force`。执行前必须确认 submodule 已初始化，并
+  使用嵌套仓库的 porcelain v2 状态检查 tracked、untracked 和 ignored 内容；任一类别
+  非空都拒绝删除。`.git/modules` 对象缓存继续保留。
 
 路径必须是无 NUL 的仓库相对路径，拒绝绝对路径、空组件、`.`、`..` 和 `.git` 组件。
 所有路径都以原始字节作为独立进程参数传递，并使用 `--` 终止 option。
@@ -35,8 +37,9 @@ changes 状态。已初始化项可打开为当前窗口中的仓库；菜单提
 Recorded Commit、Update from Remote、Stage Pointer、普通删除和强制删除。Add 表单收集
 remote URL、仓库相对路径和可选 branch。
 
-普通删除的确认文案说明 dirty/untracked 会被 Git 拒绝；强制删除单独警告可能删除嵌套
-仓库的未提交文件。多窗口打开行为由 Local Workspace 工作包统一实现。
+普通删除的确认文案说明 dirty/untracked 会被 Git 拒绝；强制删除明确说明会先完成
+cleanliness 检查，不提供不可恢复的数据丢失入口。多窗口打开行为由 Local Workspace
+工作包统一实现。
 
 ## 验证
 
@@ -45,7 +48,7 @@ remote URL、仓库相对路径和可选 branch。
 - command 测试覆盖 config/index/status/nested status、branch 校验、原始路径、`--`、
   update 模式和普通删除不携带 force。
 - 真实临时仓库覆盖 add、远端更新、pointer stage、checkout recorded、deinit/init、
-  nested dirty 检测、普通删除拒绝和显式强制删除。
+  nested dirty 检测、普通与强制删除拒绝，以及 clean 后显式强制删除。
 - RepositoryActor 测试覆盖 mutation queue、submodule 快照和 generation。
 - 原生 UI QA 覆盖状态图标、完整上下文菜单、Add 表单必填约束和删除入口。
 - 完整 Swift 测试、Debug/Release universal 构建均须通过。

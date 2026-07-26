@@ -2173,6 +2173,15 @@ struct GitEngineTests {
     #expect(dirtyRemovalRejected)
     #expect(FileManager.default.fileExists(atPath: nestedFile.path))
 
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateSubmodule(
+        at: location,
+        mutation: .remove(path: path, force: true)
+      )
+    }
+    #expect(FileManager.default.fileExists(atPath: nestedFile.path))
+
+    try runGit(["-C", nestedFile.deletingLastPathComponent().path, "restore", "nested.txt"])
     try await engine.mutateSubmodule(
       at: location,
       mutation: .remove(path: path, force: true)

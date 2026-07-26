@@ -1594,6 +1594,47 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         } + [path.rawBytes]
     case .remove(let path, let force):
       try validateRepositoryRelativePath(path, label: "submodule")
+      if force {
+        let repositoryCheck = try? await runner.run(
+          GitCommand(
+            rawArguments: [
+              Array("-C".utf8),
+              path.rawBytes,
+              Array("rev-parse".utf8),
+              Array("--is-inside-work-tree".utf8),
+            ],
+            workingDirectory: location.worktreeURL,
+            outputLimit: 1024,
+            timeout: .seconds(30)
+          )
+        )
+        guard repositoryCheck?.succeeded == true else {
+          throw GitEngineError.invalidRepository(
+            "Force Remove requires an initialized submodule that can be inspected."
+          )
+        }
+        let nestedStatus = try await execute(
+          GitCommand(
+            rawArguments: [
+              Array("-C".utf8),
+              path.rawBytes,
+              Array("status".utf8),
+              Array("--porcelain=v2".utf8),
+              Array("-z".utf8),
+              Array("--untracked-files=all".utf8),
+              Array("--ignored=matching".utf8),
+            ],
+            workingDirectory: location.worktreeURL,
+            outputLimit: 8 * 1024 * 1024,
+            timeout: .seconds(60)
+          )
+        )
+        guard nestedStatus.standardOutput.isEmpty else {
+          throw GitEngineError.invalidRepository(
+            "Force Remove requires a clean submodule with no untracked or ignored files."
+          )
+        }
+      }
       arguments =
         [Array("rm".utf8)]
         + (force ? [Array("--force".utf8)] : [])

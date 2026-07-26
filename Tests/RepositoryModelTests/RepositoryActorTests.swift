@@ -372,6 +372,19 @@ struct RepositoryActorTests {
     #expect(snapshot.submodules == [module])
     #expect(await engine.submoduleMutations() == [mutation])
     #expect(snapshot.generation == RepositoryGeneration(1))
+    let updatePlan = try #require(await repository.lastOperationPlan())
+    #expect(updatePlan.kind == "submodule.update-remote")
+    #expect(updatePlan.risk == .localSafe)
+
+    _ = try await repository.applySubmoduleMutation(
+      .remove(path: path, force: true)
+    )
+    let removePlan = try #require(await repository.lastOperationPlan())
+    #expect(removePlan.kind == "submodule.remove.force")
+    #expect(removePlan.risk == .localDestructive)
+    #expect(removePlan.recoveryStrategy == .retainedGitMetadata)
+    #expect(removePlan.confirmationPolicy == .single)
+    #expect(removePlan.commands.count == 3)
   }
 
   @Test("Git LFS mutation uses the repository queue and refreshes capability state")
