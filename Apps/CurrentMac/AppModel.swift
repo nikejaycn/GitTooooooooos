@@ -41,6 +41,9 @@ final class AppModel {
   private static let graphColumnsKey = "Current.graphColumns.v1"
   private static let graphDensityKey = "Current.graphDensity.v1"
   private static let graphScaleKey = "Current.graphScale.v1"
+  private static let ignoresWhitespaceChangesKey = "Current.ignoresWhitespaceChanges.v1"
+  private static let ignoresEndOfLineWhitespaceKey =
+    "Current.ignoresEndOfLineWhitespace.v1"
   private static let hiddenGraphReferencesKey = "Current.hiddenGraphReferences.v1"
   private static let soloGraphReferenceKey = "Current.soloGraphReference.v1"
   private static let pinnedGraphReferencesKey = "Current.pinnedGraphReferences.v1"
@@ -86,6 +89,7 @@ final class AppModel {
   private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
   private(set) var selectedDiff: DiffDocument?
+  private(set) var diffOptions = DiffOptions()
   private(set) var isDiffLoading = false
   private(set) var fileHistory: FileHistoryResult?
   private(set) var blameDocument: BlameDocument?
@@ -110,6 +114,7 @@ final class AppModel {
   private var commitComparisonTask: Task<Void, Never>?
   private var commitComparisonRequestID: UUID?
   private var diffRequestID: UUID?
+  private var selectedDiffChange: FileChange?
   private var fileHistoryTask: Task<Void, Never>?
   private var fileHistoryRequestID: UUID?
   private var blameTask: Task<Void, Never>?
@@ -154,6 +159,14 @@ final class AppModel {
     )
     pinnedGraphReferences = Set(
       UserDefaults.standard.stringArray(forKey: Self.pinnedGraphReferencesKey) ?? []
+    )
+    diffOptions = DiffOptions(
+      ignoresWhitespaceChanges: UserDefaults.standard.bool(
+        forKey: Self.ignoresWhitespaceChangesKey
+      ),
+      ignoresEndOfLineWhitespace: UserDefaults.standard.bool(
+        forKey: Self.ignoresEndOfLineWhitespaceKey
+      )
     )
     appearance =
       UserDefaults.standard.string(forKey: Self.appearanceKey)
@@ -812,15 +825,21 @@ final class AppModel {
   func loadDiff(_ change: FileChange) {
     guard let repository, change.kind != .untracked else {
       selectedDiff = nil
+      selectedDiffChange = nil
       return
     }
+    selectedDiffChange = change
     let source: DiffSource = change.isUnstaged ? .unstaged : .staged
     let requestID = UUID()
     diffRequestID = requestID
     isDiffLoading = true
     Task {
       do {
-        let document = try await repository.diff(for: change.path, source: source)
+        let document = try await repository.diff(
+          for: change.path,
+          source: source,
+          options: diffOptions
+        )
         guard diffRequestID == requestID else { return }
         selectedDiff = document
       } catch {
@@ -831,6 +850,22 @@ final class AppModel {
       if diffRequestID == requestID {
         isDiffLoading = false
       }
+    }
+  }
+
+  func setDiffOptions(_ options: DiffOptions) {
+    guard options != diffOptions else { return }
+    diffOptions = options
+    UserDefaults.standard.set(
+      options.ignoresWhitespaceChanges,
+      forKey: Self.ignoresWhitespaceChangesKey
+    )
+    UserDefaults.standard.set(
+      options.ignoresEndOfLineWhitespace,
+      forKey: Self.ignoresEndOfLineWhitespaceKey
+    )
+    if let selectedDiffChange {
+      loadDiff(selectedDiffChange)
     }
   }
 
@@ -1313,6 +1348,8 @@ final class AppModel {
         selectedDiff = nil
         if let change = snapshot.status.changes.first(where: { $0.path == document.path }) {
           loadDiff(change)
+        } else {
+          selectedDiffChange = nil
         }
         finishActivity(activityID, state: .succeeded)
       } catch {
@@ -1566,6 +1603,7 @@ final class AppModel {
     commitTemplate = template
     apply(snapshot)
     selectedDiff = nil
+    selectedDiffChange = nil
     startWatchingRepository(opened)
     recordRecentRepository(opened.location.worktreeURL)
   }
@@ -1600,6 +1638,7 @@ final class AppModel {
     submodules = []
     gitLFS = .unavailable
     selectedDiff = nil
+    selectedDiffChange = nil
     clearFileInsights()
   }
 
@@ -1720,6 +1759,7 @@ final class AppModel {
         let snapshot = try await repository.applyBranchMutation(mutation)
         apply(snapshot)
         selectedDiff = nil
+        selectedDiffChange = nil
         finishActivity(activityID, state: .succeeded)
       } catch {
         if let snapshot = try? await repository.refreshSnapshot() {

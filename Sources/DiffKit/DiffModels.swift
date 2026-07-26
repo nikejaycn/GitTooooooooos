@@ -11,6 +11,19 @@ public enum DiffSource: String, Hashable, Sendable, Codable {
   case staged
 }
 
+public struct DiffOptions: Hashable, Sendable, Codable {
+  public var ignoresWhitespaceChanges: Bool
+  public var ignoresEndOfLineWhitespace: Bool
+
+  public init(
+    ignoresWhitespaceChanges: Bool = false,
+    ignoresEndOfLineWhitespace: Bool = false
+  ) {
+    self.ignoresWhitespaceChanges = ignoresWhitespaceChanges
+    self.ignoresEndOfLineWhitespace = ignoresEndOfLineWhitespace
+  }
+}
+
 public enum DiffLineKind: String, Hashable, Sendable, Codable {
   case context
   case addition

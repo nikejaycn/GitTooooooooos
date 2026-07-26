@@ -953,13 +953,20 @@ struct GitEngineTests {
     let document = try await engine.diff(
       at: location,
       path: GitPath("file.txt"),
-      source: .staged
+      source: .staged,
+      options: DiffOptions(
+        ignoresWhitespaceChanges: true,
+        ignoresEndOfLineWhitespace: true
+      )
     )
 
     #expect(document.hunks.count == 1)
     #expect(document.changedLineCount == 2)
     let command = try #require(await runner.commands().first)
-    #expect(command.redactedDescription.contains("--cached -- file.txt"))
+    #expect(
+      command.redactedDescription.contains(
+        "--cached --ignore-all-space --ignore-space-at-eol -- file.txt"
+      ))
   }
 
   @Test("External unstaged diff reads the index and working tree without a shell")

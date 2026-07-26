@@ -590,7 +590,8 @@ private actor StubGitEngine: GitEngineProtocol {
   func diff(
     at location: RepositoryLocation,
     path: GitPath,
-    source: DiffSource
+    source: DiffSource,
+    options: DiffOptions
   ) async throws -> DiffDocument {
     DiffDocument(
       path: path,

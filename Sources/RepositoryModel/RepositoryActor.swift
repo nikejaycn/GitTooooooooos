@@ -142,9 +142,10 @@ public actor RepositoryActor {
 
   public func diff(
     for path: GitPath,
-    source: DiffSource
+    source: DiffSource,
+    options: DiffOptions = DiffOptions()
   ) async throws -> DiffDocument {
-    try await engine.diff(at: location, path: path, source: source)
+    try await engine.diff(at: location, path: path, source: source, options: options)
   }
 
   public func fileHistory(

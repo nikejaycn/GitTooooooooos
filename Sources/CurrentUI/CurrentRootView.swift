@@ -108,6 +108,7 @@ public struct CurrentRootView: View {
   private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
   private let selectedDiff: DiffDocument?
+  private let diffOptions: DiffOptions
   private let externalDiffTool: ExternalTool
   private let externalMergeTool: ExternalTool
   private let isDiffLoading: Bool
@@ -144,6 +145,7 @@ public struct CurrentRootView: View {
   private let exportPatch: (String) -> Void
   private let applyPatch: () -> Void
   private let loadDiff: (FileChange) -> Void
+  private let setDiffOptions: (DiffOptions) -> Void
   private let openExternalDiff: (DiffDocument) -> Void
   private let loadFileInsights: (GitPath) -> Void
   private let loadBlame: (GitPath, String?) -> Void
@@ -293,6 +295,7 @@ public struct CurrentRootView: View {
     recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
     selectedDiff: DiffDocument?,
+    diffOptions: DiffOptions,
     externalDiffTool: ExternalTool,
     externalMergeTool: ExternalTool,
     isDiffLoading: Bool,
@@ -329,6 +332,7 @@ public struct CurrentRootView: View {
     exportPatch: @escaping (String) -> Void,
     applyPatch: @escaping () -> Void,
     loadDiff: @escaping (FileChange) -> Void,
+    setDiffOptions: @escaping (DiffOptions) -> Void,
     openExternalDiff: @escaping (DiffDocument) -> Void,
     loadFileInsights: @escaping (GitPath) -> Void,
     loadBlame: @escaping (GitPath, String?) -> Void,
@@ -416,6 +420,7 @@ public struct CurrentRootView: View {
     self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
     self.selectedDiff = selectedDiff
+    self.diffOptions = diffOptions
     self.externalDiffTool = externalDiffTool
     self.externalMergeTool = externalMergeTool
     self.isDiffLoading = isDiffLoading
@@ -452,6 +457,7 @@ public struct CurrentRootView: View {
     self.exportPatch = exportPatch
     self.applyPatch = applyPatch
     self.loadDiff = loadDiff
+    self.setDiffOptions = setDiffOptions
     self.openExternalDiff = openExternalDiff
     self.loadFileInsights = loadFileInsights
     self.loadBlame = loadBlame
@@ -1726,6 +1732,40 @@ public struct CurrentRootView: View {
             .labelsHidden()
             .pickerStyle(.segmented)
             .frame(width: 190)
+            Menu {
+              Toggle(
+                "Ignore Whitespace Changes",
+                isOn: Binding(
+                  get: { diffOptions.ignoresWhitespaceChanges },
+                  set: { enabled in
+                    setDiffOptions(
+                      DiffOptions(
+                        ignoresWhitespaceChanges: enabled,
+                        ignoresEndOfLineWhitespace: diffOptions.ignoresEndOfLineWhitespace
+                      )
+                    )
+                  }
+                )
+              )
+              Toggle(
+                "Ignore End-of-Line Whitespace",
+                isOn: Binding(
+                  get: { diffOptions.ignoresEndOfLineWhitespace },
+                  set: { enabled in
+                    setDiffOptions(
+                      DiffOptions(
+                        ignoresWhitespaceChanges: diffOptions.ignoresWhitespaceChanges,
+                        ignoresEndOfLineWhitespace: enabled
+                      )
+                    )
+                  }
+                )
+              )
+            } label: {
+              Label("Whitespace", systemImage: "textformat")
+            }
+            .menuStyle(.borderlessButton)
+            .help("Diff whitespace options")
             Spacer()
           }
           HStack(spacing: 10) {

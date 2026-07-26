@@ -138,7 +138,8 @@ public protocol GitEngineProtocol: Sendable {
   func diff(
     at location: RepositoryLocation,
     path: GitPath,
-    source: DiffSource
+    source: DiffSource,
+    options: DiffOptions
   ) async throws -> DiffDocument
   func fileHistory(
     at location: RepositoryLocation,
@@ -951,7 +952,8 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
   public func diff(
     at location: RepositoryLocation,
     path: GitPath,
-    source: DiffSource
+    source: DiffSource,
+    options: DiffOptions = DiffOptions()
   ) async throws -> DiffDocument {
     guard location.kind != .bare else {
       throw GitEngineError.invalidRepository("A bare repository has no working-copy diff.")
@@ -969,6 +971,12 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     ]
     if source == .staged {
       prefix.append("--cached")
+    }
+    if options.ignoresWhitespaceChanges {
+      prefix.append("--ignore-all-space")
+    }
+    if options.ignoresEndOfLineWhitespace {
+      prefix.append("--ignore-space-at-eol")
     }
     prefix.append("--")
     let result = try await execute(
