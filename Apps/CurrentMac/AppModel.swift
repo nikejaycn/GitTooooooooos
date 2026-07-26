@@ -1329,7 +1329,7 @@ final class AppModel {
 
   func undoLastRecoverableOperation() {
     guard let reference = lastRecoveryReference else { return }
-    applyHistory(.undo(reference: reference.name))
+    applyHistory(.undo(reference: reference))
   }
 
   func applyHunk(_ document: DiffDocument, hunk: DiffHunk) {
@@ -1739,7 +1739,11 @@ final class AppModel {
       isLoading = true
       errorMessage = nil
       do {
-        apply(try await repository.applyWorkingCopyMutation(mutation))
+        let result = try await repository.applyWorkingCopyMutation(mutation)
+        apply(result.status)
+        if let recovery = result.recoveryReference {
+          lastRecoveryReference = recovery
+        }
         finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription
@@ -2040,7 +2044,9 @@ final class AppModel {
       do {
         let result = try await repository.applyHistoryMutation(mutation)
         apply(result.snapshot)
-        if let recovery = result.recoveryReference {
+        if case .undo = mutation {
+          lastRecoveryReference = result.recoveryReference
+        } else if let recovery = result.recoveryReference {
           lastRecoveryReference = recovery
         }
         finishActivity(activityID, state: .succeeded)

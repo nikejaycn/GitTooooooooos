@@ -127,7 +127,7 @@ public protocol GitEngineProtocol: Sendable {
   func mutateWorkingCopy(
     at location: RepositoryLocation,
     mutation: WorkingCopyMutation
-  ) async throws
+  ) async throws -> RecoveryReference?
   func commit(
     at location: RepositoryLocation,
     request: CommitRequest
@@ -758,14 +758,15 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     }
   }
 
+  @discardableResult
   public func mutateWorkingCopy(
     at location: RepositoryLocation,
     mutation: WorkingCopyMutation
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     guard location.kind != .bare else {
       throw GitEngineError.invalidRepository("A bare repository has no working copy.")
     }
-    guard !mutation.paths.isEmpty else { return }
+    guard !mutation.paths.isEmpty else { return nil }
     guard mutation.paths.allSatisfy({ !$0.rawBytes.isEmpty && !$0.rawBytes.contains(0) }) else {
       throw GitEngineError.invalidOutput("A pathspec was empty or contained a NUL byte.")
     }
@@ -775,10 +776,13 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     case .stage:
       prefix = ["add", "--"]
     case .discardTracked:
-      prefix = ["restore", "--worktree", "--"]
+      return try await createDiscardRecovery(
+        paths: mutation.paths,
+        at: location
+      )
     case .ignore(let paths):
       try appendIgnoreRules(paths, at: location)
-      return
+      return nil
     case .unstage:
       let head = try await runner.run(
         GitCommand(
@@ -801,6 +805,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         workingDirectory: location.worktreeURL
       )
     )
+    return nil
   }
 
   public func commit(
@@ -2364,23 +2369,55 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
 
     case .undo(let reference):
-      guard reference.hasPrefix("refs/current/undo/"), !reference.utf8.contains(0) else {
-        throw GitEngineError.invalidOutput("Invalid Current recovery reference.")
-      }
-      try await requireCleanWorkingCopy(at: location)
-      let target = try await resolveCommit(reference, at: location)
-      let inverse = try await createRecoveryReference(
-        reason: "undo",
-        at: location
-      )
-      _ = try await execute(
-        GitCommand(
-          arguments: ["reset", "--hard", target],
-          workingDirectory: location.worktreeURL,
-          timeout: .seconds(300)
+      switch reference.kind {
+      case .history:
+        guard reference.name.hasPrefix("refs/current/undo/"),
+          !reference.name.utf8.contains(0)
+        else {
+          throw GitEngineError.invalidOutput("Invalid Current recovery reference.")
+        }
+        try await requireCleanWorkingCopy(at: location)
+        let target = try await resolveCommit(reference.name, at: location)
+        let inverse = try await createRecoveryReference(
+          reason: "undo",
+          at: location
         )
-      )
-      return inverse
+        _ = try await execute(
+          GitCommand(
+            arguments: ["reset", "--hard", target],
+            workingDirectory: location.worktreeURL,
+            timeout: .seconds(300)
+          )
+        )
+        return inverse
+      case .stash:
+        guard reference.name == "refs/stash",
+          isFullObjectID(reference.targetOID),
+          !reference.paths.isEmpty,
+          reference.paths.allSatisfy({
+            !$0.rawBytes.isEmpty && !$0.rawBytes.contains(0)
+          })
+        else {
+          throw GitEngineError.invalidOutput("Invalid Current stash recovery reference.")
+        }
+        try await requireCleanWorkingCopyPaths(
+          reference.paths,
+          at: location
+        )
+        _ = try await execute(
+          GitCommand(
+            rawArguments: [
+              Array("restore".utf8),
+              Array("--source=\(reference.targetOID)".utf8),
+              Array("--worktree".utf8),
+              Array("--".utf8),
+            ] + reference.paths.map(\.rawBytes),
+            workingDirectory: location.worktreeURL,
+            timeout: .seconds(300)
+          )
+        )
+        return nil
+      }
     }
   }
 
@@ -2959,6 +2996,82 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
     )
     return RecoveryReference(name: name, targetOID: target)
+  }
+
+  private func createDiscardRecovery(
+    paths: [GitPath],
+    at location: RepositoryLocation
+  ) async throws -> RecoveryReference {
+    let previous = await stashOID(at: location)
+    let message =
+      "Current recovery before discard \(Int(Date().timeIntervalSince1970)) "
+      + UUID().uuidString.lowercased()
+    let prefix = [
+      "stash",
+      "push",
+      "--keep-index",
+      "--message",
+      message,
+      "--",
+    ]
+    _ = try await execute(
+      GitCommand(
+        rawArguments: prefix.map { Array($0.utf8) } + paths.map(\.rawBytes),
+        workingDirectory: location.worktreeURL,
+        timeout: .seconds(300)
+      )
+    )
+    guard let target = await stashOID(at: location), target != previous else {
+      throw GitEngineError.invalidOutput(
+        "Git did not create a recovery stash before discarding changes."
+      )
+    }
+    return RecoveryReference(
+      kind: .stash,
+      name: "refs/stash",
+      targetOID: target,
+      paths: paths
+    )
+  }
+
+  private func stashOID(at location: RepositoryLocation) async -> String? {
+    let result = try? await runner.run(
+      GitCommand(
+        arguments: ["rev-parse", "--verify", "--quiet", "refs/stash"],
+        workingDirectory: location.worktreeURL
+      )
+    )
+    guard let result, result.succeeded else { return nil }
+    let oid = String(decoding: result.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return isFullObjectID(oid) ? oid : nil
+  }
+
+  private func requireCleanWorkingCopyPaths(
+    _ paths: [GitPath],
+    at location: RepositoryLocation
+  ) async throws {
+    let command = GitCommand(
+      rawArguments: [
+        Array("diff".utf8),
+        Array("--quiet".utf8),
+        Array("--".utf8),
+      ] + paths.map(\.rawBytes),
+      workingDirectory: location.worktreeURL
+    )
+    let result = try await runner.run(command)
+    if result.succeeded {
+      return
+    }
+    if case .exited(1) = result.termination {
+      throw GitEngineError.invalidRepository(
+        "The recovered paths have new working-copy changes. Discard or stash them before undoing the earlier discard."
+      )
+    }
+    throw GitEngineError.commandFailed(
+      arguments: command.redactedDescription,
+      message: command.redactingSecrets(in: result.errorDescription)
+    )
   }
 
   private func requireCleanWorkingCopy(

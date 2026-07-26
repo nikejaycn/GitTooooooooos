@@ -270,12 +270,13 @@ struct RepositoryActorTests {
       engine: engine
     )
 
-    let status = try await repository.applyWorkingCopyMutation(
+    let result = try await repository.applyWorkingCopyMutation(
       .stage([GitPath("README.md")])
     )
 
-    #expect(status.generation == RepositoryGeneration(1))
-    #expect(await repository.status() == status)
+    #expect(result.status.generation == RepositoryGeneration(1))
+    #expect(result.recoveryReference == nil)
+    #expect(await repository.status() == result.status)
     #expect(await engine.mutations() == [.stage([GitPath("README.md")])])
   }
 
@@ -541,8 +542,9 @@ private actor StubGitEngine: GitEngineProtocol {
   func mutateWorkingCopy(
     at location: RepositoryLocation,
     mutation: WorkingCopyMutation
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     receivedMutations.append(mutation)
+    return nil
   }
 
   func worktrees(at location: RepositoryLocation) async throws -> [GitWorktree] {

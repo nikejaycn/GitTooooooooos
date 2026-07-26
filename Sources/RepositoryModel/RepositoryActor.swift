@@ -235,7 +235,7 @@ public actor RepositoryActor {
   @discardableResult
   public func applyWorkingCopyMutation(
     _ mutation: WorkingCopyMutation
-  ) async throws -> RepositoryStatus {
+  ) async throws -> WorkingCopyMutationResult {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
     let predecessor = mutationTail
@@ -245,19 +245,27 @@ public actor RepositoryActor {
     let operation = Task {
       await predecessor?.value
       try Task.checkCancellation()
-      try await engine.mutateWorkingCopy(at: location, mutation: mutation)
-      return try await engine.status(
+      let recovery = try await engine.mutateWorkingCopy(
+        at: location,
+        mutation: mutation
+      )
+      let status = try await engine.status(
         at: location,
         generation: requestedGeneration
+      )
+      return WorkingCopyMutationResult(
+        status: status,
+        recoveryReference: recovery
       )
     }
     mutationTail = Task {
       _ = try? await operation.value
     }
 
-    let status = try await operation.value
+    let result = try await operation.value
+    let status = result.status
     guard requestedGeneration == generation else {
-      return status
+      return result
     }
     cachedStatus = status
     if let cachedSnapshot {
@@ -273,7 +281,7 @@ public actor RepositoryActor {
         gitLFS: cachedSnapshot.gitLFS
       )
     }
-    return status
+    return result
   }
 
   @discardableResult

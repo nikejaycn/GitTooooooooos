@@ -591,7 +591,7 @@ public enum HistoryMutation: Hashable, Sendable {
   case reset(target: String, mode: ResetMode)
   case rebase(onto: String, autoStash: Bool)
   case interactiveRebase(plan: InteractiveRebasePlan, autoStash: Bool)
-  case undo(reference: String)
+  case undo(reference: RecoveryReference)
 }
 
 public enum InteractiveRebaseAction: String, CaseIterable, Hashable, Sendable, Codable {
@@ -639,14 +639,68 @@ public struct InteractiveRebasePlan: Hashable, Sendable, Codable {
 }
 
 public struct RecoveryReference: Hashable, Sendable, Codable {
+  public enum Kind: String, Hashable, Sendable, Codable {
+    case history
+    case stash
+  }
+
+  public let kind: Kind
   public let name: String
   public let targetOID: String
+  public let paths: [GitPath]
   public let createdAt: Date
 
-  public init(name: String, targetOID: String, createdAt: Date = Date()) {
+  public init(
+    kind: Kind = .history,
+    name: String,
+    targetOID: String,
+    paths: [GitPath] = [],
+    createdAt: Date = Date()
+  ) {
+    self.kind = kind
     self.name = name
     self.targetOID = targetOID
+    self.paths = paths
     self.createdAt = createdAt
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case kind
+    case name
+    case targetOID
+    case paths
+    case createdAt
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .history
+    name = try container.decode(String.self, forKey: .name)
+    targetOID = try container.decode(String.self, forKey: .targetOID)
+    paths = try container.decodeIfPresent([GitPath].self, forKey: .paths) ?? []
+    createdAt = try container.decode(Date.self, forKey: .createdAt)
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(kind, forKey: .kind)
+    try container.encode(name, forKey: .name)
+    try container.encode(targetOID, forKey: .targetOID)
+    try container.encode(paths, forKey: .paths)
+    try container.encode(createdAt, forKey: .createdAt)
+  }
+}
+
+public struct WorkingCopyMutationResult: Hashable, Sendable {
+  public let status: RepositoryStatus
+  public let recoveryReference: RecoveryReference?
+
+  public init(
+    status: RepositoryStatus,
+    recoveryReference: RecoveryReference?
+  ) {
+    self.status = status
+    self.recoveryReference = recoveryReference
   }
 }
 

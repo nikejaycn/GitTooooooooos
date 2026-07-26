@@ -1409,8 +1409,59 @@ struct GitEngineTests {
       mutation: .pop(selector: stashes[0].selector, reinstateIndex: true)
     )
     #expect(try String(contentsOf: file, encoding: .utf8) == "changed\n")
-    try await engine.mutateWorkingCopy(at: location, mutation: .discardTracked([path]))
+    let discardRecovery = try #require(
+      try await engine.mutateWorkingCopy(
+        at: location,
+        mutation: .discardTracked([path])
+      )
+    )
+    #expect(discardRecovery.kind == .stash)
     #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
+    #expect(
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .undo(reference: discardRecovery)
+      ) == nil
+    )
+    #expect(try String(contentsOf: file, encoding: .utf8) == "changed\n")
+    _ = try await engine.mutateWorkingCopy(
+      at: location,
+      mutation: .discardTracked([path])
+    )
+    #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
+    try Data("staged version\n".utf8).write(to: file)
+    _ = try await engine.mutateWorkingCopy(at: location, mutation: .stage([path]))
+    try Data("unstaged version\n".utf8).write(to: file)
+    let stagedDiscardRecovery = try #require(
+      try await engine.mutateWorkingCopy(
+        at: location,
+        mutation: .discardTracked([path])
+      )
+    )
+    #expect(try String(contentsOf: file, encoding: .utf8) == "staged version\n")
+    #expect(
+      try runGitOutput(["-C", root.path, "show", ":name with space.txt"])
+        == "staged version"
+    )
+    try Data("newer working copy\n".utf8).write(to: file)
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .undo(reference: stagedDiscardRecovery)
+      )
+    }
+    #expect(try String(contentsOf: file, encoding: .utf8) == "newer working copy\n")
+    try Data("staged version\n".utf8).write(to: file)
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .undo(reference: stagedDiscardRecovery)
+    )
+    #expect(try String(contentsOf: file, encoding: .utf8) == "unstaged version\n")
+    #expect(
+      try runGitOutput(["-C", root.path, "show", ":name with space.txt"])
+        == "staged version"
+    )
+    try runGit(["-C", root.path, "reset", "--hard", "HEAD"])
 
     let siblingPath = GitPath("sibling.txt")
     let siblingFile = root.appendingPathComponent(siblingPath.displayString)
@@ -2187,7 +2238,7 @@ struct GitEngineTests {
     let inverse = try #require(
       try await engine.mutateHistory(
         at: location,
-        mutation: .undo(reference: recovery.name)
+        mutation: .undo(reference: recovery)
       )
     )
     #expect(inverse.targetOID == firstOID)

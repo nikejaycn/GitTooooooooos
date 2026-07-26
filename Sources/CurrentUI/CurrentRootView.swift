@@ -897,7 +897,7 @@ public struct CurrentRootView: View {
           }
         } message: {
           Text(
-            "This replaces the working-copy file with its indexed version and cannot be undone by Git."
+            "Current saves the selected working-copy changes as a recovery stash, then restores the indexed version. Use Undo Last Operation to restore them without changing staged content."
           )
         }
         .confirmationDialog(
