@@ -37,13 +37,29 @@ public struct GitRemote: Hashable, Sendable, Codable, Identifiable {
   public var id: String { name }
 }
 
+public enum PullStrategy: String, CaseIterable, Hashable, Sendable, Codable, Identifiable {
+  case merge
+  case fastForwardOnly
+  case rebase
+
+  public var id: Self { self }
+
+  public var title: String {
+    switch self {
+    case .merge: "Fast-forward if Possible"
+    case .fastForwardOnly: "Fast-forward Only"
+    case .rebase: "Rebase"
+    }
+  }
+}
+
 public enum RemoteMutation: Hashable, Sendable {
   case add(name: String, fetchURL: String, pushURL: String?)
   case rename(oldName: String, newName: String)
   case update(name: String, fetchURL: String, pushURL: String)
   case remove(name: String)
   case fetch(remote: String?, prune: Bool)
-  case pull(remote: String?, branch: String?, rebase: Bool)
+  case pull(remote: String?, branch: String?, strategy: PullStrategy)
   case push(remote: String, branch: String, setUpstream: Bool, forceWithLease: Bool)
 }
 

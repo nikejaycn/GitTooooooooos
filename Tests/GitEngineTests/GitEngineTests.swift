@@ -26,6 +26,36 @@ struct GitEngineTests {
     #expect(commands[0].redactedDescription == "--version")
   }
 
+  @Test("Pull strategies map to explicit non-interactive Git arguments")
+  func pullStrategyArguments() async throws {
+    let runner = StubRunner(results: [.success(""), .success(""), .success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .pull(remote: nil, branch: nil, strategy: .merge)
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .pull(remote: nil, branch: nil, strategy: .fastForwardOnly)
+    )
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .pull(remote: nil, branch: nil, strategy: .rebase)
+    )
+
+    #expect(
+      await runner.commands().map(\.redactedDescription) == [
+        "pull --no-rebase",
+        "pull --ff-only",
+        "pull --rebase",
+      ])
+  }
+
   @Test("Reads the Git LFS version through the bundled helper path")
   func lfsVersion() async throws {
     let runner = StubRunner(
@@ -1354,7 +1384,7 @@ struct GitEngineTests {
     )
     try await engine.mutateRemote(
       at: location,
-      mutation: .pull(remote: "origin", branch: "main", rebase: false)
+      mutation: .pull(remote: "origin", branch: "main", strategy: .fastForwardOnly)
     )
     try Data("changed\n".utf8).write(to: file)
     let unstagedDocument = try await engine.diff(

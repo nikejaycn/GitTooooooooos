@@ -1843,16 +1843,13 @@ final class AppModel {
     applyRemote(.remove(name: remote.name))
   }
 
-  func pull() {
-    applyRemote(.pull(remote: nil, branch: nil, rebase: false))
+  func pull(_ strategy: PullStrategy) {
+    applyRemote(.pull(remote: nil, branch: nil, strategy: strategy))
   }
 
   func push() {
     guard let branch = currentBranch,
-      let remote = remotes.first?.name
-        ?? repositoryStatus?.upstream?.split(separator: "/").first.map(
-          String.init
-        )
+      let remote = pushRemote
     else {
       errorMessage = "A local branch and remote are required before pushing."
       return
@@ -1869,7 +1866,8 @@ final class AppModel {
 
   func forcePushWithLease() {
     guard let branch = currentBranch,
-      let remote = repositoryStatus?.upstream?.split(separator: "/").first.map(String.init)
+      repositoryStatus?.upstream != nil,
+      let remote = pushRemote
     else {
       errorMessage = "An upstream branch is required for a force-with-lease push."
       return
@@ -1887,6 +1885,16 @@ final class AppModel {
   private var currentBranch: String? {
     guard case .branch(let name) = repositoryStatus?.head else { return nil }
     return name
+  }
+
+  private var pushRemote: String? {
+    if let upstream = repositoryStatus?.upstream {
+      return remotes
+        .sorted { $0.name.count > $1.name.count }
+        .first { upstream.hasPrefix("\($0.name)/") }?
+        .name
+    }
+    return remotes.first?.name
   }
 
   private func applyStash(_ mutation: StashMutation) {

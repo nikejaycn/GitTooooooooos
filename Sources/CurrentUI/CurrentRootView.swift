@@ -200,7 +200,7 @@ public struct CurrentRootView: View {
   private let dropStash: (String) -> Void
   private let fetch: () -> Void
   private let fetchRemote: (GitRemote) -> Void
-  private let pull: () -> Void
+  private let pull: (PullStrategy) -> Void
   private let push: () -> Void
   private let addRemote: (String, String, String?) -> Void
   private let updateRemote: (GitRemote, String, String, String) -> Void
@@ -264,6 +264,7 @@ public struct CurrentRootView: View {
   @State private var remoteFetchURL = ""
   @State private var remotePushURL = ""
   @State private var pendingRemoteRemoval: GitRemote?
+  @State private var isConfirmingPush = false
   @State private var isConfirmingForcePush = false
   @State private var selectedStashPaths: Set<GitPath> = []
   @State private var stashRequest: StashRequest?
@@ -387,7 +388,7 @@ public struct CurrentRootView: View {
     dropStash: @escaping (String) -> Void,
     fetch: @escaping () -> Void,
     fetchRemote: @escaping (GitRemote) -> Void,
-    pull: @escaping () -> Void,
+    pull: @escaping (PullStrategy) -> Void,
     push: @escaping () -> Void,
     addRemote: @escaping (String, String, String?) -> Void,
     updateRemote: @escaping (GitRemote, String, String, String) -> Void,
@@ -757,9 +758,17 @@ public struct CurrentRootView: View {
             .keyboardShortcut("k", modifiers: [.command])
             Menu {
               Button("Fetch All", action: fetch)
-              Button("Pull (Fast-forward Only)", action: pull)
-              Button("Push", action: push)
-                .disabled(remotes.isEmpty)
+              Menu("Pull") {
+                ForEach(PullStrategy.allCases) { strategy in
+                  Button(strategy.title) {
+                    pull(strategy)
+                  }
+                }
+              }
+              Button("Push…") {
+                isConfirmingPush = true
+              }
+              .disabled(pushTargetDescription == nil)
               Button("Force Push with Lease…") {
                 isConfirmingForcePush = true
               }
@@ -975,10 +984,15 @@ public struct CurrentRootView: View {
             fetchURL: $remoteFetchURL,
             pushURL: $remotePushURL,
             pendingRemoval: $pendingRemoteRemoval,
+            isConfirmingPush: $isConfirmingPush,
             isConfirmingForcePush: $isConfirmingForcePush,
+            pushTargetDescription: pushTargetDescription,
+            pushRangeDescription: pushRangeDescription,
+            pushCommitCount: status?.upstream == nil ? nil : status?.ahead,
             add: addRemote,
             update: updateRemote,
             remove: removeRemote,
+            push: push,
             forcePushWithLease: forcePushWithLease
           )
         )
@@ -2727,6 +2741,24 @@ public struct CurrentRootView: View {
     return details.joined(separator: "\n")
   }
 
+  private var pushTargetDescription: String? {
+    guard case .branch(let branch) = status?.head else { return nil }
+    let remote: String?
+    if let upstream = status?.upstream {
+      remote = remotes
+        .sorted { $0.name.count > $1.name.count }
+        .first { upstream.hasPrefix("\($0.name)/") }?
+        .name
+    } else {
+      remote = remotes.first?.name
+    }
+    return remote.map { "\($0)/\(branch)" }
+  }
+
+  private var pushRangeDescription: String {
+    status?.upstream.map { "\($0)..HEAD" } ?? "HEAD (new upstream)"
+  }
+
   private var commandPaletteActions: [CommandPaletteAction] {
     var actions = [
       CommandPaletteAction(
@@ -2768,20 +2800,37 @@ public struct CurrentRootView: View {
         perform: fetch
       ),
       CommandPaletteAction(
-        id: "repository.pull",
+        id: "repository.pull-merge",
+        title: "Pull (Fast-forward if Possible)",
+        systemImage: "arrow.down.to.line",
+        keywords: "network update merge",
+        isEnabled: status != nil && !isLoading,
+        perform: { pull(.merge) }
+      ),
+      CommandPaletteAction(
+        id: "repository.pull-ff-only",
         title: "Pull (Fast-forward Only)",
         systemImage: "arrow.down.to.line",
-        keywords: "network update",
+        keywords: "network update safe ff only",
         isEnabled: status != nil && !isLoading,
-        perform: pull
+        perform: { pull(.fastForwardOnly) }
+      ),
+      CommandPaletteAction(
+        id: "repository.pull-rebase",
+        title: "Pull (Rebase)",
+        systemImage: "arrow.down.to.line",
+        keywords: "network update rebase",
+        isEnabled: status != nil && !isLoading,
+        perform: { pull(.rebase) }
       ),
       CommandPaletteAction(
         id: "repository.push",
         title: "Push Current Branch",
+        detail: pushTargetDescription,
         systemImage: "arrow.up.to.line",
         keywords: "network remote",
-        isEnabled: status != nil && !remotes.isEmpty && !isLoading,
-        perform: push
+        isEnabled: pushTargetDescription != nil && !isLoading,
+        perform: { isConfirmingPush = true }
       ),
       CommandPaletteAction(
         id: "repository.new-branch",
@@ -3076,10 +3125,15 @@ private struct RemoteDialogsModifier: ViewModifier {
   @Binding var fetchURL: String
   @Binding var pushURL: String
   @Binding var pendingRemoval: GitRemote?
+  @Binding var isConfirmingPush: Bool
   @Binding var isConfirmingForcePush: Bool
+  let pushTargetDescription: String?
+  let pushRangeDescription: String
+  let pushCommitCount: Int?
   let add: (String, String, String?) -> Void
   let update: (GitRemote, String, String, String) -> Void
   let remove: (GitRemote) -> Void
+  let push: () -> Void
   let forcePushWithLease: () -> Void
 
   func body(content: Content) -> some View {
@@ -3139,6 +3193,20 @@ private struct RemoteDialogsModifier: ViewModifier {
         Text("This removes the local remote configuration and remote-tracking refs.")
       }
       .confirmationDialog(
+        "Push to \(pushTargetDescription ?? "remote branch")?",
+        isPresented: $isConfirmingPush,
+        titleVisibility: .visible
+      ) {
+        Button(pushButtonTitle) {
+          push()
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          "Target: \(pushTargetDescription ?? "Unavailable"). Outgoing range: \(pushRangeDescription)\(pushCountDescription)."
+        )
+      }
+      .confirmationDialog(
         "Force push the current branch with lease?",
         isPresented: $isConfirmingForcePush,
         titleVisibility: .visible
@@ -3150,6 +3218,16 @@ private struct RemoteDialogsModifier: ViewModifier {
           "Current pins the expected remote-tracking OID. Git rejects the push if the remote branch changed since your last fetch."
         )
       }
+  }
+
+  private var pushButtonTitle: String {
+    guard let pushCommitCount else { return "Push Current Branch" }
+    return pushCommitCount == 1 ? "Push 1 Commit" : "Push \(pushCommitCount) Commits"
+  }
+
+  private var pushCountDescription: String {
+    guard let pushCommitCount else { return "" }
+    return " (\(pushCommitCount) commit\(pushCommitCount == 1 ? "" : "s"))"
   }
 }
 

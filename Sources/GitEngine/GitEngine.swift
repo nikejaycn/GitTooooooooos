@@ -1909,15 +1909,25 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         ["fetch"]
         + (prune ? ["--prune"] : [])
         + (remote.map { [$0] } ?? ["--all"])
-    case .pull(let remote, let branch, let rebase):
+    case .pull(let remote, let branch, let strategy):
       if let remote {
         try await validateRemoteName(remote, at: location)
       }
       if let branch {
         try await validateBranchName(branch, at: location)
       }
+      let strategyArguments: [String]
+      switch strategy {
+      case .merge:
+        strategyArguments = ["--no-rebase"]
+      case .fastForwardOnly:
+        strategyArguments = ["--ff-only"]
+      case .rebase:
+        strategyArguments = ["--rebase"]
+      }
       arguments =
-        ["pull", rebase ? "--rebase" : "--ff-only"]
+        ["pull"]
+        + strategyArguments
         + (remote.map { [$0] } ?? [])
         + (branch.map { [$0] } ?? [])
     case .push(let remote, let branch, let setUpstream, let forceWithLease):
