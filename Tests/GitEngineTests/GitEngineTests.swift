@@ -2373,6 +2373,25 @@ struct GitEngineTests {
         autoStash: false
       )
     )
+    let unresolved = try await engine.conflictFile(
+      at: location,
+      path: GitPath("conflict.txt")
+    )
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateMerge(
+        at: location,
+        mutation: .resolveContents(
+          path: GitPath("conflict.txt"),
+          contents: unresolved.workingTree
+        )
+      )
+    }
+    status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(3)
+    )
+    #expect(status.operation.conflictedPaths == [GitPath("conflict.txt")])
+
     try await engine.mutateMerge(
       at: location,
       mutation: .resolveContents(
@@ -2382,7 +2401,7 @@ struct GitEngineTests {
     )
     status = try await engine.status(
       at: location,
-      generation: RepositoryGeneration(3)
+      generation: RepositoryGeneration(4)
     )
     #expect(status.operation.kind == .merge)
     #expect(status.operation.conflictedPaths.isEmpty)
@@ -2391,7 +2410,7 @@ struct GitEngineTests {
     try await engine.mutateMerge(at: location, mutation: .continueOperation)
     status = try await engine.status(
       at: location,
-      generation: RepositoryGeneration(4)
+      generation: RepositoryGeneration(5)
     )
     #expect(status.operation == .none)
     #expect(status.changes.isEmpty)

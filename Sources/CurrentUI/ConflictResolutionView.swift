@@ -1,4 +1,5 @@
 import CurrentDomain
+import MergeKit
 import SwiftUI
 
 struct ConflictResolutionView: View {
@@ -14,6 +15,7 @@ struct ConflictResolutionView: View {
   @State private var errorMessage: String?
   @State private var isLoading = true
   @State private var isSaving = false
+  @State private var selectedConflictIndex = 0
 
   var body: some View {
     VStack(spacing: 0) {
@@ -54,9 +56,16 @@ struct ConflictResolutionView: View {
             .frame(minHeight: 180)
 
             VStack(alignment: .leading, spacing: 6) {
-              Text("Result")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+              HStack {
+                Text("Result")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.secondary)
+                Spacer()
+                conflictNavigation
+              }
+              if let region = selectedConflict {
+                conflictChoiceBar(region)
+              }
               TextEditor(text: $result)
                 .font(.system(size: 12, design: .monospaced))
                 .scrollContentBackground(.hidden)
@@ -105,6 +114,70 @@ struct ConflictResolutionView: View {
     .task(id: path) {
       await loadContents()
     }
+    .onChange(of: result) {
+      clampSelectedConflict()
+    }
+  }
+
+  private var conflictRegions: [ConflictRegion] {
+    ConflictMarkerParser.regions(in: result)
+  }
+
+  private var selectedConflict: ConflictRegion? {
+    let regions = conflictRegions
+    guard regions.indices.contains(selectedConflictIndex) else { return nil }
+    return regions[selectedConflictIndex]
+  }
+
+  @ViewBuilder
+  private var conflictNavigation: some View {
+    let count = conflictRegions.count
+    if count > 0 {
+      Button {
+        selectedConflictIndex = max(0, selectedConflictIndex - 1)
+      } label: {
+        Image(systemName: "chevron.up")
+      }
+      .buttonStyle(.borderless)
+      .disabled(selectedConflictIndex == 0)
+      .help("Previous conflict")
+
+      Text("Conflict \(selectedConflictIndex + 1) of \(count)")
+        .font(.caption.monospacedDigit())
+        .accessibilityLabel("Conflict \(selectedConflictIndex + 1) of \(count)")
+
+      Button {
+        selectedConflictIndex = min(count - 1, selectedConflictIndex + 1)
+      } label: {
+        Image(systemName: "chevron.down")
+      }
+      .buttonStyle(.borderless)
+      .disabled(selectedConflictIndex >= count - 1)
+      .help("Next conflict")
+    } else {
+      Label("All conflict markers resolved", systemImage: "checkmark.circle.fill")
+        .font(.caption)
+        .foregroundStyle(.green)
+    }
+  }
+
+  private func conflictChoiceBar(_ region: ConflictRegion) -> some View {
+    HStack(spacing: 8) {
+      Text("Marker at line \(region.startLine)")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Spacer()
+      Button("Use Ours") {
+        apply(.ours, to: region)
+      }
+      .help("Replace this conflict block with the current branch version")
+      Button("Use Theirs") {
+        apply(.theirs, to: region)
+      }
+      .help("Replace this conflict block with the merged branch version")
+    }
+    .padding(8)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
   }
 
   private func versionPane(_ title: String, bytes: [UInt8]?) -> some View {
@@ -132,10 +205,30 @@ struct ConflictResolutionView: View {
       let loaded = try await load(path)
       contents = loaded
       result = String(decoding: loaded.workingTree, as: UTF8.self)
+      selectedConflictIndex = 0
     } catch {
       errorMessage = error.localizedDescription
     }
     isLoading = false
+  }
+
+  private func apply(_ choice: ConflictChoice, to region: ConflictRegion) {
+    guard
+      let updated = ConflictMarkerParser.replacing(
+        regionID: region.id,
+        with: choice,
+        in: result
+      )
+    else { return }
+    result = updated
+    clampSelectedConflict()
+  }
+
+  private func clampSelectedConflict() {
+    selectedConflictIndex = min(
+      selectedConflictIndex,
+      max(0, conflictRegions.count - 1)
+    )
   }
 
   private func saveResult() {

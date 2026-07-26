@@ -2155,6 +2155,17 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       _ = try await execute(
         GitCommand(
           rawArguments: [
+            Array("diff".utf8),
+            Array("--check".utf8),
+            Array("--".utf8),
+            path.rawBytes,
+          ],
+          workingDirectory: location.worktreeURL
+        )
+      )
+      _ = try await execute(
+        GitCommand(
+          rawArguments: [
             Array("add".utf8),
             Array("--".utf8),
             path.rawBytes,
@@ -2162,6 +2173,24 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           workingDirectory: location.worktreeURL
         )
       )
+      let unmerged = try await execute(
+        GitCommand(
+          rawArguments: [
+            Array("ls-files".utf8),
+            Array("-u".utf8),
+            Array("-z".utf8),
+            Array("--".utf8),
+            path.rawBytes,
+          ],
+          workingDirectory: location.worktreeURL,
+          outputLimit: 8 * 1024 * 1024
+        )
+      )
+      guard unmerged.standardOutput.isEmpty else {
+        throw GitEngineError.invalidRepository(
+          "Git still reports unmerged index entries for \(path.displayString)."
+        )
+      }
       return nil
     case .continueOperation:
       switch operationKind(at: location) {

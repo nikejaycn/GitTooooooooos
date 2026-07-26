@@ -153,7 +153,7 @@ let package = Package(
     ),
     .target(
       name: "CurrentUI",
-      dependencies: ["CurrentDomain", "GraphKit", "DiffKit"]
+      dependencies: ["CurrentDomain", "GraphKit", "DiffKit", "MergeKit"]
     ),
     .testTarget(
       name: "GitParsersTests",
@@ -194,6 +194,10 @@ let package = Package(
     .testTarget(
       name: "CurrentUITests",
       dependencies: ["CurrentUI"]
+    ),
+    .testTarget(
+      name: "MergeKitTests",
+      dependencies: ["MergeKit"]
     ),
   ]
 )

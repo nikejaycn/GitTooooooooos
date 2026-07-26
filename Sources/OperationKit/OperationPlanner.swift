@@ -82,7 +82,22 @@ public enum OperationPlanner {
         .git(
           GitCommand(
             rawArguments:
+              ["diff", "--check", "--"].map { Array($0.utf8) } + [path.rawBytes],
+            workingDirectory: location.worktreeURL
+          )
+        ),
+        .git(
+          GitCommand(
+            rawArguments:
               ["add", "--"].map { Array($0.utf8) } + [path.rawBytes],
+            workingDirectory: location.worktreeURL
+          )
+        ),
+        .git(
+          GitCommand(
+            rawArguments:
+              ["ls-files", "-u", "-z", "--"].map { Array($0.utf8) }
+              + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         ),
@@ -91,7 +106,11 @@ public enum OperationPlanner {
       impact = .indexAndWorktree
       risk = .localSafe
       recovery = .none
-      preconditions = ["The resolved path stays inside the repository worktree"]
+      preconditions = [
+        "The resolved path stays inside the repository worktree",
+        "git diff --check succeeds before staging",
+        "No unmerged index entry remains after staging",
+      ]
     case .continueOperation:
       kind = "merge.continue"
       title = "Continue Git operation"
