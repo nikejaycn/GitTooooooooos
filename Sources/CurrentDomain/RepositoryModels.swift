@@ -642,6 +642,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
   public enum Kind: String, Hashable, Sendable, Codable {
     case history
     case merge
+    case patch
     case stash
     case stashEntry
     case reference
@@ -652,6 +653,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
   public let targetOID: String
   public let paths: [GitPath]
   public let restoreRef: String?
+  public let expectedWorktreeOID: String?
   public let createdAt: Date
 
   public init(
@@ -660,6 +662,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     targetOID: String,
     paths: [GitPath] = [],
     restoreRef: String? = nil,
+    expectedWorktreeOID: String? = nil,
     createdAt: Date = Date()
   ) {
     self.kind = kind
@@ -667,6 +670,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     self.targetOID = targetOID
     self.paths = paths
     self.restoreRef = restoreRef
+    self.expectedWorktreeOID = expectedWorktreeOID
     self.createdAt = createdAt
   }
 
@@ -676,6 +680,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     case targetOID
     case paths
     case restoreRef
+    case expectedWorktreeOID
     case createdAt
   }
 
@@ -686,6 +691,10 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     targetOID = try container.decode(String.self, forKey: .targetOID)
     paths = try container.decodeIfPresent([GitPath].self, forKey: .paths) ?? []
     restoreRef = try container.decodeIfPresent(String.self, forKey: .restoreRef)
+    expectedWorktreeOID = try container.decodeIfPresent(
+      String.self,
+      forKey: .expectedWorktreeOID
+    )
     createdAt = try container.decode(Date.self, forKey: .createdAt)
   }
 
@@ -696,6 +705,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     try container.encode(targetOID, forKey: .targetOID)
     try container.encode(paths, forKey: .paths)
     try container.encodeIfPresent(restoreRef, forKey: .restoreRef)
+    try container.encodeIfPresent(expectedWorktreeOID, forKey: .expectedWorktreeOID)
     try container.encode(createdAt, forKey: .createdAt)
   }
 }

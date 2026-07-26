@@ -2943,6 +2943,35 @@ struct GitEngineTests {
     #expect(lineStaged.changedLineCount == 1)
     #expect(lineStaged.hunks[0].lines.contains { $0.kind == .addition })
     #expect(lineRemaining.changedLineCount == 3)
+
+    let beforeDiscard = try Data(contentsOf: file)
+    let recovery = try await engine.discardHunk(
+      at: location,
+      hunk: try #require(lineRemaining.hunks.last),
+      path: path
+    )
+    #expect(recovery.kind == .patch)
+    #expect(recovery.paths == [path])
+    #expect(recovery.expectedWorktreeOID != nil)
+    #expect(try Data(contentsOf: file) != beforeDiscard)
+    let postDiscard = try Data(contentsOf: file)
+    var newerEdit = postDiscard
+    newerEdit.append(contentsOf: "newer local edit\n".utf8)
+    try newerEdit.write(to: file)
+
+    await #expect(throws: GitEngineError.self) {
+      try await engine.mutateHistory(
+        at: location,
+        mutation: .undo(reference: recovery)
+      )
+    }
+    try postDiscard.write(to: file)
+
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .undo(reference: recovery)
+    )
+    #expect(try Data(contentsOf: file) == beforeDiscard)
   }
 }
 

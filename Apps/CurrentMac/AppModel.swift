@@ -1375,6 +1375,56 @@ final class AppModel {
     }
   }
 
+  func discardHunk(_ document: DiffDocument, hunk: DiffHunk) {
+    discardPartialPatch(document, hunk: hunk, title: "Discard hunk")
+  }
+
+  func discardLine(_ document: DiffDocument, hunk: DiffHunk, lineIndex: Int) {
+    do {
+      let patch = try LinePatchBuilder().selecting(
+        lineIndices: [lineIndex],
+        from: hunk
+      )
+      discardPartialPatch(document, hunk: patch, title: "Discard line")
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func discardPartialPatch(
+    _ document: DiffDocument,
+    hunk: DiffHunk,
+    title: String
+  ) {
+    guard let repository, document.source == .unstaged else { return }
+    let activityID = beginActivity("\(title) in \(document.path.displayString)")
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        let result = try await repository.discardHunk(
+          hunk,
+          path: document.path
+        )
+        apply(result.snapshot)
+        lastRecoveryReference = result.recoveryReference
+        selectedDiff = nil
+        if let change = result.snapshot.status.changes.first(
+          where: { $0.path == document.path }
+        ) {
+          loadDiff(change)
+        } else {
+          selectedDiffChange = nil
+        }
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   private func loadGitToolchainVersions() async {
     guard let engine else { return }
     do {

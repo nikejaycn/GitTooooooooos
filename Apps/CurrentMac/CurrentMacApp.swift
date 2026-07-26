@@ -265,6 +265,8 @@ private struct CurrentWorkspaceWindow: View {
       undoLastOperation: model.undoLastRecoverableOperation,
       applyHunk: model.applyHunk,
       applyLine: model.applyLine,
+      discardHunk: model.discardHunk,
+      discardLine: model.discardLine,
       saveStash: model.saveStash,
       popStash: model.popStash,
       dropStash: model.dropStash,

@@ -645,6 +645,13 @@ struct RepositoryActorTests {
     #expect(hunkPlan.kind == "index.unstage-hunk")
     #expect(hunkPlan.workingTreeImpact == .indexOnly)
     #expect(hunkPlan.commands.first?.preview.contains("--reverse -") == true)
+
+    _ = try await repository.discardHunk(hunk, path: GitPath("file"))
+    let discardPlan = try #require(await repository.lastOperationPlan())
+    #expect(discardPlan.kind == "worktree.discard-hunk")
+    #expect(discardPlan.risk == .localDestructive)
+    #expect(discardPlan.recoveryStrategy == .gitReference)
+    #expect(discardPlan.confirmationPolicy == .single)
   }
 
   @Test("A slow stale read cannot replace a newer cached snapshot")
@@ -921,6 +928,20 @@ private actor StubGitEngine: GitEngineProtocol {
     hunk: DiffHunk,
     source: DiffSource
   ) async throws {}
+
+  func discardHunk(
+    at location: RepositoryLocation,
+    hunk: DiffHunk,
+    path: GitPath
+  ) async throws -> RecoveryReference {
+    RecoveryReference(
+      kind: .patch,
+      name: "refs/current/undo/test",
+      targetOID: String(repeating: "a", count: 40),
+      paths: [path],
+      expectedWorktreeOID: String(repeating: "b", count: 40)
+    )
+  }
 
   func mutations() -> [WorkingCopyMutation] {
     receivedMutations

@@ -226,6 +226,11 @@ public protocol GitEngineProtocol: Sendable {
     hunk: DiffHunk,
     source: DiffSource
   ) async throws
+  func discardHunk(
+    at location: RepositoryLocation,
+    hunk: DiffHunk,
+    path: GitPath
+  ) async throws -> RecoveryReference
 }
 
 extension GitEngineProtocol {
@@ -2554,6 +2559,39 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           )
         )
         return nil
+      case .patch:
+        guard reference.name.hasPrefix("refs/current/undo/"),
+          isFullObjectID(reference.targetOID),
+          reference.paths.count == 1,
+          let path = reference.paths.first,
+          let expectedOID = reference.expectedWorktreeOID
+        else {
+          throw GitEngineError.invalidOutput(
+            "Invalid Current partial-discard recovery."
+          )
+        }
+        let currentOID = try await currentWorktreeOID(path, at: location)
+        guard currentOID == expectedOID else {
+          throw GitEngineError.invalidRepository(
+            "The file changed after the partial discard. Restore or stash those newer changes before undoing it."
+          )
+        }
+        let blob = try await execute(
+          GitCommand(
+            arguments: ["cat-file", "blob", reference.targetOID],
+            workingDirectory: location.worktreeURL,
+            outputLimit: 64 * 1024 * 1024
+          )
+        )
+        let fileURL = try workingTreeFileURL(at: location, path: path)
+        do {
+          try Data(blob.standardOutput).write(to: fileURL, options: .atomic)
+        } catch {
+          throw GitEngineError.invalidOutput(
+            "Could not restore \(path.displayString): \(error.localizedDescription)"
+          )
+        }
+        return nil
       case .stash:
         guard reference.name == "refs/stash",
           isFullObjectID(reference.targetOID),
@@ -2648,6 +2686,58 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         outputLimit: 4 * 1024 * 1024,
         timeout: .seconds(120)
       )
+    )
+  }
+
+  public func discardHunk(
+    at location: RepositoryLocation,
+    hunk: DiffHunk,
+    path: GitPath
+  ) async throws -> RecoveryReference {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository(
+        "A bare repository has no working tree to modify."
+      )
+    }
+    try validateHistoryPath(path)
+    let patch = Array(hunk.patchText.utf8)
+    guard !patch.isEmpty, patch.count <= 16 * 1024 * 1024,
+      hunk.patchText.hasPrefix("diff --git ")
+    else {
+      throw GitEngineError.invalidOutput("The selected hunk did not contain a valid patch.")
+    }
+
+    let originalOID = try await hashWorkingTreeFile(
+      path,
+      writeObject: true,
+      at: location
+    )
+    let recovery = try await createRecoveryReference(
+      reason: "partial discard",
+      targetOID: originalOID,
+      kind: .patch,
+      paths: [path],
+      at: location
+    )
+    _ = try await execute(
+      GitCommand(
+        arguments: [
+          "apply", "--reverse", "--recount", "--whitespace=nowarn", "-"
+        ],
+        workingDirectory: location.worktreeURL,
+        standardInput: patch,
+        outputLimit: 4 * 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
+    let expectedOID = try await currentWorktreeOID(path, at: location)
+    return RecoveryReference(
+      kind: recovery.kind,
+      name: recovery.name,
+      targetOID: recovery.targetOID,
+      paths: recovery.paths,
+      expectedWorktreeOID: expectedOID,
+      createdAt: recovery.createdAt
     )
   }
 
@@ -3230,6 +3320,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     targetOID: String? = nil,
     kind: RecoveryReference.Kind = .history,
     restoreRef: String? = nil,
+    paths: [GitPath] = [],
     at location: RepositoryLocation
   ) async throws -> RecoveryReference {
     let target: String
@@ -3257,8 +3348,49 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       kind: kind,
       name: name,
       targetOID: target,
+      paths: paths,
       restoreRef: restoreRef
     )
+  }
+
+  private func hashWorkingTreeFile(
+    _ path: GitPath,
+    writeObject: Bool,
+    at location: RepositoryLocation
+  ) async throws -> String {
+    var arguments = [
+      Array("hash-object".utf8),
+      Array("--no-filters".utf8),
+    ]
+    if writeObject {
+      arguments.append(Array("-w".utf8))
+    }
+    arguments += [Array("--".utf8), path.rawBytes]
+    let result = try await execute(
+      GitCommand(
+        rawArguments: arguments,
+        workingDirectory: location.worktreeURL
+      )
+    )
+    let oid = String(decoding: result.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard isFullObjectID(oid) else {
+      throw GitEngineError.invalidOutput(
+        "Git did not return a valid working-tree blob OID."
+      )
+    }
+    return oid
+  }
+
+  private func currentWorktreeOID(
+    _ path: GitPath,
+    at location: RepositoryLocation
+  ) async throws -> String {
+    let fileURL = try workingTreeFileURL(at: location, path: path)
+    guard FileManager.default.fileExists(atPath: fileURL.path) else {
+      return "missing"
+    }
+    return try await hashWorkingTreeFile(path, writeObject: false, at: location)
   }
 
   private func createDiscardRecovery(

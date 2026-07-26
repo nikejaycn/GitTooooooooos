@@ -689,7 +689,31 @@ public actor RepositoryActor {
       }
     ) { engine, location in
         try await engine.applyHunk(at: location, hunk: hunk, source: source)
+    }
+  }
+
+  @discardableResult
+  public func discardHunk(
+    _ hunk: DiffHunk,
+    path: GitPath,
+    historyLimit: Int = 200
+  ) async throws -> HistoryMutationResult {
+    try await applyRecoverableRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.discardHunk(
+          path: path,
+          generation: generation,
+          at: location
+        )
       }
+    ) { engine, location in
+      try await engine.discardHunk(
+        at: location,
+        hunk: hunk,
+        path: path
+      )
+    }
   }
 
   private func applyRepositoryMutation(

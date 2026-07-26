@@ -66,6 +66,50 @@ private struct PendingMergeRequest {
   let squash: Bool
 }
 
+private struct PartialDiscardRequest {
+  let document: DiffDocument
+  let hunk: DiffHunk
+  let lineIndex: Int?
+}
+
+private struct PartialDiscardDialogModifier: ViewModifier {
+  @Binding var request: PartialDiscardRequest?
+  let discardHunk: (DiffDocument, DiffHunk) -> Void
+  let discardLine: (DiffDocument, DiffHunk, Int) -> Void
+
+  func body(content: Content) -> some View {
+    content.confirmationDialog(
+      request?.lineIndex == nil ? "Discard selected hunk?" : "Discard selected line?",
+      isPresented: Binding(
+        get: { request != nil },
+        set: { if !$0 { request = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      Button(
+        request?.lineIndex == nil ? "Discard Hunk" : "Discard Line",
+        role: .destructive
+      ) {
+        if let request {
+          if let lineIndex = request.lineIndex {
+            discardLine(request.document, request.hunk, lineIndex)
+          } else {
+            discardHunk(request.document, request.hunk)
+          }
+        }
+        request = nil
+      }
+      Button("Cancel", role: .cancel) {
+        request = nil
+      }
+    } message: {
+      Text(
+        "Current stores the original file blob behind a hidden recovery reference. Undo restores it only if the file still matches the post-discard state."
+      )
+    }
+  }
+}
+
 private struct MergeStartDialogModifier: ViewModifier {
   @Binding var request: PendingMergeRequest?
   let merge: (String) -> Void
@@ -239,6 +283,8 @@ public struct CurrentRootView: View {
   private let undoLastOperation: () -> Void
   private let applyHunk: (DiffDocument, DiffHunk) -> Void
   private let applyLine: (DiffDocument, DiffHunk, Int) -> Void
+  private let discardHunk: (DiffDocument, DiffHunk) -> Void
+  private let discardLine: (DiffDocument, DiffHunk, Int) -> Void
   private let saveStash: (String?, Bool, [GitPath]) -> Void
   private let popStash: (String) -> Void
   private let dropStash: (String) -> Void
@@ -252,6 +298,8 @@ public struct CurrentRootView: View {
   private let forcePushWithLease: () -> Void
   @State private var workspace: Workspace = .changes
   @State private var pendingDiscard: GitPath?
+  @State private var pendingPartialDiscard: PartialDiscardRequest?
+  @State private var workingCopyFilter = ""
   @State private var graphJumpOID: String?
   @State private var commitMessage = ""
   @State private var amendCommit = false
@@ -430,6 +478,8 @@ public struct CurrentRootView: View {
     undoLastOperation: @escaping () -> Void,
     applyHunk: @escaping (DiffDocument, DiffHunk) -> Void,
     applyLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
+    discardHunk: @escaping (DiffDocument, DiffHunk) -> Void,
+    discardLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
     saveStash: @escaping (String?, Bool, [GitPath]) -> Void,
     popStash: @escaping (String) -> Void,
     dropStash: @escaping (String) -> Void,
@@ -555,6 +605,8 @@ public struct CurrentRootView: View {
     self.undoLastOperation = undoLastOperation
     self.applyHunk = applyHunk
     self.applyLine = applyLine
+    self.discardHunk = discardHunk
+    self.discardLine = discardLine
     self.saveStash = saveStash
     self.popStash = popStash
     self.dropStash = dropStash
@@ -954,6 +1006,13 @@ public struct CurrentRootView: View {
             "Current saves the selected working-copy changes as a recovery stash, then restores the indexed version. Use Undo Last Operation to restore them without changing staged content."
           )
         }
+        .modifier(
+          PartialDiscardDialogModifier(
+            request: $pendingPartialDiscard,
+            discardHunk: discardHunk,
+            discardLine: discardLine
+          )
+        )
         .confirmationDialog(
           "Hard reset to \(pendingHardResetOID?.prefix(12) ?? "")?",
           isPresented: Binding(
@@ -1711,17 +1770,20 @@ public struct CurrentRootView: View {
         description: Text("There are no staged or unstaged changes.")
       )
     } else {
+      let visibleChanges =
+        workingCopyFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? status.changes
+        : status.changes.filter {
+          $0.path.displayString.localizedCaseInsensitiveContains(
+            workingCopyFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+          )
+        }
       HSplitView {
         VStack(spacing: 0) {
           HStack {
-            Text(
-              activeSelectedStashPaths.isEmpty
-                ? "Select files with Command-click"
-                : "\(activeSelectedStashPaths.count) selected"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            Spacer()
+            TextField("Filter files", text: $workingCopyFilter)
+              .textFieldStyle(.roundedBorder)
+              .accessibilityLabel("Filter working copy files")
             Button("Stash Selected…") {
               beginCreatingStash(paths: Array(activeSelectedStashPaths))
             }
@@ -1730,63 +1792,67 @@ public struct CurrentRootView: View {
           .padding(.horizontal, 10)
           .frame(height: 34)
           Divider()
-          List(status.changes, selection: $selectedStashPaths) { change in
-            HStack {
-              Text(String(change.indexStatusCharacter))
-                .frame(width: 16)
-              Text(String(change.worktreeStatusCharacter))
-                .frame(width: 16)
-              Button {
-                loadDiff(change)
-              } label: {
-                Text(change.path.displayString)
-                  .lineLimit(1)
-              }
-              .buttonStyle(.plain)
-              .contextMenu {
-                Button("Stash This File…") {
-                  beginCreatingStash(paths: [change.path])
-                }
-                Button("File History & Blame") {
-                  openFileInsights(change.path)
-                }
-              }
-              Spacer()
-              Text(change.kind.rawValue)
-                .foregroundStyle(.secondary)
-              if change.isStaged {
-                Button("Unstage") {
-                  unstage(change.path)
-                }
-                .buttonStyle(.borderless)
-              }
-              if change.isUnstaged || change.kind == .untracked {
-                Button("Stage") {
-                  stage(change.path)
-                }
-                .buttonStyle(.borderless)
-              }
-              if change.isUnstaged && change.kind != .untracked {
-                Button(role: .destructive) {
-                  pendingDiscard = change.path
-                } label: {
-                  Image(systemName: "arrow.uturn.backward")
-                }
-                .buttonStyle(.borderless)
-                .help("Discard unstaged changes")
-              }
-              if change.kind == .untracked {
+          if visibleChanges.isEmpty {
+            ContentUnavailableView.search(text: workingCopyFilter)
+          } else {
+            List(visibleChanges, selection: $selectedStashPaths) { change in
+              HStack {
+                Text(String(change.indexStatusCharacter))
+                  .frame(width: 16)
+                Text(String(change.worktreeStatusCharacter))
+                  .frame(width: 16)
                 Button {
-                  ignore(change.path)
+                  loadDiff(change)
                 } label: {
-                  Image(systemName: "eye.slash")
+                  Text(change.path.displayString)
+                    .lineLimit(1)
                 }
-                .buttonStyle(.borderless)
-                .help("Add an anchored rule to .gitignore")
+                .buttonStyle(.plain)
+                .contextMenu {
+                  Button("Stash This File…") {
+                    beginCreatingStash(paths: [change.path])
+                  }
+                  Button("File History & Blame") {
+                    openFileInsights(change.path)
+                  }
+                }
+                Spacer()
+                Text(change.kind.rawValue)
+                  .foregroundStyle(.secondary)
+                if change.isStaged {
+                  Button("Unstage") {
+                    unstage(change.path)
+                  }
+                  .buttonStyle(.borderless)
+                }
+                if change.isUnstaged || change.kind == .untracked {
+                  Button("Stage") {
+                    stage(change.path)
+                  }
+                  .buttonStyle(.borderless)
+                }
+                if change.isUnstaged && change.kind != .untracked {
+                  Button(role: .destructive) {
+                    pendingDiscard = change.path
+                  } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                  }
+                  .buttonStyle(.borderless)
+                  .help("Discard unstaged changes")
+                }
+                if change.kind == .untracked {
+                  Button {
+                    ignore(change.path)
+                  } label: {
+                    Image(systemName: "eye.slash")
+                  }
+                  .buttonStyle(.borderless)
+                  .help("Add an anchored rule to .gitignore")
+                }
               }
+              .font(.system(.body, design: .monospaced))
+              .tag(change.path)
             }
-            .font(.system(.body, design: .monospaced))
-            .tag(change.path)
           }
         }
         .frame(minWidth: 280, idealWidth: 340, maxWidth: 440)
@@ -1902,6 +1968,16 @@ public struct CurrentRootView: View {
                 .help(
                   "@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@"
                 )
+                if selectedDiff.source == .unstaged {
+                  Button("Discard Hunk \(index + 1)", role: .destructive) {
+                    pendingPartialDiscard = PartialDiscardRequest(
+                      document: selectedDiff,
+                      hunk: hunk,
+                      lineIndex: nil
+                    )
+                  }
+                  .disabled(isLoading)
+                }
                 Menu("Lines") {
                   ForEach(
                     hunk.lines.indices.filter {
@@ -1916,6 +1992,29 @@ public struct CurrentRootView: View {
                   }
                 }
                 .disabled(isLoading)
+                if selectedDiff.source == .unstaged {
+                  Menu("Discard Lines") {
+                    ForEach(
+                      hunk.lines.indices.filter {
+                        hunk.lines[$0].kind == .addition
+                          || hunk.lines[$0].kind == .deletion
+                      },
+                      id: \.self
+                    ) { lineIndex in
+                      Button(
+                        "Discard \(lineDescription(hunk.lines[lineIndex]))",
+                        role: .destructive
+                      ) {
+                        pendingPartialDiscard = PartialDiscardRequest(
+                          document: selectedDiff,
+                          hunk: hunk,
+                          lineIndex: lineIndex
+                        )
+                      }
+                    }
+                  }
+                  .disabled(isLoading)
+                }
               }
             }
             .padding(.horizontal, 10)
@@ -1964,6 +2063,12 @@ public struct CurrentRootView: View {
     let marker = line.kind == .addition ? "+" : "-"
     let number = line.newLineNumber ?? line.oldLineNumber ?? 0
     return "\(verb) \(marker)\(number): \(line.text)"
+  }
+
+  private func lineDescription(_ line: DiffLine) -> String {
+    let marker = line.kind == .addition ? "+" : "-"
+    let number = line.newLineNumber ?? line.oldLineNumber ?? 0
+    return "\(marker)\(number): \(line.text)"
   }
 
   private func beginCreatingStash(paths: [GitPath]) {
