@@ -8,8 +8,8 @@
 
 ## 结论
 
-- 功能工程验收：88 / 90。
-- 发布阶段延期：2 / 90（APP-12 自动更新、SEC-04 签名/公证/Hardened Runtime）。
+- 功能工程验收：89 / 90。
+- 发布阶段延期：1 / 90（SEC-04 签名/公证/Hardened Runtime）。
 - 范围外：Provider API、PR/Issue/CI、云协作、AI、Agent、内置终端等 Post-v1 能力。
 - `sites/current-macos-prototype/` 被 `.gitignore` 排除，且仓库没有已跟踪的 `sites/` 文件。
 
@@ -28,7 +28,7 @@
 | APP-08 | 已验收 | System/Light/Dark、Graph 字段、密度、缩放、NSTableView 列宽 autosave |
 | APP-09 | 已验收 | `NSWorkspace` Finder reveal 与任意外部应用打开 |
 | APP-11 | 已验收 | Operation Console 展示运行/成功/失败/取消和脱敏命令 |
-| APP-12 | 发布阶段延期 | Sparkle/update feed 需要发布签名密钥；按 D07 暂不进入当前验收 |
+| APP-12 | 工程已验收，发布启用延期 | Sparkle 2 标准检查/下载/安装/重启控制器、App 菜单、Settings 和 fail-closed 配置测试；feed、公钥与发布演练按 D07 延后 |
 | APP-13 | 当前阶段已验收 | deployment target macOS 14、arm64 destination build 成功；安装包 Gate 按 D07 延后 |
 | APP-14 | 已验收 | 锁定 Git 2.55.0 + LFS 3.7.1、SHA-256、SBOM/许可证、Release 缺 bundle 构建失败、bundle smoke |
 
@@ -113,4 +113,5 @@ xcodebuild build -scheme Current \
 ```
 
 CI 继续负责最低支持 macOS/Xcode 组合、完整测试、Release bundle 嵌入与 SBOM 检查。进入发布
-工程后，APP-12 与 SEC-04 必须重新打开，不能因为 D07 的当前阶段延期而从 v1 发布要求中删除。
+工程后，APP-12 的 feed/EdDSA 启用验收与 SEC-04 必须重新打开，不能因为 D07 的当前阶段延期而
+从 v1 发布要求中删除。

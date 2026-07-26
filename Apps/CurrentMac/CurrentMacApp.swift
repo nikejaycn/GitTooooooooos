@@ -3,6 +3,7 @@ import CurrentDomain
 import CurrentUI
 import Observation
 import SwiftUI
+import UpdateKit
 
 private struct WorkspaceWindowState: Codable, Hashable {
   let id: UUID
@@ -110,6 +111,7 @@ private final class WorkspaceHistoryStore {
 struct CurrentMacApp: App {
   @State private var settingsModel = AppModel()
   @State private var workspaceHistory = WorkspaceHistoryStore()
+  @State private var updater = CurrentUpdateController()
 
   var body: some Scene {
     WindowGroup("Current", for: WorkspaceWindowState.self) { $workspace in
@@ -120,11 +122,25 @@ struct CurrentMacApp: App {
     }
     .commands {
       CurrentWorkspaceCommands()
+      CurrentUpdateCommands(updater: updater)
     }
 
     Settings {
-      CurrentSettingsView(model: settingsModel)
+      CurrentSettingsView(model: settingsModel, updater: updater)
         .preferredColorScheme(settingsModel.appearance.colorScheme)
+    }
+  }
+}
+
+private struct CurrentUpdateCommands: Commands {
+  let updater: CurrentUpdateController
+
+  var body: some Commands {
+    CommandGroup(after: .appInfo) {
+      Button("Check for Updates…") {
+        updater.checkForUpdates()
+      }
+      .disabled(!updater.canCheckForUpdates)
     }
   }
 }

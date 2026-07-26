@@ -2,6 +2,7 @@ import AppKit
 import CurrentDomain
 import GraphKit
 import SwiftUI
+import UpdateKit
 
 enum AppAppearance: String, CaseIterable, Identifiable {
   case system
@@ -29,6 +30,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 struct CurrentSettingsView: View {
   @Bindable var model: AppModel
+  let updater: CurrentUpdateController
   @State private var draftUseCustomGit = false
   @State private var draftCustomGitPath = ""
   @State private var draftCustomDiffToolPath = ""
@@ -262,6 +264,24 @@ struct CurrentSettingsView: View {
         )
         .font(.caption)
         .foregroundStyle(.secondary)
+      }
+
+      Section("Updates") {
+        Toggle(
+          "Automatically check for updates",
+          isOn: Binding(
+            get: { updater.automaticallyChecksForUpdates },
+            set: { updater.automaticallyChecksForUpdates = $0 }
+          )
+        )
+        .disabled(!updater.configuration.isReadyForSignedUpdates)
+        Button("Check for Updates…") {
+          updater.checkForUpdates()
+        }
+        .disabled(!updater.canCheckForUpdates)
+        Text(updater.statusDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
     }
     .formStyle(.grouped)

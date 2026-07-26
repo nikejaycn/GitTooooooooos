@@ -21,9 +21,14 @@ let package = Package(
     .library(name: "DiffKit", targets: ["DiffKit"]),
     .library(name: "MergeKit", targets: ["MergeKit"]),
     .library(name: "CredentialKit", targets: ["CredentialKit"]),
+    .library(name: "UpdateKit", targets: ["UpdateKit"]),
     .library(name: "CurrentUI", targets: ["CurrentUI"]),
   ],
   dependencies: [
+    .package(
+      url: "https://github.com/sparkle-project/Sparkle.git",
+      exact: "2.9.2"
+    ),
     .package(
       url: "https://github.com/swiftlang/swift-subprocess.git",
       exact: "0.5.0"
@@ -152,6 +157,12 @@ let package = Package(
       dependencies: ["CurrentDomain"]
     ),
     .target(
+      name: "UpdateKit",
+      dependencies: [
+        .product(name: "Sparkle", package: "Sparkle")
+      ]
+    ),
+    .target(
       name: "CurrentUI",
       dependencies: ["CurrentDomain", "GraphKit", "DiffKit", "MergeKit"]
     ),
@@ -198,6 +209,10 @@ let package = Package(
     .testTarget(
       name: "MergeKitTests",
       dependencies: ["MergeKit"]
+    ),
+    .testTarget(
+      name: "UpdateKitTests",
+      dependencies: ["UpdateKit"]
     ),
   ]
 )

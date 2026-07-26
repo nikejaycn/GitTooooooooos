@@ -14,6 +14,7 @@
 		C42C9CA45D4E9D7E40336C65 /* RepositoryModel in Frameworks */ = {isa = PBXBuildFile; productRef = 05547B899A9D94CA332ABD3B /* RepositoryModel */; };
 		CE89D5327E68632F2A5C17DB /* CurrentMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E00A699BADCBFBFC55B4A94 /* CurrentMacApp.swift */; };
 		F409EDCC0F20206C6C65E873 /* CurrentDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 97B201E30A866638E48E2A52 /* CurrentDomain */; };
+		F72AD13C0A33479E973B1201 /* UpdateKit in Frameworks */ = {isa = PBXBuildFile; productRef = F72AD13C0A33479E973B1202 /* UpdateKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +34,7 @@
 				F409EDCC0F20206C6C65E873 /* CurrentDomain in Frameworks */,
 				BEDFC4CB4A6ED6E93379DB99 /* GitEngine in Frameworks */,
 				C42C9CA45D4E9D7E40336C65 /* RepositoryModel in Frameworks */,
+				F72AD13C0A33479E973B1201 /* UpdateKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -103,6 +105,7 @@
 				97B201E30A866638E48E2A52 /* CurrentDomain */,
 				8AAFEEE7220ABFDAB25B78AA /* GitEngine */,
 				05547B899A9D94CA332ABD3B /* RepositoryModel */,
+				F72AD13C0A33479E973B1202 /* UpdateKit */,
 			);
 			productName = Current;
 			productReference = 9CFE8D5B9ED4F061B9997058 /* Current.app */;
@@ -184,10 +187,14 @@
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_APPCAST_URL = "";
+				CURRENT_SPARKLE_PUBLIC_ED_KEY = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Current;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_SUFeedURL = "$(CURRENT_APPCAST_URL)";
+				INFOPLIST_KEY_SUPublicEDKey = "$(CURRENT_SPARKLE_PUBLIC_ED_KEY)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -327,10 +334,14 @@
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_APPCAST_URL = "";
+				CURRENT_SPARKLE_PUBLIC_ED_KEY = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Current;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_SUFeedURL = "$(CURRENT_APPCAST_URL)";
+				INFOPLIST_KEY_SUPublicEDKey = "$(CURRENT_SPARKLE_PUBLIC_ED_KEY)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -390,6 +401,10 @@
 		BF2C24D9D6A1890C672DD0DA /* CurrentUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CurrentUI;
+		};
+		F72AD13C0A33479E973B1202 /* UpdateKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = UpdateKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
