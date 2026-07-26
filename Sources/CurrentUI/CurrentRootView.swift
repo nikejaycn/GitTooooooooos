@@ -82,6 +82,11 @@ public struct CurrentRootView: View {
     let paths: [GitPath]
   }
 
+  private struct PendingAmendCommit {
+    let request: CommitRequest
+    let pushAfter: Bool
+  }
+
   private let repositoryName: String?
   private let gitVersion: String?
   private let commitTemplate: String?
@@ -211,6 +216,7 @@ public struct CurrentRootView: View {
   @State private var graphJumpOID: String?
   @State private var commitMessage = ""
   @State private var amendCommit = false
+  @State private var pendingAmendCommit: PendingAmendCommit?
   @State private var skipCommitHooks = false
   @State private var signCommit = false
   @State private var coAuthorName = ""
@@ -1554,6 +1560,31 @@ public struct CurrentRootView: View {
       .disabled(commitDisabled(status))
     }
     .padding(12)
+    .confirmationDialog(
+      "Amend the current HEAD commit?",
+      isPresented: Binding(
+        get: { pendingAmendCommit != nil },
+        set: { if !$0 { pendingAmendCommit = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      Button("Amend HEAD", role: .destructive) {
+        if let pendingAmendCommit {
+          submitCommit(
+            pendingAmendCommit.request,
+            pushAfter: pendingAmendCommit.pushAfter
+          )
+        }
+        pendingAmendCommit = nil
+      }
+      Button("Cancel", role: .cancel) {
+        pendingAmendCommit = nil
+      }
+    } message: {
+      Text(
+        "This rewrites local history. Current creates an undo reference to the existing HEAD before running git commit --amend."
+      )
+    }
   }
 
   private var coAuthorFieldsValid: Bool {
@@ -1588,6 +1619,17 @@ public struct CurrentRootView: View {
       sign: signCommit,
       coAuthors: coAuthors
     )
+    if request.amend {
+      pendingAmendCommit = PendingAmendCommit(
+        request: request,
+        pushAfter: pushAfter
+      )
+      return
+    }
+    submitCommit(request, pushAfter: pushAfter)
+  }
+
+  private func submitCommit(_ request: CommitRequest, pushAfter: Bool) {
     Task {
       do {
         try await commit(request)

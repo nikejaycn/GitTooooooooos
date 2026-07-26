@@ -414,11 +414,33 @@ struct RepositoryActorTests {
     )
     let request = CommitRequest(message: "Ship it")
 
-    let snapshot = try await repository.createCommit(request)
+    let result = try await repository.createCommit(request)
 
-    #expect(snapshot.generation == RepositoryGeneration(1))
-    #expect(await repository.snapshot() == snapshot)
+    #expect(result.snapshot.generation == RepositoryGeneration(1))
+    #expect(await repository.snapshot() == result.snapshot)
     #expect(await engine.commits() == [request])
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "commit.create")
+    #expect(plan.risk == .localSafe)
+  }
+
+  @Test("Amend plan requires confirmation and Git reference recovery")
+  func amendOperationPlan() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    _ = try await repository.createCommit(
+      CommitRequest(message: "Updated", amend: true)
+    )
+
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "commit.amend")
+    #expect(plan.risk == .localDestructive)
+    #expect(plan.recoveryStrategy == .gitReference)
+    #expect(plan.confirmationPolicy == .single)
   }
 
   @Test("A slow stale read cannot replace a newer cached snapshot")
@@ -611,8 +633,9 @@ private actor StubGitEngine: GitEngineProtocol {
   func commit(
     at location: RepositoryLocation,
     request: CommitRequest
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     receivedCommits.append(request)
+    return nil
   }
 
   func diff(

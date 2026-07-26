@@ -846,7 +846,14 @@ struct GitEngineTests {
 
   @Test("Commit message is passed as one raw argument")
   func commitMessage() async throws {
-    let runner = StubRunner(results: [.success("")])
+    let headOID = String(repeating: "a", count: 40)
+    let runner = StubRunner(
+      results: [
+        .success("\(headOID)\n"),
+        .success(""),
+        .success(""),
+      ]
+    )
     let engine = BundledGitCLIEngine(runner: runner)
     let location = RepositoryLocation(
       worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
@@ -858,7 +865,14 @@ struct GitEngineTests {
       request: CommitRequest(message: "Subject\n\nBody", amend: true)
     )
 
-    let command = try #require(await runner.commands().first)
+    let commands = await runner.commands()
+    #expect(commands.count == 3)
+    #expect(
+      commands[0].redactedDescription
+        == "rev-parse --verify --end-of-options HEAD^{commit}"
+    )
+    #expect(commands[1].redactedDescription.contains("update-ref -m Current recovery before amend"))
+    let command = try #require(commands.last)
     #expect(
       command.arguments == [
         Array("commit".utf8),
@@ -2196,6 +2210,53 @@ struct GitEngineTests {
     #expect(status.operation == .none)
     #expect(status.changes.isEmpty)
     #expect(try String(contentsOf: file, encoding: .utf8) == "combined\n")
+  }
+
+  @Test(
+    "Amend creates a recovery ref that restores the previous HEAD",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveAmendRecovery() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-amend-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("tracked.txt")
+    try Data("base\n".utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "tracked.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "base"])
+    let originalHEAD = try runGitOutput(["-C", root.path, "rev-parse", "HEAD"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try Data("amended\n".utf8).write(to: file)
+    _ = try await engine.mutateWorkingCopy(
+      at: location,
+      mutation: .stage([GitPath("tracked.txt")])
+    )
+    let recovery = try #require(
+      try await engine.commit(
+        at: location,
+        request: CommitRequest(message: "amended", amend: true)
+      )
+    )
+
+    #expect(recovery.kind == .history)
+    #expect(recovery.targetOID == originalHEAD)
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) != originalHEAD)
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .undo(reference: recovery)
+    )
+    #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == originalHEAD)
+    #expect(try String(contentsOf: file, encoding: .utf8) == "base\n")
   }
 
   @Test(

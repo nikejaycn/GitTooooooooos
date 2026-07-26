@@ -131,7 +131,7 @@ public protocol GitEngineProtocol: Sendable {
   func commit(
     at location: RepositoryLocation,
     request: CommitRequest
-  ) async throws
+  ) async throws -> RecoveryReference?
   func commitTemplate(at location: RepositoryLocation) async throws -> String?
   func createPatch(at location: RepositoryLocation, commit: String) async throws -> [UInt8]
   func applyPatch(at location: RepositoryLocation, fileURL: URL) async throws
@@ -808,10 +808,11 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     return nil
   }
 
+  @discardableResult
   public func commit(
     at location: RepositoryLocation,
     request: CommitRequest
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     var message = request.message.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !message.isEmpty else {
       throw GitEngineError.invalidOutput("A commit message is required.")
@@ -844,6 +845,10 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       message += "\n\n" + trailers.joined(separator: "\n")
     }
 
+    let recovery =
+      request.amend
+      ? try await createRecoveryReference(reason: "amend", at: location)
+      : nil
     var rawArguments = [Array("commit".utf8)]
     if request.amend {
       rawArguments.append(Array("--amend".utf8))
@@ -864,6 +869,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: .seconds(600)
       )
     )
+    return recovery
   }
 
   public func commitTemplate(

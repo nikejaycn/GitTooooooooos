@@ -768,10 +768,13 @@ final class AppModel {
     errorMessage = nil
     defer { isLoading = false }
     do {
-      let snapshot = try await repository.createCommit(
+      let result = try await repository.createCommit(
         request
       )
-      apply(snapshot)
+      apply(result.snapshot)
+      if let recovery = result.recoveryReference {
+        lastRecoveryReference = recovery
+      }
       finishActivity(activityID, state: .succeeded)
     } catch {
       errorMessage = error.localizedDescription

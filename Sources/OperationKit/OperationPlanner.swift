@@ -3,6 +3,46 @@ import Foundation
 import GitEngine
 
 public enum OperationPlanner {
+  public static func commit(
+    _ request: CommitRequest,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    var arguments = ["commit"]
+    if request.amend {
+      arguments.append("--amend")
+    }
+    if request.skipHooks {
+      arguments.append("--no-verify")
+    }
+    if request.sign {
+      arguments.append("-S")
+    }
+    arguments += ["-m", "<commit-message>"]
+
+    return try OperationPlan(
+      kind: request.amend ? "commit.amend" : "commit.create",
+      title: request.amend ? "Amend HEAD" : "Create commit",
+      repositoryGeneration: generation,
+      preconditions: [
+        "Commit message and co-author trailers pass validation",
+        request.amend ? "HEAD resolves before creating a recovery reference" : "Index is committable",
+      ],
+      commands: [
+        .git(
+          GitCommand(
+            arguments: arguments,
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ],
+      affectedRefs: ["HEAD"],
+      workingTreeImpact: .indexOnly,
+      risk: request.amend ? .localDestructive : .localSafe,
+      recoveryStrategy: request.amend ? .gitReference : .none
+    )
+  }
+
   public static func workingCopy(
     _ mutation: WorkingCopyMutation,
     generation: RepositoryGeneration,

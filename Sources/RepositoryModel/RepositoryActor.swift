@@ -300,9 +300,14 @@ public actor RepositoryActor {
   public func createCommit(
     _ request: CommitRequest,
     historyLimit: Int = 200
-  ) async throws -> RepositorySnapshot {
+  ) async throws -> HistoryMutationResult {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
+    lastPlan = try OperationPlanner.commit(
+      request,
+      generation: requestedGeneration,
+      at: location
+    )
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
@@ -310,7 +315,7 @@ public actor RepositoryActor {
     let operation = Task {
       await predecessor?.value
       try Task.checkCancellation()
-      try await engine.commit(at: location, request: request)
+      let recovery = try await engine.commit(at: location, request: request)
       async let status = engine.status(
         at: location,
         generation: requestedGeneration
@@ -325,7 +330,7 @@ public actor RepositoryActor {
       let loaded = try await (
         status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
       )
-      return RepositorySnapshot(
+      let snapshot = RepositorySnapshot(
         generation: requestedGeneration,
         status: loaded.0,
         commits: loaded.1,
@@ -336,18 +341,23 @@ public actor RepositoryActor {
         submodules: loaded.6,
         gitLFS: loaded.7
       )
+      return HistoryMutationResult(
+        snapshot: snapshot,
+        recoveryReference: recovery
+      )
     }
     mutationTail = Task {
       _ = try? await operation.value
     }
 
-    let snapshot = try await operation.value
+    let result = try await operation.value
+    let snapshot = result.snapshot
     guard requestedGeneration == generation else {
-      return snapshot
+      return result
     }
     cachedStatus = snapshot.status
     cachedSnapshot = snapshot
-    return snapshot
+    return result
   }
 
   public func commitTemplate() async throws -> String? {
