@@ -1786,7 +1786,11 @@ final class AppModel {
       isLoading = true
       errorMessage = nil
       do {
-        apply(try await repository.applyTagMutation(mutation))
+        let result = try await repository.applyTagMutation(mutation)
+        apply(result.snapshot)
+        if let recovery = result.recoveryReference {
+          lastRecoveryReference = recovery
+        }
         finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription

@@ -450,10 +450,19 @@ public actor RepositoryActor {
   public func applyTagMutation(
     _ mutation: TagMutation,
     historyLimit: Int = 200
-  ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
-      try await engine.mutateTag(at: location, mutation: mutation)
-    }
+  ) async throws -> HistoryMutationResult {
+    try await applyRecoverableRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.tag(
+          mutation,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
+        try await engine.mutateTag(at: location, mutation: mutation)
+      }
   }
 
   @discardableResult
@@ -640,6 +649,26 @@ public actor RepositoryActor {
         RepositoryLocation
       ) async throws -> Void
   ) async throws -> RepositorySnapshot {
+    let result = try await applyRecoverableRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: operationPlan
+    ) { engine, location in
+      try await mutation(engine, location)
+      return nil
+    }
+    return result.snapshot
+  }
+
+  private func applyRecoverableRepositoryMutation(
+    historyLimit: Int,
+    operationPlan:
+      (@Sendable (RepositoryGeneration, RepositoryLocation) throws -> OperationPlan)? = nil,
+    operation mutation:
+      @Sendable @escaping (
+        any GitEngineProtocol,
+        RepositoryLocation
+      ) async throws -> RecoveryReference?
+  ) async throws -> HistoryMutationResult {
     let requestedGeneration = generation.next()
     let preparedPlan = try operationPlan?(requestedGeneration, location)
     generation = requestedGeneration
@@ -651,7 +680,7 @@ public actor RepositoryActor {
     let operation = Task {
       await predecessor?.value
       try Task.checkCancellation()
-      try await mutation(engine, location)
+      let recovery = try await mutation(engine, location)
       async let status = engine.status(
         at: location,
         generation: requestedGeneration
@@ -666,26 +695,29 @@ public actor RepositoryActor {
       let loaded = try await (
         status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
       )
-      return RepositorySnapshot(
-        generation: requestedGeneration,
-        status: loaded.0,
-        commits: loaded.1,
-        references: loaded.2,
-        stashes: loaded.3,
-        remotes: loaded.4,
-        worktrees: loaded.5,
-        submodules: loaded.6,
-        gitLFS: loaded.7
+      return HistoryMutationResult(
+        snapshot: RepositorySnapshot(
+          generation: requestedGeneration,
+          status: loaded.0,
+          commits: loaded.1,
+          references: loaded.2,
+          stashes: loaded.3,
+          remotes: loaded.4,
+          worktrees: loaded.5,
+          submodules: loaded.6,
+          gitLFS: loaded.7
+        ),
+        recoveryReference: recovery
       )
     }
     mutationTail = Task {
       _ = try? await operation.value
     }
-    let snapshot = try await operation.value
-    guard requestedGeneration == generation else { return snapshot }
-    cachedStatus = snapshot.status
-    cachedSnapshot = snapshot
-    return snapshot
+    let result = try await operation.value
+    guard requestedGeneration == generation else { return result }
+    cachedStatus = result.snapshot.status
+    cachedSnapshot = result.snapshot
+    return result
   }
 
   public func invalidate() {

@@ -162,10 +162,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     mutation: BranchMutation
   ) async throws
+  @discardableResult
   func mutateTag(
     at location: RepositoryLocation,
     mutation: TagMutation
-  ) async throws
+  ) async throws -> RecoveryReference?
   func worktrees(at location: RepositoryLocation) async throws -> [GitWorktree]
   func mutateWorktree(
     at location: RepositoryLocation,
@@ -364,10 +365,11 @@ extension GitEngineProtocol {
     )
   }
 
+  @discardableResult
   public func mutateTag(
     at location: RepositoryLocation,
     mutation: TagMutation
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     throw GitEngineError.invalidOutput("Tag mutation is not implemented.")
   }
 
@@ -1193,11 +1195,13 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     )
   }
 
+  @discardableResult
   public func mutateTag(
     at location: RepositoryLocation,
     mutation: TagMutation
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     let arguments: [String]
+    var recovery: RecoveryReference?
     switch mutation {
     case .create(let name, let target, let message):
       try await validateTagName(name, at: location)
@@ -1216,6 +1220,15 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
     case .deleteLocal(let name):
       try await validateTagName(name, at: location)
+      let fullName = "refs/tags/\(name)"
+      let targetOID = try await resolveObject(fullName, at: location)
+      recovery = try await createRecoveryReference(
+        reason: "tag-delete",
+        targetOID: targetOID,
+        kind: .reference,
+        restoreRef: fullName,
+        at: location
+      )
       arguments = ["tag", "--delete", "--", name]
     case .push(let name, let remote):
       try await validateTagName(name, at: location)
@@ -1224,7 +1237,19 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     case .deleteRemote(let name, let remote):
       try await validateTagName(name, at: location)
       try await validateRemoteName(remote, at: location)
-      arguments = ["push", "--delete", remote, "refs/tags/\(name)"]
+      let fullName = "refs/tags/\(name)"
+      let expectedOID = try await remoteReferenceOID(
+        remote: remote,
+        reference: fullName,
+        at: location
+      )
+      arguments = [
+        "push",
+        "--force-with-lease=\(fullName):\(expectedOID)",
+        "--delete",
+        remote,
+        fullName,
+      ]
     }
 
     _ = try await execute(
@@ -1235,6 +1260,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         timeout: .seconds(600)
       )
     )
+    return recovery
   }
 
   private func checkoutWithAutoStash(
@@ -2423,6 +2449,27 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           )
         )
         return nil
+      case .reference:
+        guard reference.name.hasPrefix("refs/current/undo/"),
+          isFullObjectID(reference.targetOID),
+          let restoreRef = reference.restoreRef,
+          restoreRef.hasPrefix("refs/tags/"),
+          !restoreRef.utf8.contains(0)
+        else {
+          throw GitEngineError.invalidOutput(
+            "Invalid Current reference recovery."
+          )
+        }
+        let command = "create \(restoreRef) \(reference.targetOID)\n"
+        _ = try await execute(
+          GitCommand(
+            arguments: ["update-ref", "--stdin"],
+            workingDirectory: location.worktreeURL,
+            standardInput: Array(command.utf8),
+            timeout: .seconds(120)
+          )
+        )
+        return nil
       }
     }
   }
@@ -2975,9 +3022,63 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       }
   }
 
+  private func resolveObject(
+    _ revision: String,
+    at location: RepositoryLocation
+  ) async throws -> String {
+    guard !revision.isEmpty, !revision.utf8.contains(0) else {
+      throw GitEngineError.invalidOutput("An object revision is required.")
+    }
+    let result = try await execute(
+      GitCommand(
+        arguments: [
+          "rev-parse",
+          "--verify",
+          "--end-of-options",
+          revision,
+        ],
+        workingDirectory: location.worktreeURL
+      )
+    )
+    let oid = String(decoding: result.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard isFullObjectID(oid) else {
+      throw GitEngineError.invalidOutput("Git returned an invalid object ID.")
+    }
+    return oid
+  }
+
+  private func remoteReferenceOID(
+    remote: String,
+    reference: String,
+    at location: RepositoryLocation
+  ) async throws -> String {
+    let result = try await execute(
+      GitCommand(
+        arguments: ["ls-remote", "--refs", "--exit-code", remote, reference],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
+    let line = String(decoding: result.standardOutput, as: UTF8.self)
+      .split(whereSeparator: \.isNewline)
+    guard line.count == 1,
+      let oid = line.first?.split(whereSeparator: \.isWhitespace).first.map(String.init),
+      isFullObjectID(oid)
+    else {
+      throw GitEngineError.invalidOutput(
+        "The selected remote tag could not be resolved uniquely."
+      )
+    }
+    return oid
+  }
+
   private func createRecoveryReference(
     reason: String,
     targetOID: String? = nil,
+    kind: RecoveryReference.Kind = .history,
+    restoreRef: String? = nil,
     at location: RepositoryLocation
   ) async throws -> RecoveryReference {
     let target: String
@@ -3001,7 +3102,12 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         workingDirectory: location.worktreeURL
       )
     )
-    return RecoveryReference(name: name, targetOID: target)
+    return RecoveryReference(
+      kind: kind,
+      name: name,
+      targetOID: target,
+      restoreRef: restoreRef
+    )
   }
 
   private func createDiscardRecovery(

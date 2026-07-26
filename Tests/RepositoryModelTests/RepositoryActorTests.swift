@@ -398,11 +398,31 @@ struct RepositoryActorTests {
     )
     let mutation = TagMutation.create(name: "v1", target: nil, message: "Version 1")
 
-    let snapshot = try await repository.applyTagMutation(mutation)
+    let result = try await repository.applyTagMutation(mutation)
 
     #expect(await engine.tagMutations() == [mutation])
-    #expect(snapshot.generation == RepositoryGeneration(1))
-    #expect(await repository.snapshot() == snapshot)
+    #expect(result.snapshot.generation == RepositoryGeneration(1))
+    #expect(await repository.snapshot() == result.snapshot)
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "tag.create.annotated")
+    #expect(plan.risk == .localSafe)
+
+    _ = try await repository.applyTagMutation(.deleteLocal(name: "v1"))
+    let localDeletePlan = try #require(await repository.lastOperationPlan())
+    #expect(localDeletePlan.risk == .localDestructive)
+    #expect(localDeletePlan.recoveryStrategy == .gitReference)
+    #expect(localDeletePlan.confirmationPolicy == .single)
+
+    _ = try await repository.applyTagMutation(
+      .deleteRemote(name: "v1", remote: "origin")
+    )
+    let remoteDeletePlan = try #require(await repository.lastOperationPlan())
+    #expect(remoteDeletePlan.risk == .remoteDestructive)
+    #expect(
+      remoteDeletePlan.recoveryStrategy
+        == .remoteLease(remote: "origin", branch: "refs/tags/v1")
+    )
+    #expect(remoteDeletePlan.confirmationPolicy == .double)
   }
 
   @Test("Commit runs through the mutation queue and refreshes the full snapshot")
@@ -743,8 +763,9 @@ private actor StubGitEngine: GitEngineProtocol {
   func mutateTag(
     at location: RepositoryLocation,
     mutation: TagMutation
-  ) async throws {
+  ) async throws -> RecoveryReference? {
     receivedTagMutations.append(mutation)
+    return nil
   }
 
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry] {

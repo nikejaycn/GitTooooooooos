@@ -3320,6 +3320,7 @@ private struct TagCreationDialogModifier: ViewModifier {
 private struct TagDialogsModifier: ViewModifier {
   @Binding var pendingLocalDeletion: GitReference?
   @Binding var pendingRemoteDeletion: PendingRemoteTagDeletion?
+  @State private var finalRemoteDeletion: PendingRemoteTagDeletion?
   let deleteLocal: (GitReference) -> Void
   let deleteRemote: (GitReference, GitRemote) -> Void
 
@@ -3353,9 +3354,9 @@ private struct TagDialogsModifier: ViewModifier {
         ),
         titleVisibility: .visible
       ) {
-        Button("Delete from Remote", role: .destructive) {
+        Button("Continue") {
           if let pendingRemoteDeletion {
-            deleteRemote(pendingRemoteDeletion.reference, pendingRemoteDeletion.remote)
+            finalRemoteDeletion = pendingRemoteDeletion
           }
           pendingRemoteDeletion = nil
         }
@@ -3365,6 +3366,30 @@ private struct TagDialogsModifier: ViewModifier {
       } message: {
         Text(
           "This updates \(pendingRemoteDeletion?.remote.name ?? "the remote") immediately and cannot be undone locally."
+        )
+      }
+      .alert(
+        "Final confirmation: delete remote tag?",
+        isPresented: Binding(
+          get: { finalRemoteDeletion != nil },
+          set: { if !$0 { finalRemoteDeletion = nil } }
+        )
+      ) {
+        Button("Delete Remote Tag", role: .destructive) {
+          if let finalRemoteDeletion {
+            deleteRemote(
+              finalRemoteDeletion.reference,
+              finalRemoteDeletion.remote
+            )
+          }
+          finalRemoteDeletion = nil
+        }
+        Button("Cancel", role: .cancel) {
+          finalRemoteDeletion = nil
+        }
+      } message: {
+        Text(
+          "Current will verify the remote tag has not changed since inspection. This deletion cannot be undone locally."
         )
       }
   }

@@ -1165,14 +1165,47 @@ struct GitEngineTests {
       at: location,
       mutation: .deleteRemote(name: annotated.shortName, remote: "origin")
     )
-    try await engine.mutateTag(
+    let recovery = try #require(await engine.mutateTag(
       at: location,
       mutation: .deleteLocal(name: annotated.shortName)
-    )
+    ))
     #expect(
       try await engine.references(at: location)
         .contains { $0.fullName == "refs/tags/v2-annotated" } == false
     )
+    #expect(recovery.kind == .reference)
+    #expect(recovery.restoreRef == "refs/tags/v2-annotated")
+
+    try await engine.mutateTag(
+      at: location,
+      mutation: .create(name: annotated.shortName, target: nil, message: nil)
+    )
+    await #expect(throws: GitEngineError.self) {
+      _ = try await engine.mutateHistory(
+        at: location,
+        mutation: .undo(reference: recovery)
+      )
+    }
+    let replacement = try #require(
+      try await engine.references(at: location)
+        .first { $0.fullName == "refs/tags/v2-annotated" }
+    )
+    #expect(replacement.tagMetadata?.kind == .lightweight)
+    _ = try await engine.mutateTag(
+      at: location,
+      mutation: .deleteLocal(name: annotated.shortName)
+    )
+
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .undo(reference: recovery)
+    )
+    let restored = try #require(
+      try await engine.references(at: location)
+        .first { $0.fullName == "refs/tags/v2-annotated" }
+    )
+    #expect(restored.tagMetadata?.kind == .annotated)
+    #expect(restored.tagMetadata?.subject == "Version 2")
   }
 
   @Test(

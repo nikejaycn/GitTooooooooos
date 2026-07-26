@@ -642,12 +642,14 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
   public enum Kind: String, Hashable, Sendable, Codable {
     case history
     case stash
+    case reference
   }
 
   public let kind: Kind
   public let name: String
   public let targetOID: String
   public let paths: [GitPath]
+  public let restoreRef: String?
   public let createdAt: Date
 
   public init(
@@ -655,12 +657,14 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     name: String,
     targetOID: String,
     paths: [GitPath] = [],
+    restoreRef: String? = nil,
     createdAt: Date = Date()
   ) {
     self.kind = kind
     self.name = name
     self.targetOID = targetOID
     self.paths = paths
+    self.restoreRef = restoreRef
     self.createdAt = createdAt
   }
 
@@ -669,6 +673,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     case name
     case targetOID
     case paths
+    case restoreRef
     case createdAt
   }
 
@@ -678,6 +683,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     name = try container.decode(String.self, forKey: .name)
     targetOID = try container.decode(String.self, forKey: .targetOID)
     paths = try container.decodeIfPresent([GitPath].self, forKey: .paths) ?? []
+    restoreRef = try container.decodeIfPresent(String.self, forKey: .restoreRef)
     createdAt = try container.decode(Date.self, forKey: .createdAt)
   }
 
@@ -687,6 +693,7 @@ public struct RecoveryReference: Hashable, Sendable, Codable {
     try container.encode(name, forKey: .name)
     try container.encode(targetOID, forKey: .targetOID)
     try container.encode(paths, forKey: .paths)
+    try container.encodeIfPresent(restoreRef, forKey: .restoreRef)
     try container.encode(createdAt, forKey: .createdAt)
   }
 }

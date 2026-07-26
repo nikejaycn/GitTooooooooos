@@ -4,6 +4,95 @@ import Foundation
 import GitEngine
 
 public enum OperationPlanner {
+  public static func tag(
+    _ mutation: TagMutation,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    let kind: String
+    let title: String
+    let arguments: [String]
+    let affectedRefs: [String]
+    let remoteImpact: RemoteImpact
+    let risk: OperationRisk
+    let recovery: RecoveryStrategy
+
+    switch mutation {
+    case .create(let name, _, let message):
+      kind = message == nil ? "tag.create.lightweight" : "tag.create.annotated"
+      title = message == nil ? "Create lightweight tag" : "Create annotated tag"
+      arguments =
+        message == nil
+        ? ["tag", "--", name, "<resolved-target-oid>"]
+        : [
+          "tag", "--annotate", "--message", "<tag-message>", "--", name,
+          "<resolved-target-oid>",
+        ]
+      affectedRefs = ["refs/tags/\(name)"]
+      remoteImpact = .none
+      risk = .localSafe
+      recovery = .none
+    case .deleteLocal(let name):
+      kind = "tag.delete.local"
+      title = "Delete local tag"
+      arguments = ["tag", "--delete", "--", name]
+      affectedRefs = ["refs/tags/\(name)"]
+      remoteImpact = .none
+      risk = .localDestructive
+      recovery = .gitReference
+    case .push(let name, let remote):
+      kind = "tag.push"
+      title = "Push tag"
+      arguments = [
+        "push", "--", remote,
+        "refs/tags/\(name):refs/tags/\(name)",
+      ]
+      affectedRefs = ["refs/tags/\(name)"]
+      remoteImpact = .update
+      risk = .localSafe
+      recovery = .none
+    case .deleteRemote(let name, let remote):
+      let fullName = "refs/tags/\(name)"
+      kind = "tag.delete.remote"
+      title = "Delete remote tag"
+      arguments = [
+        "push",
+        "--force-with-lease=\(fullName):<remote-tag-oid>",
+        "--delete",
+        remote,
+        fullName,
+      ]
+      affectedRefs = [fullName]
+      remoteImpact = .destructiveUpdate
+      risk = .remoteDestructive
+      recovery = .remoteLease(remote: remote, branch: fullName)
+    }
+
+    return try OperationPlan(
+      kind: kind,
+      title: title,
+      repositoryGeneration: generation,
+      preconditions: [
+        "The tag and remote names pass Git validation",
+        risk == .localDestructive
+          ? "A hidden recovery ref retains the exact tag object before deletion"
+          : "Dynamic targets and remote leases are resolved immediately before mutation",
+      ],
+      commands: [
+        .git(
+          GitCommand(
+            arguments: arguments,
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ],
+      affectedRefs: affectedRefs,
+      remoteImpact: remoteImpact,
+      risk: risk,
+      recoveryStrategy: recovery
+    )
+  }
+
   public static func patch(
     fileURL: URL,
     generation: RepositoryGeneration,
@@ -197,6 +286,7 @@ public enum OperationPlanner {
     let risk: OperationRisk
     let recovery: RecoveryStrategy
     let impact: WorkingTreeImpact
+    var affectedRefs = ["HEAD"]
 
     switch mutation {
     case .cherryPick(let commit):
@@ -224,13 +314,26 @@ public enum OperationPlanner {
            + [plan.upstreamOID],
          .localDestructive, .gitReference, .indexAndWorktree)
     case .undo(let reference):
-      let command =
-        reference.kind == .history
-        ? ["reset", "--hard", reference.targetOID]
-        : ["restore", "--source=\(reference.targetOID)", "--worktree", "--", "<paths>"]
+      let command: [String]
+      let undoImpact: WorkingTreeImpact
+      switch reference.kind {
+      case .history:
+        command = ["reset", "--hard", reference.targetOID]
+        undoImpact = .indexAndWorktree
+      case .stash:
+        command = [
+          "restore", "--source=\(reference.targetOID)", "--worktree", "--",
+          "<paths>",
+        ]
+        undoImpact = .worktreeOnly
+      case .reference:
+        command = ["update-ref", "--stdin"]
+        undoImpact = .none
+        affectedRefs = reference.restoreRef.map { [$0] } ?? []
+      }
       (kind, title, arguments, risk, recovery, impact) =
         ("history.undo", "Undo last recoverable operation", command,
-         .localSafe, .none, .indexAndWorktree)
+         .localSafe, .none, undoImpact)
     }
 
     return try OperationPlan(
@@ -239,7 +342,7 @@ public enum OperationPlanner {
       repositoryGeneration: generation,
       preconditions: ["Targets resolve and no incompatible Git operation is active"],
       commands: [.git(GitCommand(arguments: arguments, workingDirectory: location.worktreeURL))],
-      affectedRefs: ["HEAD"],
+      affectedRefs: affectedRefs,
       workingTreeImpact: impact,
       risk: risk,
       recoveryStrategy: recovery
