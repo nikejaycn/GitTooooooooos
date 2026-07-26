@@ -98,8 +98,8 @@ struct GitEngineTests {
     )
     #expect(
       await runner.commands().map(\.redactedDescription) == [
-        "maintenance run --auto",
-        "gc",
+        "gc --auto --no-prune",
+        "gc --no-prune",
         "fsck --full --no-progress",
       ])
   }

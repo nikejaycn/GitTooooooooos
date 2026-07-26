@@ -527,9 +527,18 @@ public actor RepositoryActor {
     _ mutation: GitLFSMutation,
     historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
-      try await engine.mutateLFS(at: location, mutation: mutation)
-    }
+    try await applyRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.lfs(
+          mutation,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
+        try await engine.mutateLFS(at: location, mutation: mutation)
+      }
   }
 
   @discardableResult
@@ -629,6 +638,14 @@ public actor RepositoryActor {
   public func performMaintenance(
     _ task: RepositoryMaintenanceTask
   ) async throws -> String {
+    let requestedGeneration = generation.next()
+    let plan = try OperationPlanner.maintenance(
+      task,
+      generation: requestedGeneration,
+      at: location
+    )
+    generation = requestedGeneration
+    lastPlan = plan
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location

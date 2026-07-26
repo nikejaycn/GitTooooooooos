@@ -2906,7 +2906,7 @@ public struct CurrentRootView: View {
       CommandPaletteAction(
         id: "repository.maintenance",
         title: "Run Recommended Maintenance",
-        detail: "git maintenance run --auto",
+        detail: "git gc --auto --no-prune",
         systemImage: "wrench.and.screwdriver",
         keywords: "optimize gc performance repository",
         isEnabled: status != nil && !isLoading

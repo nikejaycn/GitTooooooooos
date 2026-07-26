@@ -1794,9 +1794,9 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     let arguments: [String]
     switch task {
     case .automatic:
-      arguments = ["maintenance", "run", "--auto"]
+      arguments = ["gc", "--auto", "--no-prune"]
     case .optimize:
-      arguments = ["gc"]
+      arguments = ["gc", "--no-prune"]
     case .verify:
       arguments = ["fsck", "--full", "--no-progress"]
     }

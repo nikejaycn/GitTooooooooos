@@ -42,6 +42,7 @@ public enum RecoveryStrategy: Hashable, Sendable, Codable {
   case gitReference
   case stash
   case retainedGitMetadata
+  case verifiedRemoteCopy
   case remoteLease(remote: String, branch: String)
 }
 

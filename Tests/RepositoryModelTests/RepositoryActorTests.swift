@@ -414,6 +414,17 @@ struct RepositoryActorTests {
     #expect(snapshot.gitLFS == lfsState)
     #expect(await engine.lfsMutations() == [mutation])
     #expect(snapshot.generation == RepositoryGeneration(1))
+    let fetchPlan = try #require(await repository.lastOperationPlan())
+    #expect(fetchPlan.kind == "lfs.fetch.recent")
+    #expect(fetchPlan.remoteImpact == .read)
+    #expect(fetchPlan.risk == .localSafe)
+
+    _ = try await repository.applyLFSMutation(.pruneVerified)
+    let prunePlan = try #require(await repository.lastOperationPlan())
+    #expect(prunePlan.kind == "lfs.prune-verified")
+    #expect(prunePlan.risk == .localDestructive)
+    #expect(prunePlan.recoveryStrategy == .verifiedRemoteCopy)
+    #expect(prunePlan.confirmationPolicy == .single)
   }
 
   @Test("Tag mutation uses the repository queue and refreshes references")
@@ -468,6 +479,26 @@ struct RepositoryActorTests {
     #expect(plan.recoveryStrategy == .gitReference)
     #expect(plan.confirmationPolicy == .single)
     #expect(plan.affectedRefs == ["refs/stash"])
+  }
+
+  @Test("Maintenance disables pruning and publishes its risk")
+  func maintenancePlan() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    #expect(try await repository.performMaintenance(.optimize) == "done")
+    let optimizePlan = try #require(await repository.lastOperationPlan())
+    #expect(optimizePlan.kind == "maintenance.optimize")
+    #expect(optimizePlan.risk == .localSafe)
+    #expect(optimizePlan.commands.first?.preview.contains("gc --no-prune") == true)
+
+    #expect(try await repository.performMaintenance(.verify) == "done")
+    let verifyPlan = try #require(await repository.lastOperationPlan())
+    #expect(verifyPlan.kind == "maintenance.verify")
+    #expect(verifyPlan.risk == .readOnly)
   }
 
   @Test("Commit runs through the mutation queue and refreshes the full snapshot")
@@ -775,6 +806,13 @@ private actor StubGitEngine: GitEngineProtocol {
     mutation: GitLFSMutation
   ) async throws {
     receivedLFSMutations.append(mutation)
+  }
+
+  func performMaintenance(
+    at location: RepositoryLocation,
+    task: RepositoryMaintenanceTask
+  ) async throws -> String {
+    "done"
   }
 
   func commit(

@@ -12,8 +12,8 @@ Worktree prune 与 Git LFS prune，但没有普通 Git 对象库的维护、优�
 ## 决策
 
 - 提供三项明确任务：
-  - Recommended：`git maintenance run --auto`
-  - Optimize：`git gc`
+  - Recommended：`git gc --auto --no-prune`
+  - Optimize：`git gc --no-prune`
   - Verify：`git fsck --full --no-progress`
 - 所有参数使用固定结构化数组，不允许用户文本进入命令；单任务超时 30 分钟，输出上限
   16 MiB。
@@ -26,7 +26,8 @@ Worktree prune 与 Git LFS prune，但没有普通 Git 对象库的维护、优�
 ## 后果
 
 - ADV-06 的 maintenance、gc、fsck 与 LFS prune 均有原生入口。
-- `gc` 使用 Git 默认保留策略，不暴露 `--prune=now` 等激进删除选项。
+- 两种 `gc` 都显式使用 `--no-prune`，只优化可达对象布局，不删除不可达对象或潜在恢复
+  数据；不依赖可能被仓库配置扩大的 maintenance task 集合。
 - 首版不安装系统级 maintenance schedule；Current 只运行用户明确触发的仓库内任务。
 
 ## 验证

@@ -31,6 +31,9 @@ rewrite that blob or historical commits into LFS automatically.
 - Fetch, recent fetch, and pull use the current repository's configured remote semantics.
 - Prune always uses `--verify-remote`, requires explicit confirmation, and runs through the
   repository mutation queue.
+- Every LFS write publishes an `OperationPlan`. Verified prune is L2 with
+  `verifiedRemoteCopy` recovery semantics; fetch/pull declare remote reads, while track/untrack
+  declare their `.gitattributes` working-tree impact.
 - Track and untrack update `.gitattributes` only. Current explicitly tells the user that existing
   Git blobs and history are not migrated. History-rewriting `git lfs migrate --everything` is not
   exposed as a routine version 1.0 action.
