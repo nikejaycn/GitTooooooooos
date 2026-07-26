@@ -443,6 +443,23 @@ struct RepositoryActorTests {
     #expect(plan.confirmationPolicy == .single)
   }
 
+  @Test("Hard reset plan is destructive and recoverable")
+  func hardResetOperationPlan() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    _ = try await repository.applyHistoryMutation(
+      .reset(target: "abc123", mode: .hard)
+    )
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "history.reset.hard")
+    #expect(plan.risk == .localDestructive)
+    #expect(plan.recoveryStrategy == .gitReference)
+    #expect(plan.confirmationPolicy == .single)
+  }
+
   @Test("A slow stale read cannot replace a newer cached snapshot")
   func staleReadDoesNotReplaceNewerSnapshot() async throws {
     let engine = StubGitEngine(

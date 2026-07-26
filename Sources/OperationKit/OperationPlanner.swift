@@ -3,6 +3,66 @@ import Foundation
 import GitEngine
 
 public enum OperationPlanner {
+  public static func history(
+    _ mutation: HistoryMutation,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    let kind: String
+    let title: String
+    let arguments: [String]
+    let risk: OperationRisk
+    let recovery: RecoveryStrategy
+    let impact: WorkingTreeImpact
+
+    switch mutation {
+    case .cherryPick(let commit):
+      (kind, title, arguments, risk, recovery, impact) =
+        ("history.cherry-pick", "Cherry-pick commit", ["cherry-pick", commit],
+         .localSafe, .none, .indexAndWorktree)
+    case .revert(let commit):
+      (kind, title, arguments, risk, recovery, impact) =
+        ("history.revert", "Revert commit", ["revert", "--no-edit", commit],
+         .localSafe, .none, .indexAndWorktree)
+    case .reset(let target, let mode):
+      (kind, title, arguments, risk, recovery, impact) =
+        ("history.reset.\(mode.rawValue)", "\(mode.rawValue.capitalized) reset",
+         ["reset", "--\(mode.rawValue)", target], .localDestructive, .gitReference,
+         mode == .soft ? .indexOnly : .indexAndWorktree)
+    case .rebase(let onto, let autoStash):
+      (kind, title, arguments, risk, recovery, impact) =
+        ("history.rebase", "Rebase branch",
+         ["rebase"] + (autoStash ? ["--autostash"] : []) + [onto],
+         .localDestructive, .gitReference, .indexAndWorktree)
+    case .interactiveRebase(let plan, let autoStash):
+      (kind, title, arguments, risk, recovery, impact) =
+        ("history.rebase.interactive", "Interactive rebase",
+         ["rebase", "--interactive"] + (autoStash ? ["--autostash"] : [])
+           + [plan.upstreamOID],
+         .localDestructive, .gitReference, .indexAndWorktree)
+    case .undo(let reference):
+      let command =
+        reference.kind == .history
+        ? ["reset", "--hard", reference.targetOID]
+        : ["restore", "--source=\(reference.targetOID)", "--worktree", "--", "<paths>"]
+      (kind, title, arguments, risk, recovery, impact) =
+        ("history.undo", "Undo last recoverable operation", command,
+         .localSafe, .none, .indexAndWorktree)
+    }
+
+    return try OperationPlan(
+      kind: kind,
+      title: title,
+      repositoryGeneration: generation,
+      preconditions: ["Targets resolve and no incompatible Git operation is active"],
+      commands: [.git(GitCommand(arguments: arguments, workingDirectory: location.worktreeURL))],
+      affectedRefs: ["HEAD"],
+      workingTreeImpact: impact,
+      risk: risk,
+      recoveryStrategy: recovery
+    )
+  }
+
   public static func commit(
     _ request: CommitRequest,
     generation: RepositoryGeneration,

@@ -508,6 +508,11 @@ public actor RepositoryActor {
   ) async throws -> HistoryMutationResult {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
+    lastPlan = try OperationPlanner.history(
+      mutation,
+      generation: requestedGeneration,
+      at: location
+    )
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
