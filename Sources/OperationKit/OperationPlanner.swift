@@ -1,8 +1,67 @@
 import CurrentDomain
+import DiffKit
 import Foundation
 import GitEngine
 
 public enum OperationPlanner {
+  public static func patch(
+    fileURL: URL,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    try OperationPlan(
+      kind: "patch.apply",
+      title: "Apply patch",
+      repositoryGeneration: generation,
+      preconditions: [
+        "The patch is a regular file no larger than 64 MB",
+        "Git verifies the patch applies cleanly to both the index and working tree",
+      ],
+      commands: [
+        .git(
+          GitCommand(
+            rawArguments: ["apply", "--index", "--"].map { Array($0.utf8) }
+              + [Array(fileURL.path.utf8)],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ],
+      workingTreeImpact: .indexAndWorktree,
+      risk: .localSafe
+    )
+  }
+
+  public static func hunk(
+    source: DiffSource,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    let isUnstage = source == .staged
+    let arguments =
+      ["apply", "--cached", "--recount", "--whitespace=nowarn"]
+      + (isUnstage ? ["--reverse"] : [])
+      + ["-"]
+    return try OperationPlan(
+      kind: isUnstage ? "index.unstage-hunk" : "index.stage-hunk",
+      title: isUnstage ? "Unstage selected hunk" : "Stage selected hunk",
+      repositoryGeneration: generation,
+      preconditions: [
+        "The selected patch is non-empty, at most 16 MB, and has a diff header",
+        "Git applies the patch to the index from standard input",
+      ],
+      commands: [
+        .git(
+          GitCommand(
+            arguments: arguments,
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ],
+      workingTreeImpact: .indexOnly,
+      risk: .localSafe
+    )
+  }
+
   public static func branch(
     _ mutation: BranchMutation,
     generation: RepositoryGeneration,

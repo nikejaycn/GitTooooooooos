@@ -118,7 +118,7 @@ let package = Package(
     ),
     .target(
       name: "OperationKit",
-      dependencies: ["CurrentDomain", "GitEngine"]
+      dependencies: ["CurrentDomain", "DiffKit", "GitEngine"]
     ),
     .target(
       name: "GraphKit",

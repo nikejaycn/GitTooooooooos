@@ -493,6 +493,38 @@ struct RepositoryActorTests {
     }
   }
 
+  @Test("Patch and hunk writes publish exact safe operation plans")
+  func patchAndHunkOperationPlans() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    _ = try await repository.applyPatch(
+      fileURL: URL(fileURLWithPath: "/tmp/change.patch")
+    )
+    let patchPlan = try #require(await repository.lastOperationPlan())
+    #expect(patchPlan.kind == "patch.apply")
+    #expect(patchPlan.workingTreeImpact == .indexAndWorktree)
+    #expect(patchPlan.commands.first?.preview.contains("apply --index --") == true)
+
+    let hunk = DiffHunk(
+      oldStart: 1,
+      oldCount: 1,
+      newStart: 1,
+      newCount: 1,
+      heading: "",
+      lines: [],
+      patchText: "diff --git a/file b/file\n"
+    )
+    _ = try await repository.applyHunk(hunk, source: .staged)
+    let hunkPlan = try #require(await repository.lastOperationPlan())
+    #expect(hunkPlan.kind == "index.unstage-hunk")
+    #expect(hunkPlan.workingTreeImpact == .indexOnly)
+    #expect(hunkPlan.commands.first?.preview.contains("--reverse -") == true)
+  }
+
   @Test("A slow stale read cannot replace a newer cached snapshot")
   func staleReadDoesNotReplaceNewerSnapshot() async throws {
     let engine = StubGitEngine(
@@ -744,6 +776,11 @@ private actor StubGitEngine: GitEngineProtocol {
   ) async throws -> RecoveryReference? {
     nil
   }
+
+  func applyPatch(
+    at location: RepositoryLocation,
+    fileURL: URL
+  ) async throws {}
 
   func applyHunk(
     at location: RepositoryLocation,

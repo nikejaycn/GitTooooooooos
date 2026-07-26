@@ -372,9 +372,18 @@ public actor RepositoryActor {
   public func applyPatch(fileURL: URL, historyLimit: Int = 200) async throws
     -> RepositorySnapshot
   {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
-      try await engine.applyPatch(at: location, fileURL: fileURL)
-    }
+    try await applyRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.patch(
+          fileURL: fileURL,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
+        try await engine.applyPatch(at: location, fileURL: fileURL)
+      }
   }
 
   @discardableResult
@@ -607,13 +616,24 @@ public actor RepositoryActor {
     source: DiffSource,
     historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
-      try await engine.applyHunk(at: location, hunk: hunk, source: source)
-    }
+    try await applyRepositoryMutation(
+      historyLimit: historyLimit,
+      operationPlan: { generation, location in
+        try OperationPlanner.hunk(
+          source: source,
+          generation: generation,
+          at: location
+        )
+      }
+    ) { engine, location in
+        try await engine.applyHunk(at: location, hunk: hunk, source: source)
+      }
   }
 
   private func applyRepositoryMutation(
     historyLimit: Int,
+    operationPlan:
+      (@Sendable (RepositoryGeneration, RepositoryLocation) throws -> OperationPlan)? = nil,
     operation mutation:
       @Sendable @escaping (
         any GitEngineProtocol,
@@ -621,7 +641,9 @@ public actor RepositoryActor {
       ) async throws -> Void
   ) async throws -> RepositorySnapshot {
     let requestedGeneration = generation.next()
+    let preparedPlan = try operationPlan?(requestedGeneration, location)
     generation = requestedGeneration
+    lastPlan = preparedPlan
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
