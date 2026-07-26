@@ -145,6 +145,29 @@ private struct PartialDiscardDialogModifier: ViewModifier {
   }
 }
 
+private struct HooksConfigurationDialogModifier: ViewModifier {
+  @Binding var isPresented: Bool
+  @Binding var path: String
+  let apply: (String?) -> Void
+
+  func body(content: Content) -> some View {
+    content.alert("Repository Hooks Directory", isPresented: $isPresented) {
+      TextField(".git/hooks or another path", text: $path)
+      Button("Apply") {
+        apply(path)
+      }
+      Button("Use Default") {
+        apply(nil)
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "This writes core.hooksPath only to the current repository. Relative paths are resolved by Git."
+      )
+    }
+  }
+}
+
 private struct MergeStartDialogModifier: ViewModifier {
   @Binding var request: PendingMergeRequest?
   let merge: (String) -> Void
@@ -227,6 +250,7 @@ public struct CurrentRootView: View {
   private let worktrees: [GitWorktree]
   private let submodules: [GitSubmodule]
   private let gitLFS: GitLFSRepositoryState
+  private let gitHooks: GitHooksState
   private let activities: [OperationActivity]
   private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
@@ -303,6 +327,7 @@ public struct CurrentRootView: View {
   private let pullLFS: () -> Void
   private let pruneLFS: () -> Void
   private let performMaintenance: (RepositoryMaintenanceTask) -> Void
+  private let setHooksPath: (String?) -> Void
   private let continueOperation: () -> Void
   private let abortOperation: () -> Void
   private let resolveConflict: (GitPath, ConflictSide) -> Void
@@ -336,6 +361,8 @@ public struct CurrentRootView: View {
   @State private var pendingPartialDiscard: PartialDiscardRequest?
   @State private var workingCopyFilter = ""
   @State private var workingCopyStatusFilter: WorkingCopyStatusFilter = .all
+  @State private var isConfiguringHooks = false
+  @State private var hooksPathDraft = ""
   @State private var graphJumpOID: String?
   @State private var commitMessage = ""
   @State private var amendCommit = false
@@ -423,6 +450,7 @@ public struct CurrentRootView: View {
     worktrees: [GitWorktree],
     submodules: [GitSubmodule],
     gitLFS: GitLFSRepositoryState,
+    gitHooks: GitHooksState,
     activities: [OperationActivity],
     recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
@@ -499,6 +527,7 @@ public struct CurrentRootView: View {
     pullLFS: @escaping () -> Void,
     pruneLFS: @escaping () -> Void,
     performMaintenance: @escaping (RepositoryMaintenanceTask) -> Void,
+    setHooksPath: @escaping (String?) -> Void,
     continueOperation: @escaping () -> Void,
     abortOperation: @escaping () -> Void,
     resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
@@ -550,6 +579,7 @@ public struct CurrentRootView: View {
     self.worktrees = worktrees
     self.submodules = submodules
     self.gitLFS = gitLFS
+    self.gitHooks = gitHooks
     self.activities = activities
     self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
@@ -626,6 +656,7 @@ public struct CurrentRootView: View {
     self.pullLFS = pullLFS
     self.pruneLFS = pruneLFS
     self.performMaintenance = performMaintenance
+    self.setHooksPath = setHooksPath
     self.continueOperation = continueOperation
     self.abortOperation = abortOperation
     self.resolveConflict = resolveConflict
@@ -865,6 +896,7 @@ public struct CurrentRootView: View {
           }
         }
         lfsSidebarSection
+        hooksSidebarSection
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 220)
     } detail: {
@@ -988,6 +1020,13 @@ public struct CurrentRootView: View {
         } message: {
           Text("Current creates a new branch and checks it out in a separate folder.")
         }
+        .modifier(
+          HooksConfigurationDialogModifier(
+            isPresented: $isConfiguringHooks,
+            path: $hooksPathDraft,
+            apply: setHooksPath
+          )
+        )
         .alert("Add Submodule", isPresented: $isAddingSubmodule) {
           TextField("Remote URL", text: $newSubmoduleURL)
           TextField("Repository-relative path", text: $newSubmodulePath)
@@ -1311,6 +1350,56 @@ public struct CurrentRootView: View {
   }
 
   @ViewBuilder
+  private var hooksSidebarSection: some View {
+    if status != nil {
+      Section {
+        Label {
+          VStack(alignment: .leading, spacing: 1) {
+            Text(gitHooks.configuredPath ?? "Default .git/hooks")
+              .lineLimit(1)
+            Text(gitHooks.effectivePath.isEmpty ? "Unavailable" : gitHooks.effectivePath)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+        } icon: {
+          Image(systemName: "terminal")
+        }
+        ForEach(gitHooks.hooks) { hook in
+          Label(
+            hook.name,
+            systemImage: hook.isExecutable ? "checkmark.circle.fill" : "pause.circle"
+          )
+          .foregroundStyle(hook.isExecutable ? .primary : .secondary)
+          .help(
+            hook.isExecutable
+              ? "Executable: Git will run this hook when its event occurs."
+              : "Not executable: Git will skip this hook."
+          )
+        }
+        if gitHooks.hooks.isEmpty {
+          Text("No active hook files")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      } header: {
+        HStack {
+          Text("Git Hooks")
+          Spacer()
+          Button {
+            hooksPathDraft = gitHooks.configuredPath ?? ""
+            isConfiguringHooks = true
+          } label: {
+            Image(systemName: "gearshape")
+          }
+          .buttonStyle(.borderless)
+          .help("Configure Repository Hooks")
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
   private var lfsActionButtons: some View {
     if !gitLFS.isConfigured {
       Button("Initialize for This Repository", action: installLFS)
@@ -1449,42 +1538,20 @@ public struct CurrentRootView: View {
 
       if !recentRepositories.isEmpty {
         VStack(alignment: .leading, spacing: 8) {
-          Text("Recent Repositories")
+          Text("Repositories")
             .font(.headline)
           List {
-            ForEach(sortedRecentRepositories) { recent in
-              HStack(spacing: 10) {
-                Button {
-                  openRecentRepository(recent)
-                } label: {
-                  VStack(alignment: .leading, spacing: 2) {
-                    Text(recent.displayName)
-                      .fontWeight(.medium)
-                    Text(recent.path)
-                      .font(.caption)
-                      .foregroundStyle(.secondary)
-                      .lineLimit(1)
-                  }
-                  .frame(maxWidth: .infinity, alignment: .leading)
+            if !favoriteRepositories.isEmpty {
+              Section("Favorites") {
+                ForEach(favoriteRepositories) { recent in
+                  recentRepositoryRow(recent)
                 }
-                .buttonStyle(.plain)
-                Button {
-                  toggleFavoriteRepository(recent)
-                } label: {
-                  Image(systemName: recent.isFavorite ? "star.fill" : "star")
-                }
-                .buttonStyle(.borderless)
-                .help(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites")
               }
-              .contextMenu {
-                Button("Open in New Window") {
-                  openRecentRepositoryInNewWindow(recent)
-                }
-                Button(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-                  toggleFavoriteRepository(recent)
-                }
-                Button("Remove from Recents", role: .destructive) {
-                  removeRecentRepository(recent)
+            }
+            if !nonFavoriteRecentRepositories.isEmpty {
+              Section("Recent") {
+                ForEach(nonFavoriteRecentRepositories) { recent in
+                  recentRepositoryRow(recent)
                 }
               }
             }
@@ -1504,6 +1571,51 @@ public struct CurrentRootView: View {
         return $0.isFavorite && !$1.isFavorite
       }
       return $0.lastOpenedAt > $1.lastOpenedAt
+    }
+  }
+
+  private var favoriteRepositories: [RecentRepository] {
+    sortedRecentRepositories.filter(\.isFavorite)
+  }
+
+  private var nonFavoriteRecentRepositories: [RecentRepository] {
+    sortedRecentRepositories.filter { !$0.isFavorite }
+  }
+
+  private func recentRepositoryRow(_ recent: RecentRepository) -> some View {
+    HStack(spacing: 10) {
+      Button {
+        openRecentRepository(recent)
+      } label: {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(recent.displayName)
+            .fontWeight(.medium)
+          Text(recent.path)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .buttonStyle(.plain)
+      Button {
+        toggleFavoriteRepository(recent)
+      } label: {
+        Image(systemName: recent.isFavorite ? "star.fill" : "star")
+      }
+      .buttonStyle(.borderless)
+      .help(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites")
+    }
+    .contextMenu {
+      Button("Open in New Window") {
+        openRecentRepositoryInNewWindow(recent)
+      }
+      Button(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+        toggleFavoriteRepository(recent)
+      }
+      Button("Remove from Recents", role: .destructive) {
+        removeRecentRepository(recent)
+      }
     }
   }
 

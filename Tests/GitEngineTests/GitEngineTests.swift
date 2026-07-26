@@ -104,6 +104,47 @@ struct GitEngineTests {
       ])
   }
 
+  @Test("Repository hooks path is verified and executable status is reported")
+  func repositoryHooksConfiguration() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let hooks = root.appendingPathComponent("project-hooks", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try runGit(["init", root.path])
+    try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+    let executable = hooks.appendingPathComponent("pre-commit")
+    let disabled = hooks.appendingPathComponent("pre-push")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: disabled)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: executable.path
+    )
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o644],
+      ofItemAtPath: disabled.path
+    )
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(executableURL: URL(fileURLWithPath: "/usr/bin/git"))
+    )
+    let location = try await engine.locateRepository(at: root)
+    let configured = try await engine.setHooksPath(at: location, path: "project-hooks")
+
+    #expect(configured.configuredPath == "project-hooks")
+    #expect(configured.effectivePath == hooks.path)
+    #expect(
+      configured.hooks == [
+        GitHook(name: "pre-commit", isExecutable: true),
+        GitHook(name: "pre-push", isExecutable: false),
+      ])
+
+    let restored = try await engine.setHooksPath(at: location, path: nil)
+    #expect(restored.configuredPath == nil)
+    #expect(restored.effectivePath == root.appendingPathComponent(".git/hooks").path)
+  }
+
   @Test("Reads Git LFS repository state without installing hooks")
   func lfsRepositoryState() async throws {
     let json = """

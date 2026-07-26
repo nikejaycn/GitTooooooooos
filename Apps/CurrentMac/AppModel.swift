@@ -85,6 +85,7 @@ final class AppModel {
   private(set) var worktrees: [GitWorktree] = []
   private(set) var submodules: [GitSubmodule] = []
   private(set) var gitLFS: GitLFSRepositoryState = .unavailable
+  private(set) var gitHooks: GitHooksState = .unavailable
   private(set) var activities: [OperationActivity] = []
   private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
@@ -1204,6 +1205,28 @@ final class AppModel {
     }
   }
 
+  func setHooksPath(_ path: String?) {
+    guard let repository else { return }
+    let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let activityID = beginActivity(
+      trimmed?.isEmpty == false
+        ? "Configure repository hooks directory"
+        : "Use default repository hooks directory"
+    )
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        gitHooks = try await repository.setHooksPath(trimmed)
+        finishActivity(activityID, state: .succeeded, detail: gitHooks.effectivePath)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
   func continueOperation() {
     applyMerge(.continueOperation)
   }
@@ -1646,15 +1669,18 @@ final class AppModel {
     engine: any GitEngineProtocol
   ) async throws {
     let opened = try await RepositoryActor.open(at: url, engine: engine)
-    let snapshot = try await opened.refreshSnapshot()
-    let template = try? await opened.commitTemplate()
+    async let snapshot = opened.refreshSnapshot()
+    async let template = try? opened.commitTemplate()
+    async let hooks = try? opened.hooksState()
+    let loadedSnapshot = try await snapshot
     try Task.checkCancellation()
     repository = opened
     repositorySessionID = UUID()
     repositoryName = opened.location.worktreeURL.lastPathComponent
     repositoryPath = opened.location.worktreeURL.standardizedFileURL.path
-    commitTemplate = template
-    apply(snapshot)
+    commitTemplate = await template
+    gitHooks = await hooks ?? .unavailable
+    apply(loadedSnapshot)
     selectedDiff = nil
     selectedDiffChange = nil
     startWatchingRepository(opened)
@@ -1690,6 +1716,7 @@ final class AppModel {
     worktrees = []
     submodules = []
     gitLFS = .unavailable
+    gitHooks = .unavailable
     selectedDiff = nil
     selectedDiffChange = nil
     clearFileInsights()
@@ -1772,9 +1799,14 @@ final class AppModel {
       errorMessage = nil
     }
     do {
-      let snapshot = try await repository.refreshSnapshot()
+      async let snapshot = repository.refreshSnapshot()
+      async let hooks = try? repository.hooksState()
+      let refreshedSnapshot = try await snapshot
       guard repositorySessionID == sessionID else { return }
-      apply(snapshot)
+      apply(refreshedSnapshot)
+      if let refreshedHooks = await hooks {
+        gitHooks = refreshedHooks
+      }
     } catch {
       if !(error is CancellationError), repositorySessionID == sessionID {
         errorMessage = error.localizedDescription

@@ -672,6 +672,35 @@ public actor RepositoryActor {
     return try await operation.value
   }
 
+  public func hooksState() async throws -> GitHooksState {
+    await mutationTail?.value
+    try Task.checkCancellation()
+    return try await engine.hooksState(at: location)
+  }
+
+  public func setHooksPath(_ path: String?) async throws -> GitHooksState {
+    let requestedGeneration = generation.next()
+    let plan = try OperationPlanner.configureHooks(
+      path: path,
+      generation: requestedGeneration,
+      at: location
+    )
+    generation = requestedGeneration
+    lastPlan = plan
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      return try await engine.setHooksPath(at: location, path: path)
+    }
+    mutationTail = Task {
+      _ = try? await operation.value
+    }
+    return try await operation.value
+  }
+
   @discardableResult
   public func applyHunk(
     _ hunk: DiffHunk,

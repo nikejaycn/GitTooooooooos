@@ -82,6 +82,37 @@ struct OperationPlanTests {
     #expect(plan.confirmationPolicy == .double)
   }
 
+  @Test("Repository hook configuration is local, previewed, and non-destructive")
+  func repositoryHookConfiguration() throws {
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+    let configured = try OperationPlanner.configureHooks(
+      path: "hooks",
+      generation: RepositoryGeneration(3),
+      at: location
+    )
+    #expect(configured.kind == "hooks.configure")
+    #expect(configured.risk == .localSafe)
+    #expect(configured.confirmationPolicy == .none)
+    #expect(
+      configured.commands.map(\.preview) == [
+        "git config --local core.hooksPath <validated-path>"
+      ])
+
+    let restored = try OperationPlanner.configureHooks(
+      path: nil,
+      generation: RepositoryGeneration(4),
+      at: location
+    )
+    #expect(restored.kind == "hooks.use-default")
+    #expect(
+      restored.commands.map(\.preview) == [
+        "git config --local --unset-all core.hooksPath"
+      ])
+  }
+
   @Test("Safe plans cannot opt into destructive confirmation")
   func safePlanRejectsConfirmation() {
     #expect(throws: OperationPlanError.safeOperationCannotRequireConfirmation) {

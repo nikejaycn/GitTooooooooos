@@ -472,6 +472,40 @@ public enum RepositoryMaintenanceTask: String, CaseIterable, Hashable, Sendable,
   case verify
 }
 
+public struct GitHook: Hashable, Sendable, Codable, Identifiable {
+  public let name: String
+  public let isExecutable: Bool
+
+  public init(name: String, isExecutable: Bool) {
+    self.name = name
+    self.isExecutable = isExecutable
+  }
+
+  public var id: String { name }
+}
+
+public struct GitHooksState: Hashable, Sendable, Codable {
+  public let configuredPath: String?
+  public let effectivePath: String
+  public let hooks: [GitHook]
+
+  public init(
+    configuredPath: String?,
+    effectivePath: String,
+    hooks: [GitHook]
+  ) {
+    self.configuredPath = configuredPath
+    self.effectivePath = effectivePath
+    self.hooks = hooks
+  }
+
+  public static let unavailable = GitHooksState(
+    configuredPath: nil,
+    effectivePath: "",
+    hooks: []
+  )
+}
+
 public enum MergeMutation: Hashable, Sendable {
   case start(branch: String, squash: Bool, noFastForward: Bool, autoStash: Bool)
   case resolve(path: GitPath, side: ConflictSide)

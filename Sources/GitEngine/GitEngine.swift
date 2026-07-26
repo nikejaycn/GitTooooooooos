@@ -188,6 +188,11 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     task: RepositoryMaintenanceTask
   ) async throws -> String
+  func hooksState(at location: RepositoryLocation) async throws -> GitHooksState
+  func setHooksPath(
+    at location: RepositoryLocation,
+    path: String?
+  ) async throws -> GitHooksState
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry]
   @discardableResult
   func mutateStash(
@@ -234,6 +239,17 @@ public protocol GitEngineProtocol: Sendable {
 }
 
 extension GitEngineProtocol {
+  public func hooksState(at location: RepositoryLocation) async throws -> GitHooksState {
+    .unavailable
+  }
+
+  public func setHooksPath(
+    at location: RepositoryLocation,
+    path: String?
+  ) async throws -> GitHooksState {
+    throw GitEngineError.invalidOutput("Git hooks configuration is not implemented.")
+  }
+
   public func commitTemplate(at location: RepositoryLocation) async throws -> String? {
     nil
   }
@@ -405,6 +421,109 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     let result = try await execute(GitCommand(arguments: ["--version"]))
     return String(decoding: result.standardOutput, as: UTF8.self)
       .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  public func hooksState(at location: RepositoryLocation) async throws -> GitHooksState {
+    let configuredResult = try await runner.run(
+      GitCommand(
+        arguments: ["config", "--local", "--path", "--get", "core.hooksPath"],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024,
+        timeout: .seconds(30)
+      )
+    )
+    guard configuredResult.succeeded || configuredResult.termination == .exited(1) else {
+      throw GitEngineError.commandFailed(
+        arguments: "config --local --path --get core.hooksPath",
+        message: configuredResult.errorDescription
+      )
+    }
+    let configuredPath = String(decoding: configuredResult.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let effectiveResult = try await execute(
+      GitCommand(
+        arguments: ["rev-parse", "--git-path", "hooks"],
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024,
+        timeout: .seconds(30)
+      )
+    )
+    let effectivePath = String(decoding: effectiveResult.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !effectivePath.isEmpty else {
+      throw GitEngineError.invalidOutput("Git returned an empty hooks directory.")
+    }
+    let effectiveURL =
+      URL(fileURLWithPath: effectivePath, relativeTo: location.worktreeURL)
+      .standardizedFileURL
+    let entries =
+      (try? FileManager.default.contentsOfDirectory(
+        at: effectiveURL,
+        includingPropertiesForKeys: [.isRegularFileKey, .isExecutableKey],
+        options: [.skipsHiddenFiles]
+      )) ?? []
+    let hooks = entries.compactMap { url -> GitHook? in
+      guard !url.lastPathComponent.hasSuffix(".sample"),
+        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isExecutableKey]),
+        values.isRegularFile == true
+      else {
+        return nil
+      }
+      return GitHook(
+        name: url.lastPathComponent,
+        isExecutable: values.isExecutable == true
+      )
+    }
+    .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    return GitHooksState(
+      configuredPath: configuredPath.isEmpty ? nil : configuredPath,
+      effectivePath: effectiveURL.path,
+      hooks: hooks
+    )
+  }
+
+  public func setHooksPath(
+    at location: RepositoryLocation,
+    path: String?
+  ) async throws -> GitHooksState {
+    let normalized = path?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let normalized, !normalized.isEmpty {
+      guard !normalized.contains("\n"), !normalized.contains("\r"),
+        !normalized.utf8.contains(0)
+      else {
+        throw GitEngineError.invalidOutput("The hooks path contains an unsupported character.")
+      }
+      _ = try await execute(
+        GitCommand(
+          arguments: ["config", "--local", "core.hooksPath", normalized],
+          workingDirectory: location.worktreeURL,
+          outputLimit: 64 * 1024,
+          timeout: .seconds(30)
+        )
+      )
+    } else {
+      let result = try await runner.run(
+        GitCommand(
+          arguments: ["config", "--local", "--unset-all", "core.hooksPath"],
+          workingDirectory: location.worktreeURL,
+          outputLimit: 64 * 1024,
+          timeout: .seconds(30)
+        )
+      )
+      guard result.succeeded || result.termination == .exited(5) else {
+        throw GitEngineError.commandFailed(
+          arguments: "config --local --unset-all core.hooksPath",
+          message: result.errorDescription
+        )
+      }
+    }
+    let state = try await hooksState(at: location)
+    guard state.configuredPath == (normalized?.isEmpty == false ? normalized : nil) else {
+      throw GitEngineError.invalidRepository(
+        "Git did not retain the requested hooks directory."
+      )
+    }
+    return state
   }
 
   public func lfsVersion() async throws -> String {

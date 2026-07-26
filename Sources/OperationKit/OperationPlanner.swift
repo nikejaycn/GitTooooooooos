@@ -209,6 +209,38 @@ public enum OperationPlanner {
     )
   }
 
+  public static func configureHooks(
+    path: String?,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    let hasPath = path?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    return try OperationPlan(
+      kind: hasPath ? "hooks.configure" : "hooks.use-default",
+      title: hasPath ? "Configure repository hooks directory" : "Use default hooks directory",
+      repositoryGeneration: generation,
+      preconditions: [
+        "The value is stored only in this repository's local Git config",
+        "Git verifies the effective hooks directory after the write",
+        "Only executable hook files run; their output and failure are visible in the operation log",
+      ],
+      commands: [
+        .git(
+          GitCommand(
+            arguments:
+              hasPath
+              ? ["config", "--local", "core.hooksPath", "<validated-path>"]
+              : ["config", "--local", "--unset-all", "core.hooksPath"],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ],
+      affectedRefs: [],
+      workingTreeImpact: .none,
+      risk: .localSafe
+    )
+  }
+
   public static func lfs(
     _ mutation: GitLFSMutation,
     generation: RepositoryGeneration,
