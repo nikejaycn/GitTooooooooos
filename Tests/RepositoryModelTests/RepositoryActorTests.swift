@@ -460,6 +460,39 @@ struct RepositoryActorTests {
     #expect(plan.confirmationPolicy == .single)
   }
 
+  @Test("Branch plans allow safe delete and reject unrecoverable force delete")
+  func branchOperationPlans() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    _ = try await repository.applyBranchMutation(
+      .delete(name: "merged-topic", force: false)
+    )
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "branch.delete.safe")
+    #expect(plan.risk == .localSafe)
+
+    _ = try await repository.applyBranchMutation(
+      .checkout(name: "topic", autoStash: true)
+    )
+    let checkoutPlan = try #require(await repository.lastOperationPlan())
+    let previews = checkoutPlan.commands.map(\.preview)
+    #expect(previews.count == 4)
+    #expect(previews[0].contains("stash push --include-untracked"))
+    #expect(previews[1].contains("switch topic"))
+    #expect(previews[2].contains("stash apply --index"))
+    #expect(previews[3].contains("stash drop"))
+    #expect(!previews.joined(separator: " ").contains("--discard-changes"))
+
+    await #expect(throws: OperationPlanningError.forceBranchDeleteRequiresRecovery) {
+      try await repository.applyBranchMutation(
+        .delete(name: "unmerged-topic", force: true)
+      )
+    }
+  }
+
   @Test("A slow stale read cannot replace a newer cached snapshot")
   func staleReadDoesNotReplaceNewerSnapshot() async throws {
     let engine = StubGitEngine(

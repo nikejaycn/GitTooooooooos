@@ -383,7 +383,13 @@ public actor RepositoryActor {
     historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
     let requestedGeneration = generation.next()
+    let plan = try OperationPlanner.branch(
+      mutation,
+      generation: requestedGeneration,
+      at: location
+    )
     generation = requestedGeneration
+    lastPlan = plan
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location

@@ -3,6 +3,130 @@ import Foundation
 import GitEngine
 
 public enum OperationPlanner {
+  public static func branch(
+    _ mutation: BranchMutation,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    let kind: String
+    let title: String
+    let commands: [OperationCommand]
+    let impact: WorkingTreeImpact
+    let affectedRefs: [String]
+    let preconditions: [String]
+
+    switch mutation {
+    case .create(let name, let startPoint, let checkout):
+      kind = "branch.create"
+      title = "Create branch"
+      let arguments =
+        (checkout ? ["switch", "-c", name] : ["branch", name])
+        + (startPoint.map { [$0] } ?? [])
+      commands = [
+        .git(GitCommand(arguments: arguments, workingDirectory: location.worktreeURL))
+      ]
+      impact = checkout ? .indexAndWorktree : .none
+      affectedRefs = (checkout ? ["HEAD"] : []) + ["refs/heads/\(name)"]
+      preconditions = [
+        "The new branch name passes git check-ref-format validation",
+        "The optional start point resolves to a commit",
+      ]
+    case .checkout(let name, let autoStash):
+      kind = "branch.checkout"
+      title = "Check out branch"
+      if autoStash {
+        commands = [
+          .git(
+            GitCommand(
+              arguments: [
+                "stash", "push", "--include-untracked", "-m",
+                "<checkout-auto-stash-id>",
+              ],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+          .git(
+            GitCommand(
+              arguments: ["switch", name],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+          .git(
+            GitCommand(
+              arguments: ["stash", "apply", "--index", "<auto-stash-oid>"],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+          .git(
+            GitCommand(
+              arguments: ["stash", "drop", "<auto-stash-selector>"],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+        ]
+      } else {
+        commands = [
+          .git(
+            GitCommand(
+              arguments: ["switch", name],
+              workingDirectory: location.worktreeURL
+            )
+          )
+        ]
+      }
+      impact = .indexAndWorktree
+      affectedRefs = ["HEAD", "refs/heads/\(name)"]
+      preconditions = [
+        "The target branch exists",
+        autoStash
+          ? "When changes exist, a unique stash OID is verified before switching and restored by OID"
+          : "The working copy permits checkout without auto-stash",
+      ]
+    case .rename(let oldName, let newName):
+      kind = "branch.rename"
+      title = "Rename branch"
+      commands = [
+        .git(
+          GitCommand(
+            arguments: ["branch", "-m", oldName, newName],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      impact = .none
+      affectedRefs = ["refs/heads/\(oldName)", "refs/heads/\(newName)"]
+      preconditions = ["The new branch name passes git check-ref-format validation"]
+    case .delete(let name, let force):
+      guard !force else {
+        throw OperationPlanningError.forceBranchDeleteRequiresRecovery
+      }
+      kind = "branch.delete.safe"
+      title = "Delete merged branch"
+      commands = [
+        .git(
+          GitCommand(
+            arguments: ["branch", "-d", name],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      impact = .none
+      affectedRefs = ["refs/heads/\(name)"]
+      preconditions = ["Git verifies the branch is fully merged before deletion"]
+    }
+
+    return try OperationPlan(
+      kind: kind,
+      title: title,
+      repositoryGeneration: generation,
+      preconditions: preconditions,
+      commands: commands,
+      affectedRefs: affectedRefs,
+      workingTreeImpact: impact,
+      risk: .localSafe
+    )
+  }
+
   public static func history(
     _ mutation: HistoryMutation,
     generation: RepositoryGeneration,
@@ -198,4 +322,8 @@ public enum OperationPlanner {
       recoveryStrategy: recovery
     )
   }
+}
+
+public enum OperationPlanningError: Error, Equatable, Sendable {
+  case forceBranchDeleteRequiresRecovery
 }
