@@ -111,7 +111,7 @@ let package = Package(
     ),
     .target(
       name: "RepositoryModel",
-      dependencies: ["CurrentDomain", "DiffKit", "GitEngine"],
+      dependencies: ["CurrentDomain", "DiffKit", "GitEngine", "OperationKit"],
       linkerSettings: [
         .linkedFramework("CoreServices")
       ]
@@ -165,7 +165,7 @@ let package = Package(
     ),
     .testTarget(
       name: "RepositoryModelTests",
-      dependencies: ["RepositoryModel", "GitEngine", "CurrentDomain", "DiffKit"]
+      dependencies: ["RepositoryModel", "GitEngine", "CurrentDomain", "DiffKit", "OperationKit"]
     ),
     .testTarget(
       name: "OperationKitTests",

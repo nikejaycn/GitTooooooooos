@@ -2,6 +2,7 @@ import CurrentDomain
 import DiffKit
 import Foundation
 import GitEngine
+import OperationKit
 import RepositoryModel
 import Testing
 
@@ -278,6 +279,31 @@ struct RepositoryActorTests {
     #expect(result.recoveryReference == nil)
     #expect(await repository.status() == result.status)
     #expect(await engine.mutations() == [.stage([GitPath("README.md")])])
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "working-copy.stage")
+    #expect(plan.repositoryGeneration == result.status.generation)
+    #expect(plan.risk == .localSafe)
+    #expect(plan.confirmationPolicy == .none)
+  }
+
+  @Test("Discard plan requires confirmation and a stash recovery strategy")
+  func discardOperationPlan() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+
+    _ = try await repository.applyWorkingCopyMutation(
+      .discardTracked([GitPath("Sources/App.swift")])
+    )
+
+    let plan = try #require(await repository.lastOperationPlan())
+    #expect(plan.kind == "working-copy.discard")
+    #expect(plan.risk == .localDestructive)
+    #expect(plan.recoveryStrategy == .stash)
+    #expect(plan.confirmationPolicy == .single)
+    #expect(plan.commands.first?.preview.contains("stash push --keep-index") == true)
   }
 
   @Test("Worktree mutation uses the repository queue and refreshes worktree state")

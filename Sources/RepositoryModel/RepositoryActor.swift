@@ -2,6 +2,7 @@ import CurrentDomain
 import DiffKit
 import Foundation
 import GitEngine
+import OperationKit
 
 public actor RepositoryActor {
   public nonisolated let location: RepositoryLocation
@@ -11,6 +12,7 @@ public actor RepositoryActor {
   private var cachedStatus: RepositoryStatus?
   private var cachedSnapshot: RepositorySnapshot?
   private var mutationTail: Task<Void, Never>?
+  private var lastPlan: OperationPlan?
 
   public init(location: RepositoryLocation, engine: any GitEngineProtocol) {
     self.location = location
@@ -93,6 +95,10 @@ public actor RepositoryActor {
 
   public func snapshot() -> RepositorySnapshot? {
     cachedSnapshot
+  }
+
+  public func lastOperationPlan() -> OperationPlan? {
+    lastPlan
   }
 
   public func historyPage(
@@ -238,6 +244,12 @@ public actor RepositoryActor {
   ) async throws -> WorkingCopyMutationResult {
     let requestedGeneration = generation.next()
     generation = requestedGeneration
+    let plan = try OperationPlanner.workingCopy(
+      mutation,
+      generation: requestedGeneration,
+      at: location
+    )
+    lastPlan = plan
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
