@@ -74,13 +74,21 @@ struct CommandPaletteView: View {
                 .foregroundStyle(action.isEnabled ? .primary : .tertiary)
               VStack(alignment: .leading, spacing: 2) {
                 Text(action.title)
+                  .lineLimit(1)
+                  .truncationMode(.middle)
                 if let detail = action.detail {
                   Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 }
               }
+              .help(
+                action.detail.map { "\(action.title)\n\($0)" }
+                  ?? action.title
+              )
+              .layoutPriority(1)
               Spacer()
             }
             .contentShape(Rectangle())

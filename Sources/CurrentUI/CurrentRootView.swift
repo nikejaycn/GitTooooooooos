@@ -691,7 +691,14 @@ public struct CurrentRootView: View {
     NavigationSplitView {
       List(selection: $workspace) {
         Section("Repository") {
-          Label(repositoryName ?? "No repository open", systemImage: "externaldrive")
+          Label {
+            Text(repositoryName ?? "No repository open")
+              .lineLimit(1)
+              .truncationMode(.middle)
+              .help(repositoryName ?? "No repository open")
+          } icon: {
+            Image(systemName: "externaldrive")
+          }
         }
         Section("Workspace") {
           Label("Changes", systemImage: "square.stack.3d.up")
@@ -720,6 +727,8 @@ public struct CurrentRootView: View {
                 Image(systemName: "cloud")
                 VStack(alignment: .leading, spacing: 1) {
                   Text(remote.name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                   Text(remote.fetchURL)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -898,9 +907,13 @@ public struct CurrentRootView: View {
         lfsSidebarSection
         hooksSidebarSection
       }
-      .navigationSplitViewColumnWidth(min: 190, ideal: 220)
+      .navigationSplitViewColumnWidth(
+        min: CurrentUILayout.sidebarMinimumWidth,
+        ideal: CurrentUILayout.sidebarIdealWidth
+      )
     } detail: {
       content
+        .clipped()
         .toolbar {
           ToolbarItemGroup {
             Button(action: openRepository) {
@@ -1322,6 +1335,9 @@ public struct CurrentRootView: View {
             Label(inspectionError, systemImage: "exclamationmark.triangle")
               .font(.caption)
               .foregroundStyle(.orange)
+              .lineLimit(2)
+              .truncationMode(.tail)
+              .help(inspectionError)
           }
         }
       } header: {
@@ -1366,10 +1382,15 @@ public struct CurrentRootView: View {
           Image(systemName: "terminal")
         }
         ForEach(gitHooks.hooks) { hook in
-          Label(
-            hook.name,
-            systemImage: hook.isExecutable ? "checkmark.circle.fill" : "pause.circle"
-          )
+          Label {
+            Text(hook.name)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          } icon: {
+            Image(
+              systemName: hook.isExecutable ? "checkmark.circle.fill" : "pause.circle"
+            )
+          }
           .foregroundStyle(hook.isExecutable ? .primary : .secondary)
           .help(
             hook.isExecutable
@@ -1445,6 +1466,9 @@ public struct CurrentRootView: View {
             Text(errorMessage)
               .font(.callout)
               .lineLimit(2)
+              .truncationMode(.tail)
+              .help(errorMessage)
+              .layoutPriority(1)
             Spacer()
           }
           .padding(10)
@@ -1455,9 +1479,16 @@ public struct CurrentRootView: View {
           VStack(alignment: .leading, spacing: 4) {
             Text(headTitle(status.head))
               .font(.title2.weight(.semibold))
+              .lineLimit(1)
+              .truncationMode(.middle)
+              .help(headTitle(status.head))
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .clipped()
             Text("\(status.changes.count) working-copy changes")
               .foregroundStyle(.secondary)
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .layoutPriority(1)
           Spacer()
           if status.ahead > 0 || status.behind > 0 {
             Text("↑ \(status.ahead)  ↓ \(status.behind)")
@@ -1465,6 +1496,7 @@ public struct CurrentRootView: View {
           }
         }
         .padding()
+        .padding(.trailing, 12)
 
         if status.operation.isInProgress {
           operationBanner(status.operation)
@@ -1492,12 +1524,17 @@ public struct CurrentRootView: View {
         Divider()
         HStack {
           Text(gitVersion ?? "Git version unavailable")
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(gitVersion ?? "Git version unavailable")
           Spacer()
           Text("Generation \(status.generation.rawValue)")
+            .fixedSize(horizontal: true, vertical: false)
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(8)
+        .padding(.trailing, 12)
       }
     } else {
       welcomeView
@@ -1531,6 +1568,9 @@ public struct CurrentRootView: View {
         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
           .font(.callout)
           .foregroundStyle(.red)
+          .lineLimit(3)
+          .truncationMode(.tail)
+          .help(errorMessage)
           .padding(10)
           .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
           .frame(maxWidth: 620)
@@ -1590,10 +1630,15 @@ public struct CurrentRootView: View {
         VStack(alignment: .leading, spacing: 2) {
           Text(recent.displayName)
             .fontWeight(.medium)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(recent.displayName)
           Text(recent.path)
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            .truncationMode(.middle)
+            .help(recent.path)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -1627,6 +1672,7 @@ public struct CurrentRootView: View {
         VStack(alignment: .leading, spacing: 2) {
           Text("\(operation.kind.rawValue.capitalized) in Progress")
             .fontWeight(.semibold)
+            .lineLimit(1)
           if operation.conflictedPaths.isEmpty {
             Text("All conflicts are resolved. Continue or abort the operation.")
               .foregroundStyle(.secondary)
@@ -1646,16 +1692,23 @@ public struct CurrentRootView: View {
           Image(systemName: "doc.badge.ellipsis")
           Text(path.displayString)
             .lineLimit(1)
+            .truncationMode(.middle)
+            .help(path.displayString)
           Spacer()
           Button("Resolve…") {
             conflictEditorPath = path
           }
-          Button("Use Ours") {
-            resolveConflict(path, .ours)
+          Menu {
+            Button("Use Ours") {
+              resolveConflict(path, .ours)
+            }
+            Button("Use Theirs") {
+              resolveConflict(path, .theirs)
+            }
+          } label: {
+            Label("Choose Version", systemImage: "arrow.triangle.branch")
           }
-          Button("Use Theirs") {
-            resolveConflict(path, .theirs)
-          }
+          .menuStyle(.borderlessButton)
         }
         .padding(.leading, 30)
       }
@@ -1682,6 +1735,9 @@ public struct CurrentRootView: View {
             HStack {
               Text(activity.title)
                 .fontWeight(.medium)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(activity.title)
               Spacer()
               Text(activity.startedAt, style: .time)
                 .font(.caption)
@@ -1692,6 +1748,9 @@ public struct CurrentRootView: View {
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
+                .lineLimit(3)
+                .truncationMode(.tail)
+                .help(detail)
             }
           }
         }
@@ -1742,9 +1801,12 @@ public struct CurrentRootView: View {
             VStack(alignment: .leading, spacing: 3) {
               Text(stash.subject)
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .help(stash.subject)
               Text(stash.selector)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
             Spacer()
             Button("Pop") {
@@ -1815,12 +1877,18 @@ public struct CurrentRootView: View {
         Spacer()
         Button("Commit", action: { performCommit(pushAfter: false) })
           .keyboardShortcut(.return, modifiers: [.command])
-        Button("Commit & Push", action: { performCommit(pushAfter: true) })
-          .disabled(remotes.isEmpty || commitDisabled(status))
+        Button(action: { performCommit(pushAfter: true) }) {
+          Label("Commit & Push", systemImage: "arrow.up.circle")
+            .labelStyle(.iconOnly)
+        }
+        .help("Commit & Push")
+        .accessibilityLabel("Commit & Push")
+        .disabled(remotes.isEmpty || commitDisabled(status))
       }
       .disabled(commitDisabled(status))
     }
     .padding(12)
+    .padding(.trailing, 12)
     .confirmationDialog(
       "Amend the current HEAD commit?",
       isPresented: Binding(
@@ -1924,12 +1992,13 @@ public struct CurrentRootView: View {
           && (pathQuery.isEmpty
             || change.path.displayString.localizedCaseInsensitiveContains(pathQuery))
       }
-      HSplitView {
+      HStack(spacing: 0) {
         VStack(spacing: 0) {
           HStack {
             TextField("Filter files", text: $workingCopyFilter)
               .textFieldStyle(.roundedBorder)
               .accessibilityLabel("Filter working copy files")
+              .layoutPriority(1)
             Picker("Status", selection: $workingCopyStatusFilter) {
               ForEach(WorkingCopyStatusFilter.allCases) { filter in
                 Text(filter.title).tag(filter)
@@ -1939,13 +2008,17 @@ public struct CurrentRootView: View {
             .pickerStyle(.menu)
             .frame(width: 112)
             .accessibilityLabel("Filter working copy status")
-            Button("Stash Selected…") {
+            Button {
               beginCreatingStash(paths: Array(activeSelectedStashPaths))
+            } label: {
+              Image(systemName: "archivebox")
             }
             .disabled(activeSelectedStashPaths.isEmpty || isLoading)
+            .help("Stash Selected Paths…")
+            .accessibilityLabel("Stash Selected Paths")
           }
           .padding(.horizontal, 10)
-          .frame(height: 34)
+          .padding(.vertical, 5)
           Divider()
           if visibleChanges.isEmpty {
             ContentUnavailableView(
@@ -1969,8 +2042,11 @@ public struct CurrentRootView: View {
                 } label: {
                   Text(change.path.displayString)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 }
                 .buttonStyle(.plain)
+                .help(change.path.displayString)
+                .layoutPriority(1)
                 .contextMenu {
                   Button("Stash This File…") {
                     beginCreatingStash(paths: [change.path])
@@ -1982,47 +2058,56 @@ public struct CurrentRootView: View {
                 Spacer()
                 Text(change.kind.rawValue)
                   .foregroundStyle(.secondary)
-                if change.isStaged {
-                  Button("Unstage") {
-                    unstage(change.path)
+                  .lineLimit(1)
+                  .fixedSize(horizontal: true, vertical: false)
+                Menu {
+                  if change.isStaged {
+                    Button("Unstage") {
+                      unstage(change.path)
+                    }
                   }
-                  .buttonStyle(.borderless)
-                }
-                if change.isUnstaged || change.kind == .untracked {
-                  Button("Stage") {
-                    stage(change.path)
+                  if change.isUnstaged || change.kind == .untracked {
+                    Button("Stage") {
+                      stage(change.path)
+                    }
                   }
-                  .buttonStyle(.borderless)
-                }
-                if change.isUnstaged && change.kind != .untracked {
-                  Button(role: .destructive) {
-                    pendingDiscard = change.path
-                  } label: {
-                    Image(systemName: "arrow.uturn.backward")
+                  Button("Stash This File…") {
+                    beginCreatingStash(paths: [change.path])
                   }
-                  .buttonStyle(.borderless)
-                  .help("Discard unstaged changes")
-                }
-                if change.kind == .untracked {
-                  Button {
-                    ignore(change.path)
-                  } label: {
-                    Image(systemName: "eye.slash")
+                  Button("File History & Blame") {
+                    openFileInsights(change.path)
                   }
-                  .buttonStyle(.borderless)
-                  .help("Add an anchored rule to .gitignore")
+                  if change.isUnstaged && change.kind != .untracked {
+                    Divider()
+                    Button("Discard Changes…", role: .destructive) {
+                      pendingDiscard = change.path
+                    }
+                  }
+                  if change.kind == .untracked {
+                    Divider()
+                    Button("Add to .gitignore") {
+                      ignore(change.path)
+                    }
+                  }
+                } label: {
+                  Image(systemName: "ellipsis.circle")
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("File Actions")
+                .accessibilityLabel("Actions for \(change.path.displayString)")
               }
               .font(.system(.body, design: .monospaced))
               .tag(change.path)
             }
           }
         }
-        .frame(minWidth: 280, idealWidth: 340, maxWidth: 440)
+        .frame(width: CurrentUILayout.workingCopyListIdealWidth)
 
+        Divider()
         diffPane
-          .frame(minWidth: 440)
-          .layoutPriority(1)
+          .frame(minWidth: CurrentUILayout.diffMinimumWidth)
       }
       .onChange(of: status.changes.map(\.path)) { _, paths in
         selectedStashPaths.formIntersection(paths)
@@ -2038,30 +2123,49 @@ public struct CurrentRootView: View {
     } else if let selectedDiff {
       VStack(alignment: .leading, spacing: 0) {
         VStack(alignment: .leading, spacing: 6) {
-          HStack {
+          HStack(spacing: 8) {
             Text(selectedDiff.path.displayString)
               .font(.headline)
               .lineLimit(1)
-            Button {
-              openFileInsights(selectedDiff.path)
-            } label: {
-              Label(
-                "History & Blame",
-                systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
-            }
-            .buttonStyle(.borderless)
-            if externalDiffTool != .none {
+              .truncationMode(.middle)
+              .help(selectedDiff.path.displayString)
+              .layoutPriority(1)
+            Spacer(minLength: 4)
+            Menu {
               Button {
-                openExternalDiff(selectedDiff)
+                openFileInsights(selectedDiff.path)
               } label: {
                 Label(
-                  "Open in \(externalDiffTool.title)",
-                  systemImage: "arrow.up.forward.app"
-                )
+                  "History & Blame",
+                  systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
               }
-              .buttonStyle(.borderless)
-              .disabled(isLoading)
+              if externalDiffTool != .none {
+                Button {
+                  openExternalDiff(selectedDiff)
+                } label: {
+                  Label(
+                    "Open in \(externalDiffTool.title)",
+                    systemImage: "arrow.up.forward.app"
+                  )
+                }
+                .disabled(isLoading)
+              }
+            } label: {
+              Image(systemName: "ellipsis.circle")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("File Actions")
+            .accessibilityLabel("File Actions")
+          }
+          HStack(spacing: 10) {
+            Text(selectedDiff.source.rawValue.capitalized)
+            Text("\(selectedDiff.changedLineCount) changed lines")
+            Spacer()
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          HStack(spacing: 8) {
             Picker("Diff presentation", selection: $diffPresentation) {
               Text("Unified")
                 .tag(DiffPresentation.unified)
@@ -2070,7 +2174,8 @@ public struct CurrentRootView: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 190)
+            .frame(width: 170)
+            Spacer(minLength: 4)
             Menu {
               Toggle(
                 "Ignore Whitespace Changes",
@@ -2101,20 +2206,15 @@ public struct CurrentRootView: View {
                 )
               )
             } label: {
-              Label("Whitespace", systemImage: "textformat")
+              Image(systemName: "textformat")
             }
             .menuStyle(.borderlessButton)
             .help("Diff whitespace options")
-            Spacer()
+            .accessibilityLabel("Diff whitespace options")
           }
-          HStack(spacing: 10) {
-            Text(selectedDiff.source.rawValue.capitalized)
-            Text("\(selectedDiff.changedLineCount) changed lines")
-          }
-          .font(.caption)
-          .foregroundStyle(.secondary)
         }
         .padding(10)
+        .padding(.trailing, 12)
         Divider()
         if !selectedDiff.hunks.isEmpty {
           ScrollView(.horizontal) {
@@ -2281,9 +2381,13 @@ public struct CurrentRootView: View {
 
       HSplitView {
         fileHistoryList
-          .frame(minWidth: 280, idealWidth: 330, maxWidth: 410)
+          .frame(
+            minWidth: CurrentUILayout.fileHistoryMinimumWidth,
+            idealWidth: 290,
+            maxWidth: 380
+          )
         blameView
-          .frame(minWidth: 500)
+          .frame(minWidth: CurrentUILayout.blameMinimumWidth)
           .layoutPriority(1)
       }
     }
@@ -2368,6 +2472,7 @@ public struct CurrentRootView: View {
             .foregroundStyle(.secondary)
         }
         .padding(10)
+        .padding(.trailing, 12)
         Divider()
         ScrollView([.horizontal, .vertical]) {
           LazyVStack(alignment: .leading, spacing: 0) {
@@ -2467,149 +2572,39 @@ public struct CurrentRootView: View {
       )
     } else {
       VStack(spacing: 0) {
-        HStack {
-          Text(graphSelectionTitle)
-            .font(.system(.body, design: .monospaced))
-            .foregroundStyle(.secondary)
-          Spacer()
-          Picker("Search scope", selection: $graphSearchScope) {
-            ForEach(GraphSearchScope.allCases) { scope in
-              Text(scope.rawValue)
-                .tag(scope)
-            }
-          }
-          .labelsHidden()
-          .frame(width: 108)
-          HStack(spacing: 5) {
-            Image(systemName: "magnifyingglass")
+        VStack(spacing: 8) {
+          HStack(spacing: 8) {
+            Text(graphSelectionTitle)
+              .font(.system(.body, design: .monospaced))
               .foregroundStyle(.secondary)
-            TextField(graphSearchPlaceholder, text: $graphSearchText)
-              .textFieldStyle(.plain)
-              .onSubmit {
-                guard graphSearchScope == .repository else { return }
-                hasSubmittedRepositorySearch = true
-                searchRepositoryHistory(graphSearchText)
+              .lineLimit(1)
+              .truncationMode(.middle)
+              .layoutPriority(1)
+            Spacer(minLength: 4)
+            Picker("Search scope", selection: $graphSearchScope) {
+              ForEach(GraphSearchScope.allCases) { scope in
+                Text(scope.rawValue)
+                  .tag(scope)
               }
+            }
+            .labelsHidden()
+            .frame(width: 108)
+            historySearchField
             if !graphSearchText.isEmpty {
-              Button {
-                graphSearchText = ""
-                hasSubmittedRepositorySearch = false
-                clearRepositoryHistorySearch()
-              } label: {
-                Image(systemName: "xmark.circle.fill")
-              }
-              .buttonStyle(.plain)
-              .foregroundStyle(.secondary)
-              .help("Clear Search")
+              Text(graphSearchCount)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize()
             }
           }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 5)
-          .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-          .frame(width: 240)
-          .help(repositorySearchHelp)
-          if !graphSearchText.isEmpty {
-            Text(graphSearchCount)
-              .font(.caption.monospacedDigit())
-              .foregroundStyle(.secondary)
+          HStack {
+            graphOptionsMenu
+            Spacer()
+            historyCommitActionsMenu
           }
-          Menu {
-            Menu("Pinned References") {
-              if pinnedGraphReferenceOptions.isEmpty {
-                Text("No pinned references")
-              } else {
-                ForEach(pinnedGraphReferenceOptions) { reference in
-                  Button(reference.shortName) {
-                    jumpToGraphReference(reference)
-                  }
-                }
-              }
-            }
-            Menu("Solo") {
-              Button {
-                setSoloGraphReference(nil)
-              } label: {
-                if soloGraphReference == nil {
-                  Label("Show All References", systemImage: "checkmark")
-                } else {
-                  Text("Show All References")
-                }
-              }
-              Divider()
-              ForEach(graphReferenceOptions) { reference in
-                Button {
-                  setSoloGraphReference(reference.shortName)
-                } label: {
-                  if soloGraphReference == reference.shortName {
-                    Label(reference.shortName, systemImage: "checkmark")
-                  } else {
-                    Text(reference.shortName)
-                  }
-                }
-              }
-            }
-            Menu("Hidden References") {
-              ForEach(graphReferenceOptions) { reference in
-                Toggle(
-                  reference.shortName,
-                  isOn: Binding(
-                    get: {
-                      hiddenGraphReferences.contains(reference.shortName)
-                    },
-                    set: { _ in
-                      toggleHiddenGraphReference(reference.shortName)
-                    }
-                  )
-                )
-              }
-            }
-            Menu("Pin References") {
-              ForEach(graphReferenceOptions) { reference in
-                Toggle(
-                  reference.shortName,
-                  isOn: Binding(
-                    get: {
-                      pinnedGraphReferences.contains(reference.shortName)
-                    },
-                    set: { _ in
-                      togglePinnedGraphReference(reference.shortName)
-                    }
-                  )
-                )
-              }
-            }
-          } label: {
-            Label("Graph Options", systemImage: "slider.horizontal.3")
-          }
-          Button("Cherry-pick") {
-            if let selectedCommitOID { cherryPick(selectedCommitOID) }
-          }
-          .disabled(selectedCommitOID == nil || isLoading)
-          Button("Revert") {
-            if let selectedCommitOID { revert(selectedCommitOID) }
-          }
-          .disabled(selectedCommitOID == nil || isLoading)
-          Menu("Rewrite") {
-            Button("Soft Reset") {
-              if let selectedCommitOID { reset(selectedCommitOID, .soft) }
-            }
-            Button("Mixed Reset") {
-              if let selectedCommitOID { reset(selectedCommitOID, .mixed) }
-            }
-            Button("Hard Reset…") {
-              pendingHardResetOID = selectedCommitOID
-            }
-            Divider()
-            Button("Rebase Current Branch onto Commit") {
-              if let selectedCommitOID { rebase(selectedCommitOID) }
-            }
-            Button("Interactive Rebase…") {
-              pendingInteractiveRebaseOID = selectedCommitOID
-            }
-          }
-          .disabled(selectedCommitOID == nil || isLoading)
         }
         .padding(10)
+        .padding(.trailing, 12)
         Divider()
         HSplitView {
           ZStack(alignment: .bottomTrailing) {
@@ -2668,7 +2663,7 @@ public struct CurrentRootView: View {
                 .allowsHitTesting(false)
             }
           }
-          .frame(minWidth: 360)
+          .frame(minWidth: CurrentUILayout.graphMinimumWidth)
           graphInspector
         }
       }
@@ -2687,6 +2682,136 @@ public struct CurrentRootView: View {
         clearRepositoryHistorySearch()
       }
     }
+  }
+
+  private var historySearchField: some View {
+    HStack(spacing: 5) {
+      Image(systemName: "magnifyingglass")
+        .foregroundStyle(.secondary)
+      TextField(graphSearchPlaceholder, text: $graphSearchText)
+        .textFieldStyle(.plain)
+        .onSubmit {
+          guard graphSearchScope == .repository else { return }
+          hasSubmittedRepositorySearch = true
+          searchRepositoryHistory(graphSearchText)
+        }
+      if !graphSearchText.isEmpty {
+        Button {
+          graphSearchText = ""
+          hasSubmittedRepositorySearch = false
+          clearRepositoryHistorySearch()
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Clear Search")
+      }
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 5)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+    .frame(minWidth: 150, idealWidth: 240, maxWidth: 300)
+    .help(repositorySearchHelp)
+    .layoutPriority(1)
+  }
+
+  private var graphOptionsMenu: some View {
+    Menu {
+      Menu("Pinned References") {
+        if pinnedGraphReferenceOptions.isEmpty {
+          Text("No pinned references")
+        } else {
+          ForEach(pinnedGraphReferenceOptions) { reference in
+            Button(reference.shortName) {
+              jumpToGraphReference(reference)
+            }
+          }
+        }
+      }
+      Menu("Solo") {
+        Button {
+          setSoloGraphReference(nil)
+        } label: {
+          if soloGraphReference == nil {
+            Label("Show All References", systemImage: "checkmark")
+          } else {
+            Text("Show All References")
+          }
+        }
+        Divider()
+        ForEach(graphReferenceOptions) { reference in
+          Button {
+            setSoloGraphReference(reference.shortName)
+          } label: {
+            if soloGraphReference == reference.shortName {
+              Label(reference.shortName, systemImage: "checkmark")
+            } else {
+              Text(reference.shortName)
+            }
+          }
+        }
+      }
+      Menu("Hidden References") {
+        ForEach(graphReferenceOptions) { reference in
+          Toggle(
+            reference.shortName,
+            isOn: Binding(
+              get: { hiddenGraphReferences.contains(reference.shortName) },
+              set: { _ in toggleHiddenGraphReference(reference.shortName) }
+            )
+          )
+        }
+      }
+      Menu("Pin References") {
+        ForEach(graphReferenceOptions) { reference in
+          Toggle(
+            reference.shortName,
+            isOn: Binding(
+              get: { pinnedGraphReferences.contains(reference.shortName) },
+              set: { _ in togglePinnedGraphReference(reference.shortName) }
+            )
+          )
+        }
+      }
+    } label: {
+      Label("Graph Options", systemImage: "slider.horizontal.3")
+    }
+  }
+
+  private var historyCommitActionsMenu: some View {
+    Menu {
+      Button("Cherry-pick") {
+        if let selectedCommitOID { cherryPick(selectedCommitOID) }
+      }
+      Button("Revert") {
+        if let selectedCommitOID { revert(selectedCommitOID) }
+      }
+      Divider()
+      Menu("Rewrite History") {
+        Button("Soft Reset") {
+          if let selectedCommitOID { reset(selectedCommitOID, .soft) }
+        }
+        Button("Mixed Reset") {
+          if let selectedCommitOID { reset(selectedCommitOID, .mixed) }
+        }
+        Button("Hard Reset…") {
+          pendingHardResetOID = selectedCommitOID
+        }
+        Divider()
+        Button("Rebase Current Branch onto Commit") {
+          if let selectedCommitOID { rebase(selectedCommitOID) }
+        }
+        Button("Interactive Rebase…") {
+          pendingInteractiveRebaseOID = selectedCommitOID
+        }
+      }
+    } label: {
+      Image(systemName: "ellipsis.circle")
+    }
+    .disabled(selectedCommitOID == nil || isLoading)
+    .help("Commit Actions")
+    .accessibilityLabel("Commit Actions")
   }
 
   private var graphReferenceOptions: [GitReference] {
@@ -2741,7 +2866,11 @@ public struct CurrentRootView: View {
       }
       .padding(14)
     }
-    .frame(minWidth: 250, idealWidth: 300, maxWidth: 380)
+    .frame(
+      minWidth: CurrentUILayout.inspectorMinimumWidth,
+      idealWidth: 280,
+      maxWidth: 360
+    )
     .background(.background)
   }
 
@@ -2756,6 +2885,9 @@ public struct CurrentRootView: View {
       Text(row.subject)
         .font(.title3.weight(.semibold))
         .textSelection(.enabled)
+        .lineLimit(4)
+        .truncationMode(.tail)
+        .help(row.subject)
       if !row.decorations.isEmpty {
         VStack(alignment: .leading, spacing: 5) {
           ForEach(row.decorations, id: \.self) { decoration in
@@ -2844,11 +2976,17 @@ public struct CurrentRootView: View {
                 Text(file.path.displayString)
                   .font(.caption)
                   .textSelection(.enabled)
+                  .lineLimit(2)
+                  .truncationMode(.middle)
+                  .help(file.path.displayString)
                 if let oldPath = file.oldPath {
                   Text("from \(oldPath.displayString)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(oldPath.displayString)
                 }
               }
             }
@@ -2867,6 +3005,9 @@ public struct CurrentRootView: View {
       Text(value)
         .font(.system(.caption, design: title == "Author" ? .default : .monospaced))
         .textSelection(.enabled)
+        .lineLimit(4)
+        .truncationMode(.middle)
+        .help(value)
     }
   }
 
@@ -2978,7 +3119,13 @@ public struct CurrentRootView: View {
       Button {
         checkoutBranch(reference.shortName)
       } label: {
-        Label(reference.shortName, systemImage: referenceIcon(reference.kind))
+        Label {
+          Text(reference.shortName)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        } icon: {
+          Image(systemName: referenceIcon(reference.kind))
+        }
       }
       .buttonStyle(.plain)
       .disabled(reference.isHEAD || isLoading)
@@ -3010,7 +3157,13 @@ public struct CurrentRootView: View {
         .disabled(reference.isHEAD || isLoading)
       }
     } else {
-      Label(reference.shortName, systemImage: referenceIcon(reference.kind))
+      Label {
+        Text(reference.shortName)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      } icon: {
+        Image(systemName: referenceIcon(reference.kind))
+      }
         .help(reference.fullName)
     }
   }

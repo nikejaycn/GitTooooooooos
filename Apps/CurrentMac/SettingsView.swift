@@ -56,9 +56,12 @@ struct CurrentSettingsView: View {
       }
 
       Section("Git Toolchain") {
-        LabeledContent("Git", value: model.gitVersion ?? "Checking…")
-        LabeledContent("Git LFS", value: model.gitLFSVersion ?? "Unavailable")
-        LabeledContent("Active source", value: model.gitSourceDescription ?? "Unavailable")
+        SettingsValueRow(title: "Git", value: model.gitVersion ?? "Checking…")
+        SettingsValueRow(title: "Git LFS", value: model.gitLFSVersion ?? "Unavailable")
+        SettingsValueRow(
+          title: "Active source",
+          value: model.gitSourceDescription ?? "Unavailable"
+        )
 
         Toggle("Use a custom Git executable", isOn: $draftUseCustomGit)
         HStack {
@@ -95,6 +98,9 @@ struct CurrentSettingsView: View {
           Label(reason, systemImage: "exclamationmark.triangle.fill")
             .font(.caption)
             .foregroundStyle(.orange)
+            .lineLimit(3)
+            .truncationMode(.tail)
+            .help(reason)
         }
         Text(
           "Current validates the selected executable and falls back to its bundled arm64 Git when the custom path is unusable."
@@ -282,6 +288,9 @@ struct CurrentSettingsView: View {
         Text(updater.statusDescription)
           .font(.caption)
           .foregroundStyle(.secondary)
+          .lineLimit(3)
+          .truncationMode(.tail)
+          .help(updater.statusDescription)
       }
     }
     .formStyle(.grouped)
@@ -344,6 +353,22 @@ struct CurrentSettingsView: View {
   }
 }
 
+private struct SettingsValueRow: View {
+  let title: String
+  let value: String
+
+  var body: some View {
+    LabeledContent(title) {
+      Text(value)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .help(value)
+        .frame(maxWidth: 360, alignment: .trailing)
+        .clipped()
+    }
+  }
+}
+
 private struct DiagnosticBundlePreviewView: View {
   let model: AppModel
   @Environment(\.dismiss) private var dismiss
@@ -381,6 +406,8 @@ private struct DiagnosticBundlePreviewView: View {
                 VStack(alignment: .leading, spacing: 2) {
                   Text(entry.element.lastPathComponent)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(entry.element.lastPathComponent)
                   Text(
                     ByteCountFormatter.string(
                       fromByteCount:
@@ -438,10 +465,16 @@ private struct DiagnosticBundlePreviewView: View {
           Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
             .foregroundStyle(.red)
             .lineLimit(2)
+            .truncationMode(.tail)
+            .help(errorMessage)
+            .layoutPriority(1)
         } else if let statusMessage {
           Label(statusMessage, systemImage: "checkmark.circle.fill")
             .foregroundStyle(.green)
             .lineLimit(2)
+            .truncationMode(.middle)
+            .help(statusMessage)
+            .layoutPriority(1)
         }
         Spacer()
         Button("Cancel", role: .cancel) {

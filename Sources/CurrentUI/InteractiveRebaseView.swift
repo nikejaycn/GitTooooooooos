@@ -62,6 +62,9 @@ public struct InteractiveRebaseView: View {
             .font(.caption)
             .foregroundStyle(.orange)
             .lineLimit(2)
+            .truncationMode(.tail)
+            .help(validationMessage)
+            .layoutPriority(1)
         } else {
           Text("Git creates an undo reference before rewriting history.")
             .font(.caption)
@@ -111,6 +114,9 @@ public struct InteractiveRebaseView: View {
                 .foregroundStyle(.secondary)
               Text(step.subject)
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .help(step.subject)
+                .layoutPriority(1)
             }
             if step.action == .reword {
               TextField(

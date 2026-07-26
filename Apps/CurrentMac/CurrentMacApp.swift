@@ -297,7 +297,10 @@ private struct CurrentWorkspaceWindow: View {
       removeRemote: model.removeRemote,
       forcePushWithLease: model.forcePushWithLease
     )
-    .frame(minWidth: 880, minHeight: 560)
+    .frame(
+      minWidth: CurrentUILayout.minimumWindowWidth,
+      minHeight: CurrentUILayout.minimumWindowHeight
+    )
     .preferredColorScheme(model.appearance.colorScheme)
     .onOpenURL(perform: model.openRepositoryURL)
     .onChange(of: model.repositoryPath) { _, repositoryPath in

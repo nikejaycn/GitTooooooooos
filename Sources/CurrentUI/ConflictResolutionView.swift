@@ -26,6 +26,9 @@ struct ConflictResolutionView: View {
           Text(path.displayString)
             .font(.caption.monospaced())
             .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(path.displayString)
         }
         Spacer()
         if isLoading || isSaving {
@@ -86,6 +89,9 @@ struct ConflictResolutionView: View {
         Text(errorMessage)
           .font(.caption)
           .foregroundStyle(.red)
+          .lineLimit(3)
+          .truncationMode(.tail)
+          .help(errorMessage)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal)
           .padding(.vertical, 8)
