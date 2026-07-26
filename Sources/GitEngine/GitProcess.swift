@@ -136,16 +136,25 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
       .appendingPathComponent("share", isDirectory: true)
       .appendingPathComponent("git-core", isDirectory: true)
       .appendingPathComponent("templates", isDirectory: true)
+    let systemConfigPath =
+      bundleRoot
+      .appendingPathComponent("share", isDirectory: true)
+      .appendingPathComponent("current", isDirectory: true)
+      .appendingPathComponent("gitconfig")
 
     if FileManager.default.fileExists(atPath: execPath.path) {
       let inheritedPath =
         ProcessInfo.processInfo.environment["PATH"]
         ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-      self.runtimeEnvironment = [
+      var runtimeEnvironment: [String: String?] = [
         "PATH": "\(binDirectory.path):\(inheritedPath)",
         "GIT_EXEC_PATH": execPath.path,
         "GIT_TEMPLATE_DIR": templatePath.path,
       ]
+      if FileManager.default.fileExists(atPath: systemConfigPath.path) {
+        runtimeEnvironment["GIT_CONFIG_SYSTEM"] = systemConfigPath.path
+      }
+      self.runtimeEnvironment = runtimeEnvironment
     } else {
       self.runtimeEnvironment = [:]
     }

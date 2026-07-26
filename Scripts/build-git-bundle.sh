@@ -89,6 +89,19 @@ make -C "$source_dir/git-$git_version" \
   DESTDIR="$install_root" \
   install
 
+make -C "$source_dir/git-$git_version" -j"$jobs" \
+  prefix=/ \
+  RUNTIME_PREFIX=YesPlease \
+  NO_GETTEXT=YesPlease \
+  NO_TCLTK=YesPlease \
+  NO_PERL=YesPlease \
+  NO_PYTHON=YesPlease \
+  NO_RUST=YesPlease \
+  NO_INSTALL_HARDLINKS=YesPlease \
+  CFLAGS="-O2 -mmacosx-version-min=14.0 -arch arm64" \
+  LDFLAGS="-mmacosx-version-min=14.0 -arch arm64" \
+  contrib/credential/osxkeychain/git-credential-osxkeychain
+
 mkdir -p "$bundle_dir"
 mv "$install_root/bin" "$bundle_dir/bin"
 if [ -d "$install_root/libexec" ]; then
@@ -97,6 +110,8 @@ fi
 if [ -d "$install_root/share" ]; then
   mv "$install_root/share" "$bundle_dir/share"
 fi
+cp "$source_dir/git-$git_version/contrib/credential/osxkeychain/git-credential-osxkeychain" \
+  "$bundle_dir/libexec/git-core/git-credential-osxkeychain"
 
 lfs_binary=$(find "$source_dir/git-lfs-$lfs_version" -type f -name git-lfs -perm +111 | head -1)
 if [ -z "$lfs_binary" ]; then
@@ -117,6 +132,8 @@ cp "$project_dir/Resources/GitBundle.sbom.cdx.json" \
   "$bundle_dir/share/current/GitBundle.sbom.cdx.json"
 cp "$project_dir/Resources/ThirdPartyNotices.md" \
   "$bundle_dir/share/current/ThirdPartyNotices.md"
+cp "$project_dir/Resources/GitBundle.gitconfig" \
+  "$bundle_dir/share/current/gitconfig"
 
 "$project_dir/Scripts/verify-git-bundle.sh" "$bundle_dir"
 echo "Git bundle ready at $bundle_dir"

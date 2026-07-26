@@ -72,6 +72,41 @@ private struct PartialDiscardRequest {
   let lineIndex: Int?
 }
 
+private enum WorkingCopyStatusFilter: String, CaseIterable, Identifiable {
+  case all
+  case staged
+  case unstaged
+  case untracked
+  case conflicted
+
+  var id: Self { self }
+
+  var title: String {
+    switch self {
+    case .all: "All"
+    case .staged: "Staged"
+    case .unstaged: "Unstaged"
+    case .untracked: "Untracked"
+    case .conflicted: "Conflicted"
+    }
+  }
+
+  func includes(_ change: FileChange) -> Bool {
+    switch self {
+    case .all:
+      true
+    case .staged:
+      change.isStaged
+    case .unstaged:
+      change.isUnstaged
+    case .untracked:
+      change.kind == .untracked
+    case .conflicted:
+      change.kind == .unmerged
+    }
+  }
+}
+
 private struct PartialDiscardDialogModifier: ViewModifier {
   @Binding var request: PartialDiscardRequest?
   let discardHunk: (DiffDocument, DiffHunk) -> Void
@@ -300,6 +335,7 @@ public struct CurrentRootView: View {
   @State private var pendingDiscard: GitPath?
   @State private var pendingPartialDiscard: PartialDiscardRequest?
   @State private var workingCopyFilter = ""
+  @State private var workingCopyStatusFilter: WorkingCopyStatusFilter = .all
   @State private var graphJumpOID: String?
   @State private var commitMessage = ""
   @State private var amendCommit = false
@@ -1770,20 +1806,27 @@ public struct CurrentRootView: View {
         description: Text("There are no staged or unstaged changes.")
       )
     } else {
-      let visibleChanges =
-        workingCopyFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? status.changes
-        : status.changes.filter {
-          $0.path.displayString.localizedCaseInsensitiveContains(
-            workingCopyFilter.trimmingCharacters(in: .whitespacesAndNewlines)
-          )
-        }
+      let pathQuery = workingCopyFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+      let visibleChanges = status.changes.filter { change in
+        workingCopyStatusFilter.includes(change)
+          && (pathQuery.isEmpty
+            || change.path.displayString.localizedCaseInsensitiveContains(pathQuery))
+      }
       HSplitView {
         VStack(spacing: 0) {
           HStack {
             TextField("Filter files", text: $workingCopyFilter)
               .textFieldStyle(.roundedBorder)
               .accessibilityLabel("Filter working copy files")
+            Picker("Status", selection: $workingCopyStatusFilter) {
+              ForEach(WorkingCopyStatusFilter.allCases) { filter in
+                Text(filter.title).tag(filter)
+              }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 112)
+            .accessibilityLabel("Filter working copy status")
             Button("Stash Selected…") {
               beginCreatingStash(paths: Array(activeSelectedStashPaths))
             }
@@ -1793,7 +1836,15 @@ public struct CurrentRootView: View {
           .frame(height: 34)
           Divider()
           if visibleChanges.isEmpty {
-            ContentUnavailableView.search(text: workingCopyFilter)
+            ContentUnavailableView(
+              "No Matching Changes",
+              systemImage: "line.3.horizontal.decrease.circle",
+              description: Text(
+                pathQuery.isEmpty
+                  ? "No \(workingCopyStatusFilter.title.lowercased()) changes are available."
+                  : "No \(workingCopyStatusFilter.title.lowercased()) changes match “\(pathQuery)”."
+              )
+            )
           } else {
             List(visibleChanges, selection: $selectedStashPaths) { change in
               HStack {

@@ -9,9 +9,11 @@ fi
 bundle_dir=$(CDPATH= cd -- "$1" && pwd)
 git="$bundle_dir/bin/git"
 lfs="$bundle_dir/bin/git-lfs"
+keychain_helper="$bundle_dir/libexec/git-core/git-credential-osxkeychain"
+system_config="$bundle_dir/share/current/gitconfig"
 
-if [ ! -x "$git" ] || [ ! -x "$lfs" ]; then
-  echo "error: bundle must contain executable bin/git and bin/git-lfs" >&2
+if [ ! -x "$git" ] || [ ! -x "$lfs" ] || [ ! -x "$keychain_helper" ]; then
+  echo "error: bundle must contain executable Git, Git LFS, and osxkeychain helper" >&2
   exit 1
 fi
 
@@ -23,9 +25,28 @@ case $(file "$git") in
     ;;
 esac
 
+case $(file "$keychain_helper") in
+  *arm64*) ;;
+  *)
+    echo "error: bundled osxkeychain helper is not arm64" >&2
+    exit 1
+    ;;
+esac
+
 if otool -L "$git" | grep -E '/opt/homebrew|/usr/local' >/dev/null; then
   echo "error: bundled Git links to a package-manager path" >&2
   otool -L "$git" >&2
+  exit 1
+fi
+
+if ! otool -L "$keychain_helper" | grep '/System/Library/Frameworks/Security.framework/' >/dev/null; then
+  echo "error: bundled osxkeychain helper does not link Security.framework" >&2
+  exit 1
+fi
+
+if [ ! -f "$system_config" ] ||
+  [ "$("$git" config --file "$system_config" --get credential.helper)" != "osxkeychain" ]; then
+  echo "error: bundled Git system config must default HTTPS credentials to Keychain" >&2
   exit 1
 fi
 
