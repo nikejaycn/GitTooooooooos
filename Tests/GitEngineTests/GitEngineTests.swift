@@ -474,6 +474,55 @@ struct GitEngineTests {
     #expect(commands[2].redactedDescription.hasSuffix("\(base) \(target) --"))
   }
 
+  @Test("Commit diff resolves revisions and preserves rename pathspecs")
+  func commitDiff() async throws {
+    let base = String(repeating: "a", count: 40)
+    let target = String(repeating: "b", count: 40)
+    let output = """
+      diff --git a/old name.swift b/new name.swift
+      --- a/old name.swift
+      +++ b/new name.swift
+      @@ -1 +1 @@
+      -old
+      +new
+
+      """
+    let runner = StubRunner(
+      results: [
+        .success("\(base)\n"),
+        .success("\(target)\n"),
+        .success(output),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let document = try await engine.commitDiff(
+      at: location,
+      base: base,
+      target: target,
+      path: GitPath("new name.swift"),
+      oldPath: GitPath("old name.swift"),
+      options: DiffOptions(
+        ignoresWhitespaceChanges: true,
+        ignoresEndOfLineWhitespace: true
+      )
+    )
+
+    #expect(document.path == GitPath("new name.swift"))
+    #expect(document.changedLineCount == 2)
+    let commands = await runner.commands()
+    #expect(commands.count == 3)
+    #expect(
+      commands[2].redactedDescription.contains(
+        "--ignore-all-space --ignore-space-at-eol \(base) \(target) -- old name.swift new name.swift"
+      )
+    )
+  }
+
   @Test("File history follows renames with an option-safe raw path")
   func fileHistory() async throws {
     let oid = String(repeating: "a", count: 40)
@@ -1060,6 +1109,48 @@ struct GitEngineTests {
       command.redactedDescription.contains(
         "--cached --ignore-all-space --ignore-space-at-eol -- file.txt"
       ))
+  }
+
+  @Test("Reads an untracked file as a diff from dev null")
+  func untrackedDiff() async throws {
+    let output = """
+      diff --git a/new file.txt b/new file.txt
+      new file mode 100644
+      --- /dev/null
+      +++ b/new file.txt
+      @@ -0,0 +1 @@
+      +new
+
+      """
+    let runner = StubRunner(
+      results: [
+        GitProcessResult(
+          termination: .exited(1),
+          standardOutput: Array(output.utf8),
+          standardError: [],
+          duration: .milliseconds(1)
+        )
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let document = try await engine.diff(
+      at: location,
+      path: GitPath("new file.txt"),
+      source: .untracked
+    )
+
+    #expect(document.source == .untracked)
+    #expect(document.changedLineCount == 1)
+    #expect(
+      await runner.commands().first?.redactedDescription.contains(
+        "--no-index -- /dev/null new file.txt"
+      ) == true
+    )
   }
 
   @Test("External unstaged diff reads the index and working tree without a shell")

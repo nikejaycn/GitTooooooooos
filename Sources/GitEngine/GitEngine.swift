@@ -141,6 +141,14 @@ public protocol GitEngineProtocol: Sendable {
     source: DiffSource,
     options: DiffOptions
   ) async throws -> DiffDocument
+  func commitDiff(
+    at location: RepositoryLocation,
+    base: String,
+    target: String,
+    path: GitPath,
+    oldPath: GitPath?,
+    options: DiffOptions
+  ) async throws -> DiffDocument
   func fileHistory(
     at location: RepositoryLocation,
     path: GitPath,
@@ -324,6 +332,17 @@ extension GitEngineProtocol {
     target: String
   ) async throws -> [CommitFileChange] {
     throw GitEngineError.invalidOutput("Commit comparison is not implemented.")
+  }
+
+  public func commitDiff(
+    at location: RepositoryLocation,
+    base: String,
+    target: String,
+    path: GitPath,
+    oldPath: GitPath?,
+    options: DiffOptions
+  ) async throws -> DiffDocument {
+    throw GitEngineError.invalidOutput("Commit diff is not implemented.")
   }
 
   public func fileHistory(
@@ -1110,6 +1129,8 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     ]
     if source == .staged {
       prefix.append("--cached")
+    } else if source == .untracked {
+      prefix.append("--no-index")
     }
     if options.ignoresWhitespaceChanges {
       prefix.append("--ignore-all-space")
@@ -1118,20 +1139,83 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       prefix.append("--ignore-space-at-eol")
     }
     prefix.append("--")
-    let result = try await execute(
-      GitCommand(
-        rawArguments: prefix.map { Array($0.utf8) } + [path.rawBytes],
-        workingDirectory: location.worktreeURL,
-        outputLimit: 64 * 1024 * 1024,
-        timeout: .seconds(120)
-      )
+    let rawPaths =
+      source == .untracked
+      ? [Array("/dev/null".utf8), path.rawBytes]
+      : [path.rawBytes]
+    let command = GitCommand(
+      rawArguments: prefix.map { Array($0.utf8) } + rawPaths,
+      workingDirectory: location.worktreeURL,
+      outputLimit: 64 * 1024 * 1024,
+      timeout: .seconds(120)
     )
+    let result: GitProcessResult
+    if source == .untracked {
+      result = try await runner.run(command)
+      guard result.termination == .exited(0) || result.termination == .exited(1) else {
+        throw GitEngineError.commandFailed(
+          arguments: command.redactedDescription,
+          message: command.redactingSecrets(in: result.errorDescription)
+        )
+      }
+    } else {
+      result = try await execute(command)
+    }
 
     do {
       return try UnifiedDiffParser().parse(
         result.standardOutput,
         path: path,
         source: source
+      )
+    } catch {
+      throw GitEngineError.invalidOutput(String(describing: error))
+    }
+  }
+
+  public func commitDiff(
+    at location: RepositoryLocation,
+    base: String,
+    target: String,
+    path: GitPath,
+    oldPath: GitPath?,
+    options: DiffOptions = DiffOptions()
+  ) async throws -> DiffDocument {
+    let paths = [oldPath, path].compactMap { $0 }
+    guard
+      paths.allSatisfy({ !$0.rawBytes.isEmpty && !$0.rawBytes.contains(0) })
+    else {
+      throw GitEngineError.invalidOutput("A diff path was empty or contained a NUL byte.")
+    }
+    let baseOID = try await resolveCommit(base, at: location)
+    let targetOID = try await resolveCommit(target, at: location)
+    var prefix = [
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--no-renames",
+      "--unified=3",
+    ]
+    if options.ignoresWhitespaceChanges {
+      prefix.append("--ignore-all-space")
+    }
+    if options.ignoresEndOfLineWhitespace {
+      prefix.append("--ignore-space-at-eol")
+    }
+    prefix += [baseOID, targetOID, "--"]
+    let result = try await execute(
+      GitCommand(
+        rawArguments: prefix.map { Array($0.utf8) } + paths.map(\.rawBytes),
+        workingDirectory: location.worktreeURL,
+        outputLimit: 64 * 1024 * 1024,
+        timeout: .seconds(120)
+      )
+    )
+    do {
+      return try UnifiedDiffParser().parse(
+        result.standardOutput,
+        path: path,
+        source: .staged
       )
     } catch {
       throw GitEngineError.invalidOutput(String(describing: error))
@@ -2471,6 +2555,10 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       let fileURL = try workingTreeFileURL(at: location, path: path)
       let after = try? Array(Data(contentsOf: fileURL))
       return try await ExternalDiffContents(path: path, before: before, after: after)
+    case .untracked:
+      let fileURL = try workingTreeFileURL(at: location, path: path)
+      let after = try? Array(Data(contentsOf: fileURL))
+      return ExternalDiffContents(path: path, before: nil, after: after)
     }
   }
 

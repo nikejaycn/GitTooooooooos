@@ -93,8 +93,11 @@ final class AppModel {
   private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
   private(set) var selectedDiff: DiffDocument?
+  private(set) var selectedCommitDiff: DiffDocument?
+  private(set) var selectedCommitDiffComparison: CommitComparison?
   private(set) var diffOptions = DiffOptions()
   private(set) var isDiffLoading = false
+  private(set) var isCommitDiffLoading = false
   private(set) var fileHistory: FileHistoryResult?
   private(set) var blameDocument: BlameDocument?
   private(set) var isFileHistoryLoading = false
@@ -119,6 +122,9 @@ final class AppModel {
   private var commitComparisonRequestID: UUID?
   private var diffRequestID: UUID?
   private var selectedDiffChange: FileChange?
+  private var commitDiffTask: Task<Void, Never>?
+  private var commitDiffRequestID: UUID?
+  private var selectedCommitDiffFile: CommitFileChange?
   private var fileHistoryTask: Task<Void, Never>?
   private var fileHistoryRequestID: UUID?
   private var blameTask: Task<Void, Never>?
@@ -709,6 +715,7 @@ final class AppModel {
   }
 
   func compareSelectedCommits(_ commitOIDs: [String]) {
+    clearCommitDiff()
     commitComparisonTask?.cancel()
     commitComparisonTask = nil
     commitComparisonRequestID = nil
@@ -847,13 +854,16 @@ final class AppModel {
   }
 
   func loadDiff(_ change: FileChange) {
-    guard let repository, change.kind != .untracked else {
+    guard let repository else {
       selectedDiff = nil
       selectedDiffChange = nil
       return
     }
     selectedDiffChange = change
-    let source: DiffSource = change.isUnstaged ? .unstaged : .staged
+    let source: DiffSource =
+      change.kind == .untracked
+      ? .untracked
+      : change.isUnstaged ? .unstaged : .staged
     let requestID = UUID()
     diffRequestID = requestID
     isDiffLoading = true
@@ -877,6 +887,71 @@ final class AppModel {
     }
   }
 
+  func loadCommitDiff(_ file: CommitFileChange, comparison: CommitComparison) {
+    guard
+      let repository,
+      repositoryStatus?.generation == comparison.generation
+    else {
+      clearCommitDiff()
+      return
+    }
+    selectedCommitDiff = nil
+    selectedCommitDiffFile = file
+    selectedCommitDiffComparison = comparison
+    commitDiffTask?.cancel()
+    let requestID = UUID()
+    let sessionID = repositorySessionID
+    commitDiffRequestID = requestID
+    isCommitDiffLoading = true
+    commitDiffTask = Task {
+      defer {
+        if commitDiffRequestID == requestID {
+          isCommitDiffLoading = false
+          commitDiffTask = nil
+        }
+      }
+      do {
+        let document = try await repository.commitDiff(
+          base: comparison.baseOID,
+          target: comparison.targetOID,
+          path: file.path,
+          oldPath: file.oldPath,
+          options: diffOptions,
+          generation: comparison.generation
+        )
+        guard
+          commitDiffRequestID == requestID,
+          repositorySessionID == sessionID,
+          repositoryStatus?.generation == comparison.generation
+        else {
+          return
+        }
+        selectedCommitDiff = document
+      } catch is CancellationError {
+        return
+      } catch {
+        guard
+          commitDiffRequestID == requestID,
+          repositorySessionID == sessionID
+        else {
+          return
+        }
+        selectedCommitDiff = nil
+        errorMessage = error.localizedDescription
+      }
+    }
+  }
+
+  func clearCommitDiff() {
+    commitDiffTask?.cancel()
+    commitDiffTask = nil
+    commitDiffRequestID = nil
+    selectedCommitDiff = nil
+    selectedCommitDiffFile = nil
+    selectedCommitDiffComparison = nil
+    isCommitDiffLoading = false
+  }
+
   func setDiffOptions(_ options: DiffOptions) {
     guard options != diffOptions else { return }
     diffOptions = options
@@ -890,6 +965,9 @@ final class AppModel {
     )
     if let selectedDiffChange {
       loadDiff(selectedDiffChange)
+    }
+    if let selectedCommitDiffFile, let selectedCommitDiffComparison {
+      loadCommitDiff(selectedCommitDiffFile, comparison: selectedCommitDiffComparison)
     }
   }
 
@@ -2290,6 +2368,7 @@ final class AppModel {
   }
 
   private func clearCommitComparison() {
+    clearCommitDiff()
     commitComparisonTask?.cancel()
     commitComparisonTask = nil
     commitComparisonRequestID = nil

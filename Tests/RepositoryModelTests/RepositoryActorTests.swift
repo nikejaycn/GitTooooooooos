@@ -176,6 +176,44 @@ struct RepositoryActorTests {
     )
   }
 
+  @Test("Commit diffs publish only for the requested generation")
+  func commitDiffGeneration() async throws {
+    let document = DiffDocument(
+      path: GitPath("README.md"),
+      source: .staged,
+      hunks: [],
+      isBinary: false,
+      rawText: "diff"
+    )
+    let engine = StubGitEngine(commitDiffDocument: document)
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    let snapshot = try await repository.refreshSnapshot()
+
+    #expect(
+      try await repository.commitDiff(
+        base: String(repeating: "a", count: 40),
+        target: String(repeating: "b", count: 40),
+        path: GitPath("README.md"),
+        oldPath: nil,
+        generation: snapshot.generation
+      ) == document
+    )
+
+    await repository.invalidate()
+    #expect(
+      try await repository.commitDiff(
+        base: String(repeating: "a", count: 40),
+        target: String(repeating: "b", count: 40),
+        path: GitPath("README.md"),
+        oldPath: nil,
+        generation: snapshot.generation
+      ) == nil
+    )
+  }
+
   @Test("File history and blame pages are generation-bound and blame is paginated")
   func fileInsightsGenerationAndPaging() async throws {
     let commit = CommitSummary(
@@ -715,6 +753,7 @@ private actor StubGitEngine: GitEngineProtocol {
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
   private let comparisonFiles: [CommitFileChange]
+  private let commitDiffDocument: DiffDocument?
   private let fileHistoryEntries: [FileHistoryEntry]
   private let blameLines: [BlameLine]
   private let repositoryWorktrees: [GitWorktree]
@@ -725,6 +764,7 @@ private actor StubGitEngine: GitEngineProtocol {
     statusDelays: [UInt64: Duration] = [:],
     history: [CommitSummary] = [],
     comparisonFiles: [CommitFileChange] = [],
+    commitDiffDocument: DiffDocument? = nil,
     fileHistoryEntries: [FileHistoryEntry] = [],
     blameLines: [BlameLine] = [],
     worktrees: [GitWorktree] = [],
@@ -734,6 +774,7 @@ private actor StubGitEngine: GitEngineProtocol {
     self.statusDelays = statusDelays
     historyCommits = history
     self.comparisonFiles = comparisonFiles
+    self.commitDiffDocument = commitDiffDocument
     self.fileHistoryEntries = fileHistoryEntries
     self.blameLines = blameLines
     repositoryWorktrees = worktrees
@@ -791,6 +832,17 @@ private actor StubGitEngine: GitEngineProtocol {
     target: String
   ) async throws -> [CommitFileChange] {
     comparisonFiles
+  }
+
+  func commitDiff(
+    at location: RepositoryLocation,
+    base: String,
+    target: String,
+    path: GitPath,
+    oldPath: GitPath?,
+    options: DiffOptions
+  ) async throws -> DiffDocument {
+    try #require(commitDiffDocument)
   }
 
   func fileHistory(

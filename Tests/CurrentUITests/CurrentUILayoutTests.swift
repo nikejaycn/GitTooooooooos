@@ -36,6 +36,20 @@ struct CurrentUILayoutTests {
     #expect(CurrentUILayout.inspectorMinimumWidth >= 220)
   }
 
+  @Test("Resizable sidebars expose a meaningful drag range")
+  func resizableSidebarRanges() {
+    #expect(CurrentUILayout.sidebarMinimumWidth < CurrentUILayout.sidebarIdealWidth)
+    #expect(CurrentUILayout.sidebarIdealWidth < CurrentUILayout.sidebarMaximumWidth)
+    #expect(
+      CurrentUILayout.workingCopyListMinimumWidth
+        < CurrentUILayout.workingCopyListIdealWidth
+    )
+    #expect(
+      CurrentUILayout.workingCopyListIdealWidth
+        < CurrentUILayout.workingCopyListMaximumWidth
+    )
+  }
+
   @Test("Variable-height chrome stays bounded at the minimum window")
   func verticalChromeLeavesAdaptiveRoom() {
     #expect(

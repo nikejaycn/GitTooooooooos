@@ -154,6 +154,27 @@ public actor RepositoryActor {
     try await engine.diff(at: location, path: path, source: source, options: options)
   }
 
+  public func commitDiff(
+    base: String,
+    target: String,
+    path: GitPath,
+    oldPath: GitPath?,
+    options: DiffOptions = DiffOptions(),
+    generation requestedGeneration: RepositoryGeneration
+  ) async throws -> DiffDocument? {
+    guard requestedGeneration == generation else { return nil }
+    let document = try await engine.commitDiff(
+      at: location,
+      base: base,
+      target: target,
+      path: path,
+      oldPath: oldPath,
+      options: options
+    )
+    guard requestedGeneration == generation else { return nil }
+    return document
+  }
+
   public func fileHistory(
     for path: GitPath,
     limit: Int,
@@ -380,10 +401,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
-      }
-    ) { engine, location in
+      },
+      operation: { engine, location in
         try await engine.applyPatch(at: location, fileURL: fileURL)
       }
+    )
   }
 
   @discardableResult
@@ -459,10 +481,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
-      }
-    ) { engine, location in
+      },
+      operation: { engine, location in
         try await engine.mutateTag(at: location, mutation: mutation)
       }
+    )
   }
 
   @discardableResult
@@ -478,10 +501,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
-      }
-    ) { engine, location in
+      },
+      operation: { engine, location in
         try await engine.mutateStash(at: location, mutation: mutation)
       }
+    )
   }
 
   @discardableResult
@@ -497,10 +521,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
-      }
-    ) { engine, location in
+      },
+      operation: { engine, location in
         try await engine.mutateWorktree(at: location, mutation: mutation)
       }
+    )
   }
 
   @discardableResult
@@ -516,10 +541,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
-      }
-    ) { engine, location in
+      },
+      operation: { engine, location in
         try await engine.mutateSubmodule(at: location, mutation: mutation)
       }
+    )
   }
 
   @discardableResult
@@ -535,10 +561,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
-      }
-    ) { engine, location in
+      },
+      operation: { engine, location in
         try await engine.mutateLFS(at: location, mutation: mutation)
       }
+    )
   }
 
   @discardableResult
@@ -564,10 +591,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
+      },
+      operation: { engine, location in
+        try await engine.mutateMerge(at: location, mutation: mutation)
       }
-    ) { engine, location in
-      try await engine.mutateMerge(at: location, mutation: mutation)
-    }
+    )
   }
 
   @discardableResult
@@ -715,10 +743,11 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
-      }
-    ) { engine, location in
+      },
+      operation: { engine, location in
         try await engine.applyHunk(at: location, hunk: hunk, source: source)
-    }
+      }
+    )
   }
 
   @discardableResult
@@ -735,14 +764,15 @@ public actor RepositoryActor {
           generation: generation,
           at: location
         )
+      },
+      operation: { engine, location in
+        try await engine.discardHunk(
+          at: location,
+          hunk: hunk,
+          path: path
+        )
       }
-    ) { engine, location in
-      try await engine.discardHunk(
-        at: location,
-        hunk: hunk,
-        path: path
-      )
-    }
+    )
   }
 
   private func applyRepositoryMutation(

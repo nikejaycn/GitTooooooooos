@@ -9,6 +9,7 @@ public enum DiffPresentation: String, Hashable, Sendable, Codable {
 public enum DiffSource: String, Hashable, Sendable, Codable {
   case unstaged
   case staged
+  case untracked
 }
 
 public struct DiffOptions: Hashable, Sendable, Codable {

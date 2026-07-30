@@ -10,8 +10,10 @@ public enum CurrentUILayout {
 
   static let sidebarMinimumWidth: CGFloat = 180
   static let sidebarIdealWidth: CGFloat = 220
+  static let sidebarMaximumWidth: CGFloat = 420
   static let workingCopyListMinimumWidth: CGFloat = 230
   static let workingCopyListIdealWidth: CGFloat = 300
+  static let workingCopyListMaximumWidth: CGFloat = 520
   static let diffMinimumWidth: CGFloat = 300
   static let fileHistoryMinimumWidth: CGFloat = 230
   static let blameMinimumWidth: CGFloat = 320

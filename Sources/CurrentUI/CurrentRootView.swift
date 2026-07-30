@@ -275,10 +275,13 @@ public struct CurrentRootView: View {
   private let recentRepositories: [RecentRepository]
   private let lastRecoveryReference: RecoveryReference?
   private let selectedDiff: DiffDocument?
+  private let selectedCommitDiff: DiffDocument?
+  private let selectedCommitDiffComparison: CommitComparison?
   private let diffOptions: DiffOptions
   private let externalDiffTool: ExternalTool
   private let externalMergeTool: ExternalTool
   private let isDiffLoading: Bool
+  private let isCommitDiffLoading: Bool
   private let fileHistory: FileHistoryResult?
   private let blameDocument: BlameDocument?
   private let isFileHistoryLoading: Bool
@@ -313,6 +316,8 @@ public struct CurrentRootView: View {
   private let exportPatch: (String) -> Void
   private let applyPatch: () -> Void
   private let loadDiff: (FileChange) -> Void
+  private let loadCommitDiff: (CommitFileChange, CommitComparison) -> Void
+  private let clearCommitDiff: () -> Void
   private let setDiffOptions: (DiffOptions) -> Void
   private let openExternalDiff: (DiffDocument) -> Void
   private let loadFileInsights: (GitPath) -> Void
@@ -480,10 +485,13 @@ public struct CurrentRootView: View {
     recentRepositories: [RecentRepository],
     lastRecoveryReference: RecoveryReference?,
     selectedDiff: DiffDocument?,
+    selectedCommitDiff: DiffDocument?,
+    selectedCommitDiffComparison: CommitComparison?,
     diffOptions: DiffOptions,
     externalDiffTool: ExternalTool,
     externalMergeTool: ExternalTool,
     isDiffLoading: Bool,
+    isCommitDiffLoading: Bool,
     fileHistory: FileHistoryResult?,
     blameDocument: BlameDocument?,
     isFileHistoryLoading: Bool,
@@ -518,6 +526,8 @@ public struct CurrentRootView: View {
     exportPatch: @escaping (String) -> Void,
     applyPatch: @escaping () -> Void,
     loadDiff: @escaping (FileChange) -> Void,
+    loadCommitDiff: @escaping (CommitFileChange, CommitComparison) -> Void,
+    clearCommitDiff: @escaping () -> Void,
     setDiffOptions: @escaping (DiffOptions) -> Void,
     openExternalDiff: @escaping (DiffDocument) -> Void,
     loadFileInsights: @escaping (GitPath) -> Void,
@@ -612,10 +622,13 @@ public struct CurrentRootView: View {
     self.recentRepositories = recentRepositories
     self.lastRecoveryReference = lastRecoveryReference
     self.selectedDiff = selectedDiff
+    self.selectedCommitDiff = selectedCommitDiff
+    self.selectedCommitDiffComparison = selectedCommitDiffComparison
     self.diffOptions = diffOptions
     self.externalDiffTool = externalDiffTool
     self.externalMergeTool = externalMergeTool
     self.isDiffLoading = isDiffLoading
+    self.isCommitDiffLoading = isCommitDiffLoading
     self.fileHistory = fileHistory
     self.blameDocument = blameDocument
     self.isFileHistoryLoading = isFileHistoryLoading
@@ -650,6 +663,8 @@ public struct CurrentRootView: View {
     self.exportPatch = exportPatch
     self.applyPatch = applyPatch
     self.loadDiff = loadDiff
+    self.loadCommitDiff = loadCommitDiff
+    self.clearCommitDiff = clearCommitDiff
     self.setDiffOptions = setDiffOptions
     self.openExternalDiff = openExternalDiff
     self.loadFileInsights = loadFileInsights
@@ -718,7 +733,7 @@ public struct CurrentRootView: View {
   }
 
   public var body: some View {
-    HStack(spacing: 0) {
+    HSplitView {
       if isSidebarVisible {
         List(selection: $workspace) {
           Section("Repository") {
@@ -967,14 +982,17 @@ public struct CurrentRootView: View {
           }
         }
         .listStyle(.sidebar)
-        .frame(width: CurrentUILayout.sidebarIdealWidth)
-
-        Divider()
+        .frame(
+          minWidth: CurrentUILayout.sidebarMinimumWidth,
+          idealWidth: CurrentUILayout.sidebarIdealWidth,
+          maxWidth: CurrentUILayout.sidebarMaximumWidth
+        )
       }
 
       content
         .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .layoutPriority(1)
         .toolbar {
           ToolbarItem(placement: .navigation) {
             Button {
@@ -1393,6 +1411,14 @@ public struct CurrentRootView: View {
         dismiss: { isShowingCommandPalette = false }
       )
     }
+    .sheet(
+      isPresented: Binding(
+        get: { isCommitDiffLoading || selectedCommitDiff != nil },
+        set: { if !$0 { clearCommitDiff() } }
+      )
+    ) {
+      commitDiffViewer
+    }
     .sheet(item: $stashRequest) { request in
       StashCreationView(
         paths: request.paths,
@@ -1413,6 +1439,113 @@ public struct CurrentRootView: View {
           execute: runInteractiveRebase,
           dismiss: { pendingInteractiveRebaseOID = nil }
         )
+      }
+    }
+  }
+
+  private var commitDiffViewer: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text(selectedCommitDiff?.path.displayString ?? "Loading file diff…")
+            .font(.headline)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          if let comparison = selectedCommitDiffComparison {
+            Text("\(comparison.baseOID.prefix(12)) → \(comparison.targetOID.prefix(12))")
+              .font(.system(.caption, design: .monospaced))
+              .foregroundStyle(.secondary)
+          }
+        }
+        .layoutPriority(1)
+        Spacer(minLength: 8)
+        Picker("Diff presentation", selection: $diffPresentation) {
+          Text("Unified").tag(DiffPresentation.unified)
+          Text("Side-by-Side").tag(DiffPresentation.split)
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 170)
+        Menu {
+          Toggle(
+            "Ignore Whitespace Changes",
+            isOn: Binding(
+              get: { diffOptions.ignoresWhitespaceChanges },
+              set: { enabled in
+                setDiffOptions(
+                  DiffOptions(
+                    ignoresWhitespaceChanges: enabled,
+                    ignoresEndOfLineWhitespace: diffOptions.ignoresEndOfLineWhitespace
+                  )
+                )
+              }
+            )
+          )
+          Toggle(
+            "Ignore End-of-Line Whitespace",
+            isOn: Binding(
+              get: { diffOptions.ignoresEndOfLineWhitespace },
+              set: { enabled in
+                setDiffOptions(
+                  DiffOptions(
+                    ignoresWhitespaceChanges: diffOptions.ignoresWhitespaceChanges,
+                    ignoresEndOfLineWhitespace: enabled
+                  )
+                )
+              }
+            )
+          )
+        } label: {
+          Image(systemName: "textformat")
+        }
+        .menuStyle(.borderlessButton)
+        .help("Diff whitespace options")
+        Button("Done") {
+          clearCommitDiff()
+        }
+        .keyboardShortcut(.cancelAction)
+      }
+      .padding(12)
+      Divider()
+      if isCommitDiffLoading {
+        ProgressView("Loading commit diff…")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if let selectedCommitDiff {
+        readOnlyDiff(selectedCommitDiff)
+      } else {
+        ContentUnavailableView(
+          "Diff Unavailable",
+          systemImage: "doc.text.magnifyingglass",
+          description: Text("The selected commit comparison has no readable diff.")
+        )
+      }
+    }
+    .frame(minWidth: 760, minHeight: 520)
+  }
+
+  @ViewBuilder
+  private func readOnlyDiff(_ document: DiffDocument) -> some View {
+    switch diffPresentation {
+    case .unified:
+      DiffTextView(document: document)
+    case .split:
+      VStack(spacing: 0) {
+        HStack(spacing: 0) {
+          Label("Before", systemImage: "minus")
+            .foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+          Divider()
+          Label("After", systemImage: "plus")
+            .foregroundStyle(.green)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+        }
+        .font(.caption.weight(.semibold))
+        .frame(height: 28)
+        .background(.bar)
+        Divider()
+        SplitDiffTextView(document: document)
       }
     }
   }
@@ -2295,7 +2428,7 @@ public struct CurrentRootView: View {
           && (pathQuery.isEmpty
             || change.path.displayString.localizedCaseInsensitiveContains(pathQuery))
       }
-      HStack(spacing: 0) {
+      HSplitView {
         VStack(spacing: 0) {
           HStack {
             TextField("Filter files", text: $workingCopyFilter)
@@ -2406,11 +2539,14 @@ public struct CurrentRootView: View {
             }
           }
         }
-        .frame(width: CurrentUILayout.workingCopyListIdealWidth)
-
-        Divider()
+        .frame(
+          minWidth: CurrentUILayout.workingCopyListMinimumWidth,
+          idealWidth: CurrentUILayout.workingCopyListIdealWidth,
+          maxWidth: CurrentUILayout.workingCopyListMaximumWidth
+        )
         diffPane
           .frame(minWidth: CurrentUILayout.diffMinimumWidth)
+          .layoutPriority(1)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
       .onChange(of: status.changes.map(\.path)) { _, paths in
@@ -2936,7 +3072,7 @@ public struct CurrentRootView: View {
                   let commitOID = row.commitOID,
                   let parentOID = row.parentOIDs.first
                 {
-                  compareSelectedCommits([parentOID, commitOID])
+                  compareSelectedCommits([commitOID, parentOID])
                 } else {
                   compareSelectedCommits(commitOIDs)
                 }
@@ -3271,17 +3407,25 @@ public struct CurrentRootView: View {
       } else {
         LazyVStack(alignment: .leading, spacing: 7) {
           ForEach(commitComparison.files.prefix(40)) { file in
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-              Text(file.status)
-                .font(.system(.caption2, design: .monospaced, weight: .bold))
-                .foregroundStyle(comparisonColor(file.kind))
-                .frame(width: 28, alignment: .leading)
-              Text(file.path.displayString)
-                .font(.caption)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .help(file.path.displayString)
+            Button {
+              loadCommitDiff(file, commitComparison)
+            } label: {
+              HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text(file.status)
+                  .font(.system(.caption2, design: .monospaced, weight: .bold))
+                  .foregroundStyle(comparisonColor(file.kind))
+                  .frame(width: 28, alignment: .leading)
+                Text(file.path.displayString)
+                  .font(.caption)
+                  .lineLimit(2)
+                  .truncationMode(.middle)
+                Spacer(minLength: 0)
+              }
+              .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("View diff for \(file.path.displayString)")
+            .accessibilityLabel("View diff for \(file.path.displayString)")
           }
         }
       }
@@ -3343,6 +3487,7 @@ public struct CurrentRootView: View {
               .foregroundStyle(change.kind == .untracked ? .green : .orange)
               .frame(width: 12)
             Button {
+              workspace = .changes
               loadDiff(change)
             } label: {
               Text(change.path.displayString)
@@ -3419,29 +3564,34 @@ public struct CurrentRootView: View {
       } else {
         LazyVStack(alignment: .leading, spacing: 8) {
           ForEach(commitComparison.files) { file in
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-              Text(file.status)
-                .font(.system(.caption2, design: .monospaced, weight: .bold))
-                .foregroundStyle(comparisonColor(file.kind))
-                .frame(minWidth: 28, alignment: .leading)
-              VStack(alignment: .leading, spacing: 2) {
-                Text(file.path.displayString)
-                  .font(.caption)
-                  .textSelection(.enabled)
-                  .lineLimit(2)
-                  .truncationMode(.middle)
-                  .help(file.path.displayString)
-                if let oldPath = file.oldPath {
-                  Text("from \(oldPath.displayString)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+            Button {
+              loadCommitDiff(file, commitComparison)
+            } label: {
+              HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(file.status)
+                  .font(.system(.caption2, design: .monospaced, weight: .bold))
+                  .foregroundStyle(comparisonColor(file.kind))
+                  .frame(minWidth: 28, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                  Text(file.path.displayString)
+                    .font(.caption)
                     .lineLimit(2)
                     .truncationMode(.middle)
-                    .help(oldPath.displayString)
+                  if let oldPath = file.oldPath {
+                    Text("from \(oldPath.displayString)")
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(2)
+                      .truncationMode(.middle)
+                  }
                 }
+                Spacer(minLength: 0)
               }
+              .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("View diff for \(file.path.displayString)")
+            .accessibilityLabel("View diff for \(file.path.displayString)")
             Divider()
           }
         }
