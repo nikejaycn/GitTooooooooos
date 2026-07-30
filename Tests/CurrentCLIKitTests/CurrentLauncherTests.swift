@@ -16,11 +16,11 @@ struct CurrentLauncherTests {
   func explicitPaths() throws {
     let base = URL(fileURLWithPath: "/tmp/work", isDirectory: true)
     let request = try CurrentLaunchRequest.parse(
-      ["open", "../repo with spaces", "--app", "/tmp/Build/Current.app"],
+      ["open", "../repo with spaces", "--app", "/tmp/Build/GitCurrent.app"],
       currentDirectoryURL: base
     )
     #expect(request.repositoryURL.path == "/tmp/repo with spaces")
-    #expect(request.applicationURL?.path == "/tmp/Build/Current.app")
+    #expect(request.applicationURL?.path == "/tmp/Build/GitCurrent.app")
   }
 
   @Test("Rejects extra arguments and missing option values")

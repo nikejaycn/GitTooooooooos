@@ -120,7 +120,7 @@ struct CurrentSettingsView: View {
             .help(reason)
         }
         Text(
-          "Current validates the selected executable and falls back to its bundled arm64 Git when the custom path is unusable."
+          "GitCurrent validates the selected executable and falls back to its bundled arm64 Git when the custom path is unusable."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -270,7 +270,7 @@ struct CurrentSettingsView: View {
           )
         )
         Text(
-          "Current restores protected changes after a successful operation and keeps the stash when restoration conflicts. Checkout protection also includes untracked files."
+          "GitCurrent restores protected changes after a successful operation and keeps the stash when restoration conflicts. Checkout protection also includes untracked files."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -283,7 +283,7 @@ struct CurrentSettingsView: View {
           isShowingDiagnosticPreview = true
         }
         Text(
-          "Core Git workflows stay local. Current never collects or uploads diagnostics automatically. Export is always manual."
+          "Core Git workflows stay local. GitCurrent never collects or uploads diagnostics automatically. Export is always manual."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -530,7 +530,7 @@ private struct DiagnosticBundlePreviewView: View {
     let panel = NSSavePanel()
     panel.title = "Export Diagnostic Bundle"
     panel.prompt = "Export"
-    panel.nameFieldStringValue = "Current-Diagnostics.zip"
+    panel.nameFieldStringValue = "GitCurrent-Diagnostics.zip"
     panel.canCreateDirectories = true
     guard panel.runModal() == .OK, let url = panel.url else { return }
 

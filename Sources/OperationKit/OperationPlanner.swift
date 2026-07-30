@@ -1252,7 +1252,7 @@ public enum OperationPlanner {
         undoImpact = .worktreeOnly
       case .stashEntry:
         command = [
-          "stash", "store", "-m", "Recovered by Current",
+          "stash", "store", "-m", "Recovered by GitCurrent",
           reference.targetOID,
         ]
         undoImpact = .none

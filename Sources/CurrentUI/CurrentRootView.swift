@@ -56,7 +56,7 @@ private struct BranchDialogsModifier: ViewModifier {
         }
       } message: {
         Text(
-          "Current uses Git's safe delete and refuses if the branch contains unmerged commits."
+          "GitCurrent uses Git's safe delete and refuses if the branch contains unmerged commits."
         )
       }
   }
@@ -140,7 +140,7 @@ private struct PartialDiscardDialogModifier: ViewModifier {
       }
     } message: {
       Text(
-        "Current stores the original file blob behind a hidden recovery reference. Undo restores it only if the file still matches the post-discard state."
+        "GitCurrent stores the original file blob behind a hidden recovery reference. Undo restores it only if the file still matches the post-discard state."
       )
     }
   }
@@ -197,7 +197,7 @@ private struct MergeStartDialogModifier: ViewModifier {
       }
     } message: {
       Text(
-        "Current resolves the target before execution and preserves the current HEAD in a hidden recovery reference. Without auto-stash, the operation requires a clean working copy."
+        "GitCurrent resolves the target before execution and preserves the current HEAD in a hidden recovery reference. Without auto-stash, the operation requires a clean working copy."
       )
     }
   }
@@ -1186,7 +1186,7 @@ public struct CurrentRootView: View {
           )
           Button("Cancel", role: .cancel) {}
         } message: {
-          Text("Current creates a new branch and checks it out in a separate folder.")
+          Text("GitCurrent creates a new branch and checks it out in a separate folder.")
         }
         .modifier(
           HooksConfigurationDialogModifier(
@@ -1214,7 +1214,7 @@ public struct CurrentRootView: View {
           Button("Cancel", role: .cancel) {}
         } message: {
           Text(
-            "The path must stay inside this repository. Current stages the new gitlink and .gitmodules."
+            "The path must stay inside this repository. GitCurrent stages the new gitlink and .gitmodules."
           )
         }
         .alert("Clone Repository", isPresented: $isCloningRepository) {
@@ -1246,7 +1246,7 @@ public struct CurrentRootView: View {
           }
         } message: {
           Text(
-            "Current saves the selected working-copy changes as a recovery stash, then restores the indexed version. Use Undo Last Operation to restore them without changing staged content."
+            "GitCurrent saves the selected working-copy changes as a recovery stash, then restores the indexed version. Use Undo Last Operation to restore them without changing staged content."
           )
         }
         .modifier(
@@ -1275,7 +1275,7 @@ public struct CurrentRootView: View {
           }
         } message: {
           Text(
-            "Current refuses this operation unless the working copy is clean and creates an undo reference first."
+            "GitCurrent refuses this operation unless the working copy is clean and creates an undo reference first."
           )
         }
         .confirmationDialog(
@@ -1301,7 +1301,7 @@ public struct CurrentRootView: View {
         } message: {
           Text(
             forceWorktreeRemoval
-              ? "Current first verifies the worktree has no tracked, untracked, or ignored changes. Locked and current worktrees remain protected."
+              ? "GitCurrent first verifies the worktree has no tracked, untracked, or ignored changes. Locked and current worktrees remain protected."
               : "Git refuses removal when the selected worktree is dirty or locked."
           )
         }
@@ -1328,7 +1328,7 @@ public struct CurrentRootView: View {
         } message: {
           Text(
             forceSubmoduleRemoval
-              ? "Current first verifies the initialized nested repository has no tracked, untracked, or ignored changes. Its Git object store remains cached."
+              ? "GitCurrent first verifies the initialized nested repository has no tracked, untracked, or ignored changes. Its Git object store remains cached."
               : "Git refuses removal when the submodule contains uncommitted or untracked changes."
           )
         }
@@ -1935,7 +1935,7 @@ public struct CurrentRootView: View {
       )
       Text("Generation \(status.generation.rawValue)")
         .fixedSize(horizontal: true, vertical: false)
-      Text("Current \(appVersion)")
+      Text("GitCurrent \(appVersion)")
         .fixedSize(horizontal: true, vertical: false)
     }
     .font(.caption)
@@ -1955,10 +1955,12 @@ public struct CurrentRootView: View {
       ScrollView(.vertical) {
         VStack(spacing: 20) {
           VStack(spacing: 8) {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-              .font(.system(size: 46))
-              .foregroundStyle(.tint)
-            Text("Current")
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+              .resizable()
+              .interpolation(.high)
+              .frame(width: 64, height: 64)
+              .accessibilityHidden(true)
+            Text("GitCurrent")
               .font(.largeTitle.weight(.semibold))
             Text("A fast, native Git workspace for macOS")
               .foregroundStyle(.secondary)
@@ -2354,7 +2356,7 @@ public struct CurrentRootView: View {
       }
     } message: {
       Text(
-        "This rewrites local history. Current creates an undo reference to the existing HEAD before running git commit --amend."
+        "This rewrites local history. GitCurrent creates an undo reference to the existing HEAD before running git commit --amend."
       )
     }
   }
@@ -4837,7 +4839,7 @@ private struct RemoteDialogsModifier: ViewModifier {
         Button("Cancel", role: .cancel) {}
       } message: {
         Text(
-          "Current pins the expected remote-tracking OID. Git rejects the push if the remote branch changed since your last fetch."
+          "GitCurrent pins the expected remote-tracking OID. Git rejects the push if the remote branch changed since your last fetch."
         )
       }
   }
@@ -4969,7 +4971,7 @@ private struct TagDialogsModifier: ViewModifier {
         }
       } message: {
         Text(
-          "Current will verify the remote tag has not changed since inspection. This deletion cannot be undone locally."
+          "GitCurrent will verify the remote tag has not changed since inspection. This deletion cannot be undone locally."
         )
       }
   }
@@ -4999,7 +5001,7 @@ private struct StashDropDialogModifier: ViewModifier {
       }
     } message: {
       Text(
-        "Current keeps a hidden recovery reference so this stash can be restored with Undo."
+        "GitCurrent keeps a hidden recovery reference so this stash can be restored with Undo."
       )
     }
   }

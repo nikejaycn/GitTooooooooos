@@ -114,7 +114,7 @@ struct CurrentMacApp: App {
   @State private var updater = CurrentUpdateController()
 
   var body: some Scene {
-    WindowGroup("Current", for: WorkspaceWindowState.self) { $workspace in
+    WindowGroup("GitCurrent", for: WorkspaceWindowState.self) { $workspace in
       CurrentWorkspaceWindow(
         workspace: $workspace,
         historyStore: workspaceHistory,

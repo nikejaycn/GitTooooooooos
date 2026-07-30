@@ -21,7 +21,7 @@ public struct CurrentLaunchRequest: Equatable, Sendable {
     var applicationURL: URL?
     if let index = values.firstIndex(of: "--app") {
       guard index + 1 < values.count else {
-        throw CurrentLauncherError.invalidArguments("--app requires a Current.app path.")
+        throw CurrentLauncherError.invalidArguments("--app requires a GitCurrent.app path.")
       }
       applicationURL = fileURL(values[index + 1], relativeTo: currentDirectoryURL)
       values.removeSubrange(index...(index + 1))
@@ -46,8 +46,8 @@ public struct CurrentLaunchRequest: Equatable, Sendable {
   }
 
   public static let usage = """
-    usage: current open [repository] [--app /path/to/Current.app]
-           current [repository] [--app /path/to/Current.app]
+    usage: current open [repository] [--app /path/to/GitCurrent.app]
+           current [repository] [--app /path/to/GitCurrent.app]
     """
 }
 
@@ -62,9 +62,9 @@ public enum CurrentLauncherError: Error, LocalizedError {
     case .invalidArguments(let message), .repositoryNotDirectory(let message):
       message
     case .applicationNotFound:
-      "Current.app was not found. Install it or pass --app /path/to/Current.app."
+      "GitCurrent.app was not found. Install it or pass --app /path/to/GitCurrent.app."
     case .launchFailed:
-      "macOS could not open the repository in Current."
+      "macOS could not open the repository in GitCurrent."
     }
   }
 }

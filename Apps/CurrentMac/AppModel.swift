@@ -228,7 +228,7 @@ final class AppModel {
 
   func openRepositoryURL(_ url: URL) {
     guard url.isFileURL else {
-      errorMessage = "Current can only open local repository folders."
+      errorMessage = "GitCurrent can only open local repository folders."
       return
     }
     Task {
@@ -1190,7 +1190,7 @@ final class AppModel {
   }
 
   func lockWorktree(_ worktree: GitWorktree) {
-    applyWorktree(.lock(path: worktree.path, reason: "Locked by Current"))
+    applyWorktree(.lock(path: worktree.path, reason: "Locked by GitCurrent"))
   }
 
   func unlockWorktree(_ worktree: GitWorktree) {
@@ -1614,7 +1614,7 @@ final class AppModel {
 
   private func makeExternalToolDirectory() throws -> URL {
     let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent("CurrentExternalTools", isDirectory: true)
+      .appendingPathComponent("GitCurrentExternalTools", isDirectory: true)
     try FileManager.default.createDirectory(
       at: root,
       withIntermediateDirectories: true,

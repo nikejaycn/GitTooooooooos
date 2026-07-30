@@ -129,7 +129,7 @@ struct DiagnosticsTests {
     #expect(process.terminationStatus == 0)
 
     let bundle = extracted.appendingPathComponent(
-      "Current Diagnostics",
+      "GitCurrent Diagnostics",
       isDirectory: true
     )
     let manifest = bundle.appendingPathComponent("manifest.json")

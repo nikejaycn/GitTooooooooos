@@ -208,7 +208,7 @@ public enum DiagnosticBundleExporter {
         isDirectory: true
       )
       let bundleDirectory = stagingRoot.appendingPathComponent(
-        "Current Diagnostics",
+        "GitCurrent Diagnostics",
         isDirectory: true
       )
       try fileManager.createDirectory(

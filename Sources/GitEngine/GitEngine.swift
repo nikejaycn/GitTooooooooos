@@ -1513,7 +1513,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
       )
     }
     let stashBefore = try? await resolveCommit("refs/stash", at: location)
-    let marker = "Current auto-stash before checkout \(UUID().uuidString)"
+    let marker = "GitCurrent auto-stash before checkout \(UUID().uuidString)"
     try await mutateStash(
       at: location,
       mutation: .save(
@@ -2765,7 +2765,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         guard reference.name.hasPrefix("refs/current/undo/"),
           !reference.name.utf8.contains(0)
         else {
-          throw GitEngineError.invalidOutput("Invalid Current recovery reference.")
+          throw GitEngineError.invalidOutput("Invalid GitCurrent recovery reference.")
         }
         try await requireCleanWorkingCopy(at: location)
         let target = try await resolveCommit(reference.name, at: location)
@@ -2785,7 +2785,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         guard reference.name.hasPrefix("refs/current/undo/"),
           !reference.name.utf8.contains(0)
         else {
-          throw GitEngineError.invalidOutput("Invalid Current merge recovery reference.")
+          throw GitEngineError.invalidOutput("Invalid GitCurrent merge recovery reference.")
         }
         let target = try await resolveCommit(reference.name, at: location)
         _ = try await execute(
@@ -2804,7 +2804,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           let expectedOID = reference.expectedWorktreeOID
         else {
           throw GitEngineError.invalidOutput(
-            "Invalid Current partial-discard recovery."
+            "Invalid GitCurrent partial-discard recovery."
           )
         }
         let currentOID = try await currentWorktreeOID(path, at: location)
@@ -2837,7 +2837,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
             !$0.rawBytes.isEmpty && !$0.rawBytes.contains(0)
           })
         else {
-          throw GitEngineError.invalidOutput("Invalid Current stash recovery reference.")
+          throw GitEngineError.invalidOutput("Invalid GitCurrent stash recovery reference.")
         }
         try await requireCleanWorkingCopyPaths(
           reference.paths,
@@ -2861,13 +2861,13 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           isFullObjectID(reference.targetOID)
         else {
           throw GitEngineError.invalidOutput(
-            "Invalid Current stash-entry recovery."
+            "Invalid GitCurrent stash-entry recovery."
           )
         }
         _ = try await execute(
           GitCommand(
             arguments: [
-              "stash", "store", "-m", "Recovered by Current",
+              "stash", "store", "-m", "Recovered by GitCurrent",
               reference.targetOID,
             ],
             workingDirectory: location.worktreeURL,
@@ -2883,7 +2883,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
           !restoreRef.utf8.contains(0)
         else {
           throw GitEngineError.invalidOutput(
-            "Invalid Current reference recovery."
+            "Invalid GitCurrent reference recovery."
           )
         }
         let command = "create \(restoreRef) \(reference.targetOID)\n"
@@ -3574,7 +3574,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         arguments: [
           "update-ref",
           "-m",
-          "Current recovery before \(reason)",
+          "GitCurrent recovery before \(reason)",
           name,
           target,
         ],
@@ -3636,7 +3636,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
   ) async throws -> RecoveryReference {
     let previous = await stashOID(at: location)
     let message =
-      "Current recovery before discard \(Int(Date().timeIntervalSince1970)) "
+      "GitCurrent recovery before discard \(Int(Date().timeIntervalSince1970)) "
       + UUID().uuidString.lowercased()
     let prefix = [
       "stash",

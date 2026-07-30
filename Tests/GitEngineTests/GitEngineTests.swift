@@ -969,7 +969,11 @@ struct GitEngineTests {
       commands[0].redactedDescription
         == "rev-parse --verify --end-of-options HEAD^{commit}"
     )
-    #expect(commands[1].redactedDescription.contains("update-ref -m Current recovery before amend"))
+    #expect(
+      commands[1].redactedDescription.contains(
+        "update-ref -m GitCurrent recovery before amend"
+      )
+    )
     let command = try #require(commands.last)
     #expect(
       command.arguments == [

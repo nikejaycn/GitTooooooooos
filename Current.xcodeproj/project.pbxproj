@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		21D1C639C4364931A26B0381 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 21D1C63AC4364931A26B0381 /* Assets.xcassets */; };
 		44E6B235671829CF0AF867EC /* CurrentUI in Frameworks */ = {isa = PBXBuildFile; productRef = BF2C24D9D6A1890C672DD0DA /* CurrentUI */; };
 		45B4809BB4963116E42242BB /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5046D0FF0576C814807D4A83 /* AppModel.swift */; };
 		7BE863952F5D4FD09B5161C2 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E39D6B06C07E4627A40DA0F5 /* SettingsView.swift */; };
@@ -19,9 +20,10 @@
 
 /* Begin PBXFileReference section */
 		0E00A699BADCBFBFC55B4A94 /* CurrentMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentMacApp.swift; sourceTree = "<group>"; };
+		21D1C63AC4364931A26B0381 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		5046D0FF0576C814807D4A83 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		5735639D63BE281277D5F772 /* GitTooooooooos */ = {isa = PBXFileReference; lastKnownFileType = folder; name = GitTooooooooos; path = .; sourceTree = SOURCE_ROOT; };
-		9CFE8D5B9ED4F061B9997058 /* Current.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Current.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9CFE8D5B9ED4F061B9997058 /* GitCurrent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GitCurrent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E39D6B06C07E4627A40DA0F5 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -53,6 +55,7 @@
 		0A244749CE72B97B29273ADB /* CurrentMac */ = {
 			isa = PBXGroup;
 			children = (
+				21D1C63AC4364931A26B0381 /* Assets.xcassets */,
 				5046D0FF0576C814807D4A83 /* AppModel.swift */,
 				0E00A699BADCBFBFC55B4A94 /* CurrentMacApp.swift */,
 				E39D6B06C07E4627A40DA0F5 /* SettingsView.swift */,
@@ -79,7 +82,7 @@
 		FBEE5B9FF865CA9BEA93D634 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				9CFE8D5B9ED4F061B9997058 /* Current.app */,
+				9CFE8D5B9ED4F061B9997058 /* GitCurrent.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -93,6 +96,7 @@
 			buildPhases = (
 				604C2B9709DA1A1DCBA1E2CE /* Sources */,
 				CB29A3724FA769656F820024 /* Frameworks */,
+				21D1C63BC4364931A26B0381 /* Resources */,
 				7D5A2B190B6D4F6A98C38120 /* Embed Bundled Git */,
 			);
 			buildRules = (
@@ -107,8 +111,8 @@
 				05547B899A9D94CA332ABD3B /* RepositoryModel */,
 				F72AD13C0A33479E973B1202 /* UpdateKit */,
 			);
-			productName = Current;
-			productReference = 9CFE8D5B9ED4F061B9997058 /* Current.app */;
+			productName = GitCurrent;
+			productReference = 9CFE8D5B9ED4F061B9997058 /* GitCurrent.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -143,6 +147,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		21D1C63BC4364931A26B0381 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21D1C639C4364931A26B0381 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		604C2B9709DA1A1DCBA1E2CE /* Sources */ = {
@@ -192,7 +207,7 @@
 				CURRENT_SPARKLE_PUBLIC_ED_KEY = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Current;
+				INFOPLIST_KEY_CFBundleDisplayName = GitCurrent;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_SUFeedURL = "$(CURRENT_APPCAST_URL)";
 				INFOPLIST_KEY_SUPublicEDKey = "$(CURRENT_SPARKLE_PUBLIC_ED_KEY)";
@@ -203,7 +218,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fun2ex.Current;
-				PRODUCT_NAME = Current;
+				PRODUCT_NAME = GitCurrent;
 				SDKROOT = macosx;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
@@ -341,7 +356,7 @@
 				CURRENT_SPARKLE_PUBLIC_ED_KEY = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Current;
+				INFOPLIST_KEY_CFBundleDisplayName = GitCurrent;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_SUFeedURL = "$(CURRENT_APPCAST_URL)";
 				INFOPLIST_KEY_SUPublicEDKey = "$(CURRENT_SPARKLE_PUBLIC_ED_KEY)";
@@ -352,7 +367,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fun2ex.Current;
-				PRODUCT_NAME = Current;
+				PRODUCT_NAME = GitCurrent;
 				SDKROOT = macosx;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
