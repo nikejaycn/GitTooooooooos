@@ -21,10 +21,12 @@ public enum CurrentUILayout {
   static let inspectorMinimumWidth: CGFloat = 220
   static let historyMetadataMinimumWidth: CGFloat = 240
   static let historyMetadataIdealWidth: CGFloat = 330
-  static let historyMetadataMaximumWidth: CGFloat = 520
   static let historyGraphMinimumHeight: CGFloat = 170
   static let historyGraphIdealHeight: CGFloat = 270
-  static let historyDetailMinimumHeight: CGFloat = 250
+  static let historyChangedFilesMinimumHeight: CGFloat = 110
+  static let historyChangedFilesIdealHeight: CGFloat = 210
+  static let historyCommitDetailsMinimumHeight: CGFloat = 90
+  static let historyCommitDetailsIdealHeight: CGFloat = 140
   static let splitViewDividerAllowance: CGFloat = 12
   static let operationConflictListMaximumHeight: CGFloat = 72
   static let commitEditorMinimumHeight: CGFloat = 54
@@ -46,6 +48,12 @@ public enum CurrentUILayout {
   static var historyMinimumHeight: CGFloat {
     historyGraphMinimumHeight
       + historyDetailMinimumHeight
+      + splitViewDividerAllowance
+  }
+
+  static var historyDetailMinimumHeight: CGFloat {
+    historyChangedFilesMinimumHeight
+      + historyCommitDetailsMinimumHeight
       + splitViewDividerAllowance
   }
 }

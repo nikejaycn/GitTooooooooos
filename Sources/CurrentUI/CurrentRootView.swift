@@ -3151,17 +3151,21 @@ public struct CurrentRootView: View {
 
   private var historyDetailWorkspace: some View {
     HSplitView {
-      VStack(spacing: 0) {
+      VSplitView {
         historyChangedFilesPane
-          .frame(minHeight: 150, idealHeight: 230)
-        Divider()
+          .frame(
+            minHeight: CurrentUILayout.historyChangedFilesMinimumHeight,
+            idealHeight: CurrentUILayout.historyChangedFilesIdealHeight
+          )
         historySelectionDetailsPane
-          .frame(minHeight: 130)
+          .frame(
+            minHeight: CurrentUILayout.historyCommitDetailsMinimumHeight,
+            idealHeight: CurrentUILayout.historyCommitDetailsIdealHeight
+          )
       }
       .frame(
         minWidth: CurrentUILayout.historyMetadataMinimumWidth,
-        idealWidth: CurrentUILayout.historyMetadataIdealWidth,
-        maxWidth: CurrentUILayout.historyMetadataMaximumWidth
+        idealWidth: CurrentUILayout.historyMetadataIdealWidth
       )
 
       embeddedCommitDiffPane

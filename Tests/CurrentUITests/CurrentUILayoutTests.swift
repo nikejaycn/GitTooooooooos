@@ -52,6 +52,29 @@ struct CurrentUILayoutTests {
     )
   }
 
+  @Test("History split panes retain independent drag ranges")
+  func historySplitPaneRanges() {
+    #expect(
+      CurrentUILayout.historyGraphMinimumHeight
+        < CurrentUILayout.minimumWindowHeight
+          - CurrentUILayout.historyDetailMinimumHeight
+    )
+    #expect(
+      CurrentUILayout.historyChangedFilesMinimumHeight
+        < CurrentUILayout.historyChangedFilesIdealHeight
+    )
+    #expect(
+      CurrentUILayout.historyCommitDetailsMinimumHeight
+        < CurrentUILayout.historyCommitDetailsIdealHeight
+    )
+    #expect(
+      CurrentUILayout.historyDetailMinimumHeight
+        == CurrentUILayout.historyChangedFilesMinimumHeight
+          + CurrentUILayout.historyCommitDetailsMinimumHeight
+          + CurrentUILayout.splitViewDividerAllowance
+    )
+  }
+
   @Test("Variable-height chrome stays bounded at the minimum window")
   func verticalChromeLeavesAdaptiveRoom() {
     #expect(
