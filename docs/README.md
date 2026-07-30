@@ -9,5 +9,7 @@
 - `../research/GitKraken竞品调研与macOS原生Git客户端PRD.md`
 - `../research/gitkraken_feature_inventory.csv`
 - P01–P12 交互原型（生产预览）：https://current-macos-git-prototype.fun2ex.chatgpt.site
+- [主界面三栏工作台设计](Current-主界面三栏工作台设计.md)：参考图对应的信息架构、
+  已落地范围、托管服务边界与运行态验收。
 
 本目录中的计划以 PRD 1.0 为产品真源；发生范围冲突时，先更新 PRD 再调整开发计划与看板。

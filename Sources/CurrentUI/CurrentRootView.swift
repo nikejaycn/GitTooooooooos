@@ -203,9 +203,15 @@ private struct MergeStartDialogModifier: ViewModifier {
 }
 
 public struct CurrentRootView: View {
+  @Environment(\.openSettings) private var openSettings
+
   private enum Workspace: Hashable {
     case changes
     case history
+    case pullRequests
+    case branchReview
+    case issues
+    case actions
     case fileHistory
     case stashes
     case operations
@@ -356,7 +362,7 @@ public struct CurrentRootView: View {
   private let updateRemote: (GitRemote, String, String, String) -> Void
   private let removeRemote: (GitRemote) -> Void
   private let forcePushWithLease: () -> Void
-  @State private var workspace: Workspace = .changes
+  @State private var workspace: Workspace = .history
   @State private var isSidebarVisible = true
   @State private var pendingDiscard: GitPath?
   @State private var pendingPartialDiscard: PartialDiscardRequest?
@@ -703,27 +709,46 @@ public struct CurrentRootView: View {
             }
           }
           Section("Workspace") {
-            Label("Changes", systemImage: "square.stack.3d.up")
+            Label("Working Copy", systemImage: "square.stack.3d.up")
               .tag(Workspace.changes)
             Label("History", systemImage: "point.3.connected.trianglepath.dotted")
               .tag(Workspace.history)
-            Label(
-              "File History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
-            )
-            .tag(Workspace.fileHistory)
+            Label("Pull Requests", systemImage: "arrow.triangle.pull")
+              .tag(Workspace.pullRequests)
+            Label("Branch Review", systemImage: "arrow.triangle.branch")
+              .tag(Workspace.branchReview)
             Label("Stashes", systemImage: "archivebox")
               .tag(Workspace.stashes)
-            Label("Operations", systemImage: "list.bullet.rectangle")
-              .tag(Workspace.operations)
           }
-          if references.contains(where: { $0.kind != .tag }) {
-            Section("References") {
-              ForEach(references.filter { $0.kind != .tag }.prefix(20)) { reference in
+          if references.contains(where: { $0.kind == .localBranch }) {
+            Section("Local Branches") {
+              ForEach(references.filter { $0.kind == .localBranch }.prefix(20)) { reference in
+                referenceSidebarRow(reference)
+              }
+            }
+          }
+          if references.contains(where: { $0.kind == .remoteBranch }) {
+            Section("Remote Branches") {
+              ForEach(references.filter { $0.kind == .remoteBranch }.prefix(20)) { reference in
                 referenceSidebarRow(reference)
               }
             }
           }
           tagSidebarSection
+          Section("GitHub") {
+            Label("Issues", systemImage: "record.circle")
+              .tag(Workspace.issues)
+            Label("Actions", systemImage: "play.square.stack")
+              .tag(Workspace.actions)
+          }
+          Section("Tools") {
+            Label(
+              "File History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+            )
+            .tag(Workspace.fileHistory)
+            Label("Activity Log", systemImage: "list.bullet.rectangle")
+              .tag(Workspace.operations)
+          }
           if status != nil {
             Section {
               ForEach(remotes) { remote in
@@ -937,21 +962,45 @@ public struct CurrentRootView: View {
             Button(action: openRepository) {
               Label("Open Repository", systemImage: "folder")
             }
-            Button(action: refresh) {
-              Label("Refresh", systemImage: "arrow.clockwise")
+            Button("Undo", systemImage: "arrow.uturn.backward", action: undoLastOperation)
+              .disabled(lastRecoveryReference == nil || isLoading)
+            Button(action: fetch) {
+              Label("Fetch", systemImage: "arrow.down.circle")
             }
-            .disabled(status == nil || isLoading)
+            .disabled(status == nil || isLoading || remotes.isEmpty)
+            Menu {
+              ForEach(PullStrategy.allCases) { strategy in
+                Button(strategy.title) {
+                  pull(strategy)
+                }
+              }
+            } label: {
+              Label("Pull", systemImage: "arrow.down")
+            }
+            .disabled(status == nil || isLoading || remotes.isEmpty)
             Button {
               newBranchName = ""
               isCreatingBranch = true
             } label: {
-              Label("New Branch", systemImage: "plus")
+              Label("Branch", systemImage: "arrow.triangle.branch")
             }
             .disabled(status == nil || isLoading)
             Button {
+              beginCreatingStash(paths: [])
+            } label: {
+              Label("Stash", systemImage: "archivebox")
+            }
+            .disabled(status?.changes.isEmpty != false || isLoading)
+            Button {
+              isConfirmingPush = true
+            } label: {
+              Label("Push", systemImage: "arrow.up")
+            }
+            .disabled(pushTargetDescription == nil || isLoading)
+            Button {
               isShowingCommandPalette = true
             } label: {
-              Label("Command Palette", systemImage: "command")
+              Label("Search", systemImage: "magnifyingglass")
             }
             .keyboardShortcut("k", modifiers: [.command])
             Menu {
@@ -1507,27 +1556,33 @@ public struct CurrentRootView: View {
         Divider()
       }
 
-      HStack {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(headTitle(status.head))
-            .font(.title2.weight(.semibold))
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(headTitle(status.head))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
-          Text("\(status.changes.count) working-copy changes")
+      HStack(spacing: 10) {
+        Image(systemName: "externaldrive.fill")
+          .foregroundStyle(.tint)
+        Text(repositoryName ?? "Repository")
+          .font(.headline)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .help(repositoryName ?? "Repository")
+        Divider()
+          .frame(height: 18)
+        Label(headTitle(status.head), systemImage: "arrow.triangle.branch")
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .help(headTitle(status.head))
+        if !status.changes.isEmpty {
+          Text("\(status.changes.count) changes")
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .layoutPriority(1)
-        Spacer()
+        Spacer(minLength: 8)
         if status.ahead > 0 || status.behind > 0 {
           Text("↑ \(status.ahead)  ↓ \(status.behind)")
             .font(.system(.body, design: .monospaced))
         }
       }
-      .padding()
+      .padding(.horizontal, 12)
+      .frame(height: 42)
       .padding(.trailing, 12)
 
       if status.operation.isInProgress {
@@ -1552,12 +1607,75 @@ public struct CurrentRootView: View {
       }
     case .history:
       history
+    case .pullRequests:
+      hostedServicePlaceholder(
+        title: "Pull Requests",
+        systemImage: "arrow.triangle.pull",
+        description: "Connect a GitHub account to review pull requests for this repository."
+      )
+    case .branchReview:
+      branchReviewWorkspace
+    case .issues:
+      hostedServicePlaceholder(
+        title: "Issues",
+        systemImage: "record.circle",
+        description: "Connect a GitHub account to browse and manage repository issues."
+      )
+    case .actions:
+      hostedServicePlaceholder(
+        title: "GitHub Actions",
+        systemImage: "play.square.stack",
+        description: "Connect a GitHub account to inspect workflow runs and checks."
+      )
     case .fileHistory:
       fileHistoryAndBlame
     case .stashes:
       stashList
     case .operations:
       operationConsole
+    }
+  }
+
+  private func hostedServicePlaceholder(
+    title: String,
+    systemImage: String,
+    description: String
+  ) -> some View {
+    ContentUnavailableView {
+      Label(title, systemImage: systemImage)
+    } description: {
+      Text(description)
+    } actions: {
+      Button("Open Settings…") {
+        openSettings()
+      }
+    }
+  }
+
+  private var branchReviewWorkspace: some View {
+    HSplitView {
+      List {
+        Section("Local Branches") {
+          ForEach(references.filter { $0.kind == .localBranch }) { reference in
+            referenceSidebarRow(reference)
+          }
+        }
+        Section("Remote Branches") {
+          ForEach(references.filter { $0.kind == .remoteBranch }) { reference in
+            referenceSidebarRow(reference)
+          }
+        }
+      }
+      .frame(minWidth: 260, idealWidth: 320)
+
+      ContentUnavailableView(
+        "Select a Branch",
+        systemImage: "arrow.triangle.branch",
+        description: Text(
+          "Choose a branch to check it out, merge it, compare it, or open its history."
+        )
+      )
+      .frame(minWidth: 360)
     }
   }
 
@@ -2955,10 +3073,14 @@ public struct CurrentRootView: View {
   @ViewBuilder
   private func singleCommitInspector(_ row: GraphRow) -> some View {
     if row.isWorkingCopy {
-      Label("Working Copy", systemImage: "pencil.and.list.clipboard")
-        .font(.title3.weight(.semibold))
-      Text(row.subject)
-        .foregroundStyle(.secondary)
+      if let status {
+        workingCopyInspector(status)
+      } else {
+        Label("Working Copy", systemImage: "pencil.and.list.clipboard")
+          .font(.title3.weight(.semibold))
+        Text(row.subject)
+          .foregroundStyle(.secondary)
+      }
     } else {
       Text(row.subject)
         .font(.title3.weight(.semibold))
@@ -2997,6 +3119,83 @@ public struct CurrentRootView: View {
             Text(String(oid.prefix(12)))
               .font(.system(.caption, design: .monospaced))
               .textSelection(.enabled)
+          }
+        }
+      }
+    }
+  }
+
+  private func workingCopyInspector(_ status: RepositoryStatus) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack {
+        Label("Working Copy", systemImage: "pencil.and.list.clipboard")
+          .font(.title3.weight(.semibold))
+        Spacer()
+        Text("\(status.changes.count)")
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(.secondary)
+      }
+
+      if status.changes.isEmpty {
+        ContentUnavailableView(
+          "Working Copy Clean",
+          systemImage: "checkmark.circle",
+          description: Text("There are no staged or unstaged changes.")
+        )
+        .frame(maxWidth: .infinity, minHeight: 180)
+      } else {
+        let unstaged = status.changes.filter { $0.isUnstaged || $0.kind == .untracked }
+        let staged = status.changes.filter(\.isStaged)
+        inspectorChangeSection("Unstaged Changes", changes: unstaged, isStaged: false)
+        inspectorChangeSection("Staged Changes", changes: staged, isStaged: true)
+        Divider()
+        Text("Commit Message")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+        commitPanel(status)
+          .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func inspectorChangeSection(
+    _ title: String,
+    changes: [FileChange],
+    isStaged: Bool
+  ) -> some View {
+    if !changes.isEmpty {
+      VStack(alignment: .leading, spacing: 7) {
+        Text("\(title) · \(changes.count)")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+        ForEach(changes.prefix(20)) { change in
+          HStack(spacing: 7) {
+            Text(String(isStaged ? change.indexStatusCharacter : change.worktreeStatusCharacter))
+              .font(.system(.caption2, design: .monospaced, weight: .bold))
+              .foregroundStyle(change.kind == .untracked ? .green : .orange)
+              .frame(width: 12)
+            Button {
+              loadDiff(change)
+            } label: {
+              Text(change.path.displayString)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(change.path.displayString)
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 2)
+            Button(isStaged ? "Unstage" : "Stage") {
+              if isStaged {
+                unstage(change.path)
+              } else {
+                stage(change.path)
+              }
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .disabled(isLoading)
           }
         }
       }
