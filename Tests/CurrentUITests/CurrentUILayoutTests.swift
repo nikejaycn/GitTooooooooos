@@ -35,4 +35,21 @@ struct CurrentUILayoutTests {
     #expect(CurrentUILayout.graphMinimumWidth >= 300)
     #expect(CurrentUILayout.inspectorMinimumWidth >= 220)
   }
+
+  @Test("Variable-height chrome stays bounded at the minimum window")
+  func verticalChromeLeavesAdaptiveRoom() {
+    #expect(
+      CurrentUILayout.commitEditorMinimumHeight
+        <= CurrentUILayout.commitEditorIdealHeight
+    )
+    #expect(
+      CurrentUILayout.commitEditorIdealHeight
+        <= CurrentUILayout.commitEditorMaximumHeight
+    )
+    #expect(
+      CurrentUILayout.operationConflictListMaximumHeight
+        + CurrentUILayout.commitEditorMaximumHeight
+        <= CurrentUILayout.minimumWindowHeight * 0.35
+    )
+  }
 }

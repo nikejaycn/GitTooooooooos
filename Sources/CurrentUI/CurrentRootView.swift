@@ -692,222 +692,224 @@ public struct CurrentRootView: View {
     HStack(spacing: 0) {
       if isSidebarVisible {
         List(selection: $workspace) {
-        Section("Repository") {
-          Label {
-            Text(repositoryName ?? "No repository open")
-              .lineLimit(1)
-              .truncationMode(.middle)
-              .help(repositoryName ?? "No repository open")
-          } icon: {
-            Image(systemName: "externaldrive")
+          Section("Repository") {
+            Label {
+              Text(repositoryName ?? "No repository open")
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(repositoryName ?? "No repository open")
+            } icon: {
+              Image(systemName: "externaldrive")
+            }
           }
-        }
-        Section("Workspace") {
-          Label("Changes", systemImage: "square.stack.3d.up")
-            .tag(Workspace.changes)
-          Label("History", systemImage: "point.3.connected.trianglepath.dotted")
-            .tag(Workspace.history)
-          Label("File History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+          Section("Workspace") {
+            Label("Changes", systemImage: "square.stack.3d.up")
+              .tag(Workspace.changes)
+            Label("History", systemImage: "point.3.connected.trianglepath.dotted")
+              .tag(Workspace.history)
+            Label(
+              "File History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+            )
             .tag(Workspace.fileHistory)
-          Label("Stashes", systemImage: "archivebox")
-            .tag(Workspace.stashes)
-          Label("Operations", systemImage: "list.bullet.rectangle")
-            .tag(Workspace.operations)
-        }
-        if references.contains(where: { $0.kind != .tag }) {
-          Section("References") {
-            ForEach(references.filter { $0.kind != .tag }.prefix(20)) { reference in
-              referenceSidebarRow(reference)
+            Label("Stashes", systemImage: "archivebox")
+              .tag(Workspace.stashes)
+            Label("Operations", systemImage: "list.bullet.rectangle")
+              .tag(Workspace.operations)
+          }
+          if references.contains(where: { $0.kind != .tag }) {
+            Section("References") {
+              ForEach(references.filter { $0.kind != .tag }.prefix(20)) { reference in
+                referenceSidebarRow(reference)
+              }
             }
           }
-        }
-        tagSidebarSection
-        if status != nil {
-          Section {
-            ForEach(remotes) { remote in
-              HStack(spacing: 6) {
-                Image(systemName: "cloud")
-                VStack(alignment: .leading, spacing: 1) {
-                  Text(remote.name)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                  Text(remote.fetchURL)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                }
-              }
-              .help("Fetch: \(remote.fetchURL)\nPush: \(remote.pushURL)")
-              .contextMenu {
-                Button("Edit…") {
-                  beginEditingRemote(remote)
-                }
-                Button("Fetch with Prune") {
-                  fetchRemote(remote)
-                }
-                Divider()
-                Button("Remove…", role: .destructive) {
-                  pendingRemoteRemoval = remote
-                }
-              }
-            }
-          } header: {
-            HStack {
-              Text("Remotes")
-              Spacer()
-              Button {
-                beginEditingRemote(nil)
-              } label: {
-                Image(systemName: "plus")
-              }
-              .buttonStyle(.borderless)
-              .help("Add Remote")
-            }
-          }
-        }
-        if status != nil {
-          Section {
-            ForEach(worktrees) { worktree in
-              Button {
-                openWorktree(worktree)
-              } label: {
+          tagSidebarSection
+          if status != nil {
+            Section {
+              ForEach(remotes) { remote in
                 HStack(spacing: 6) {
-                  Image(
-                    systemName:
-                      worktree.isLocked
-                      ? "lock.fill"
-                      : worktree.isCurrent ? "location.fill" : "folder"
-                  )
+                  Image(systemName: "cloud")
                   VStack(alignment: .leading, spacing: 1) {
-                    Text(worktree.branch ?? (worktree.isDetached ? "Detached HEAD" : "Bare"))
+                    Text(remote.name)
                       .lineLimit(1)
-                    Text(worktree.path.displayString)
+                      .truncationMode(.middle)
+                    Text(remote.fetchURL)
                       .font(.caption2)
                       .foregroundStyle(.secondary)
                       .lineLimit(1)
                   }
                 }
+                .help("Fetch: \(remote.fetchURL)\nPush: \(remote.pushURL)")
+                .contextMenu {
+                  Button("Edit…") {
+                    beginEditingRemote(remote)
+                  }
+                  Button("Fetch with Prune") {
+                    fetchRemote(remote)
+                  }
+                  Divider()
+                  Button("Remove…", role: .destructive) {
+                    pendingRemoteRemoval = remote
+                  }
+                }
               }
-              .buttonStyle(.plain)
-              .disabled(worktree.isCurrent || isLoading)
-              .help(worktreeHelp(worktree))
-              .contextMenu {
-                Button("Open") {
+            } header: {
+              HStack {
+                Text("Remotes")
+                Spacer()
+                Button {
+                  beginEditingRemote(nil)
+                } label: {
+                  Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("Add Remote")
+              }
+            }
+          }
+          if status != nil {
+            Section {
+              ForEach(worktrees) { worktree in
+                Button {
                   openWorktree(worktree)
-                }
-                .disabled(worktree.isCurrent)
-                Divider()
-                if worktree.isLocked {
-                  Button("Unlock") {
-                    unlockWorktree(worktree)
+                } label: {
+                  HStack(spacing: 6) {
+                    Image(
+                      systemName:
+                        worktree.isLocked
+                        ? "lock.fill"
+                        : worktree.isCurrent ? "location.fill" : "folder"
+                    )
+                    VStack(alignment: .leading, spacing: 1) {
+                      Text(worktree.branch ?? (worktree.isDetached ? "Detached HEAD" : "Bare"))
+                        .lineLimit(1)
+                      Text(worktree.path.displayString)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
                   }
-                } else {
-                  Button("Lock") {
-                    lockWorktree(worktree)
+                }
+                .buttonStyle(.plain)
+                .disabled(worktree.isCurrent || isLoading)
+                .help(worktreeHelp(worktree))
+                .contextMenu {
+                  Button("Open") {
+                    openWorktree(worktree)
                   }
+                  .disabled(worktree.isCurrent)
+                  Divider()
+                  if worktree.isLocked {
+                    Button("Unlock") {
+                      unlockWorktree(worktree)
+                    }
+                  } else {
+                    Button("Lock") {
+                      lockWorktree(worktree)
+                    }
+                  }
+                  Divider()
+                  Button("Remove…", role: .destructive) {
+                    forceWorktreeRemoval = false
+                    pendingWorktreeRemoval = worktree
+                  }
+                  .disabled(worktree.isCurrent || worktree.isLocked)
+                  Button("Force Remove…", role: .destructive) {
+                    forceWorktreeRemoval = true
+                    pendingWorktreeRemoval = worktree
+                  }
+                  .disabled(worktree.isCurrent || worktree.isLocked)
                 }
-                Divider()
-                Button("Remove…", role: .destructive) {
-                  forceWorktreeRemoval = false
-                  pendingWorktreeRemoval = worktree
-                }
-                .disabled(worktree.isCurrent || worktree.isLocked)
-                Button("Force Remove…", role: .destructive) {
-                  forceWorktreeRemoval = true
-                  pendingWorktreeRemoval = worktree
-                }
-                .disabled(worktree.isCurrent || worktree.isLocked)
               }
-            }
-          } header: {
-            HStack {
-              Text("Worktrees")
-              Spacer()
-              Button {
-                newWorktreeBranch = ""
-                newWorktreeStartPoint = ""
-                isCreatingWorktree = true
-              } label: {
-                Image(systemName: "plus")
+            } header: {
+              HStack {
+                Text("Worktrees")
+                Spacer()
+                Button {
+                  newWorktreeBranch = ""
+                  newWorktreeStartPoint = ""
+                  isCreatingWorktree = true
+                } label: {
+                  Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("Create Worktree")
               }
-              .buttonStyle(.borderless)
-              .help("Create Worktree")
             }
           }
-        }
-        if status != nil {
-          Section {
-            ForEach(submodules) { submodule in
-              Button {
-                openSubmodule(submodule)
-              } label: {
-                HStack(spacing: 6) {
-                  Image(systemName: submoduleIcon(submodule))
-                  VStack(alignment: .leading, spacing: 1) {
-                    Text(submodule.path.displayString)
-                      .lineLimit(1)
-                    Text(submoduleSummary(submodule))
-                      .font(.caption2)
-                      .foregroundStyle(.secondary)
-                      .lineLimit(1)
-                  }
-                }
-              }
-              .buttonStyle(.plain)
-              .disabled(!submodule.isInitialized || isLoading)
-              .help(submoduleHelp(submodule))
-              .contextMenu {
-                Button("Open") {
+          if status != nil {
+            Section {
+              ForEach(submodules) { submodule in
+                Button {
                   openSubmodule(submodule)
+                } label: {
+                  HStack(spacing: 6) {
+                    Image(systemName: submoduleIcon(submodule))
+                    VStack(alignment: .leading, spacing: 1) {
+                      Text(submodule.path.displayString)
+                        .lineLimit(1)
+                      Text(submoduleSummary(submodule))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
+                  }
                 }
-                .disabled(!submodule.isInitialized)
-                Divider()
-                if !submodule.isInitialized {
-                  Button("Initialize") {
-                    initializeSubmodule(submodule)
+                .buttonStyle(.plain)
+                .disabled(!submodule.isInitialized || isLoading)
+                .help(submoduleHelp(submodule))
+                .contextMenu {
+                  Button("Open") {
+                    openSubmodule(submodule)
                   }
-                } else {
-                  Button("Checkout Recorded Commit") {
-                    checkoutRecordedSubmodule(submodule)
+                  .disabled(!submodule.isInitialized)
+                  Divider()
+                  if !submodule.isInitialized {
+                    Button("Initialize") {
+                      initializeSubmodule(submodule)
+                    }
+                  } else {
+                    Button("Checkout Recorded Commit") {
+                      checkoutRecordedSubmodule(submodule)
+                    }
+                    Button("Update from Remote") {
+                      updateSubmoduleFromRemote(submodule)
+                    }
+                    Button("Stage Pointer") {
+                      stageSubmodulePointer(submodule)
+                    }
+                    .disabled(!submodule.hasPointerChange)
                   }
-                  Button("Update from Remote") {
-                    updateSubmoduleFromRemote(submodule)
+                  Divider()
+                  Button("Remove…", role: .destructive) {
+                    forceSubmoduleRemoval = false
+                    pendingSubmoduleRemoval = submodule
                   }
-                  Button("Stage Pointer") {
-                    stageSubmodulePointer(submodule)
+                  Button("Force Remove…", role: .destructive) {
+                    forceSubmoduleRemoval = true
+                    pendingSubmoduleRemoval = submodule
                   }
-                  .disabled(!submodule.hasPointerChange)
-                }
-                Divider()
-                Button("Remove…", role: .destructive) {
-                  forceSubmoduleRemoval = false
-                  pendingSubmoduleRemoval = submodule
-                }
-                Button("Force Remove…", role: .destructive) {
-                  forceSubmoduleRemoval = true
-                  pendingSubmoduleRemoval = submodule
                 }
               }
-            }
-          } header: {
-            HStack {
-              Text("Submodules")
-              Spacer()
-              Button {
-                newSubmoduleURL = ""
-                newSubmodulePath = ""
-                newSubmoduleBranch = ""
-                isAddingSubmodule = true
-              } label: {
-                Image(systemName: "plus")
+            } header: {
+              HStack {
+                Text("Submodules")
+                Spacer()
+                Button {
+                  newSubmoduleURL = ""
+                  newSubmodulePath = ""
+                  newSubmoduleBranch = ""
+                  isAddingSubmodule = true
+                } label: {
+                  Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("Add Submodule")
               }
-              .buttonStyle(.borderless)
-              .help("Add Submodule")
             }
           }
-        }
-        lfsSidebarSection
-        hooksSidebarSection
+          lfsSidebarSection
+          hooksSidebarSection
         }
         .listStyle(.sidebar)
         .frame(width: CurrentUILayout.sidebarIdealWidth)
@@ -1474,150 +1476,173 @@ public struct CurrentRootView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if let status {
-      VStack(spacing: 0) {
-        if let errorMessage {
-          HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-              .foregroundStyle(.orange)
-            Text(errorMessage)
-              .font(.callout)
-              .lineLimit(2)
-              .truncationMode(.tail)
-              .help(errorMessage)
-              .layoutPriority(1)
-            Spacer()
-          }
-          .padding(10)
-          .background(Color.orange.opacity(0.08))
-          Divider()
-        }
-        HStack {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(headTitle(status.head))
-              .font(.title2.weight(.semibold))
-              .lineLimit(1)
-              .truncationMode(.middle)
-              .help(headTitle(status.head))
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .clipped()
-            Text("\(status.changes.count) working-copy changes")
-              .foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .layoutPriority(1)
-          Spacer()
-          if status.ahead > 0 || status.behind > 0 {
-            Text("↑ \(status.ahead)  ↓ \(status.behind)")
-              .font(.system(.body, design: .monospaced))
-          }
-        }
-        .padding()
-        .padding(.trailing, 12)
-
-        if status.operation.isInProgress {
-          operationBanner(status.operation)
-        }
-
-        Divider()
-
-        switch workspace {
-        case .changes:
-          VStack(spacing: 0) {
-            workingCopy(status)
-            Divider()
-            commitPanel(status)
-          }
-        case .history:
-          history
-        case .fileHistory:
-          fileHistoryAndBlame
-        case .stashes:
-          stashList
-        case .operations:
-          operationConsole
-        }
-
-        Divider()
-        HStack {
-          Text(gitVersion ?? "Git version unavailable")
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(gitVersion ?? "Git version unavailable")
-          Spacer()
-          Text("Generation \(status.generation.rawValue)")
-            .fixedSize(horizontal: true, vertical: false)
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(8)
-        .padding(.trailing, 12)
+      CurrentContentLayout {
+        repositoryChrome(status)
+      } middle: {
+        workspaceContent(status)
+      } bottom: {
+        repositoryStatusBar(status)
       }
     } else {
       welcomeView
     }
   }
 
-  private var welcomeView: some View {
-    VStack(spacing: 20) {
-      VStack(spacing: 8) {
-        Image(systemName: "point.3.connected.trianglepath.dotted")
-          .font(.system(size: 46))
-          .foregroundStyle(.tint)
-        Text("Current")
-          .font(.largeTitle.weight(.semibold))
-        Text("A fast, native Git workspace for macOS")
-          .foregroundStyle(.secondary)
-      }
-
-      HStack(spacing: 12) {
-        Button("Open Repository…", action: openRepository)
-          .keyboardShortcut("o")
-        Button("Clone Repository…") {
-          cloneURL = ""
-          isCloningRepository = true
-        }
-        Button("Initialize Repository…", action: initializeRepository)
-      }
-      .controlSize(.large)
-
+  private func repositoryChrome(_ status: RepositoryStatus) -> some View {
+    VStack(spacing: 0) {
       if let errorMessage {
-        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-          .font(.callout)
-          .foregroundStyle(.red)
-          .lineLimit(3)
-          .truncationMode(.tail)
-          .help(errorMessage)
-          .padding(10)
-          .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-          .frame(maxWidth: 620)
+        HStack(spacing: 8) {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+          Text(errorMessage)
+            .font(.callout)
+            .lineLimit(2)
+            .truncationMode(.tail)
+            .help(errorMessage)
+            .layoutPriority(1)
+          Spacer()
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.08))
+        Divider()
       }
 
-      if !recentRepositories.isEmpty {
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Repositories")
-            .font(.headline)
-          List {
-            if !favoriteRepositories.isEmpty {
-              Section("Favorites") {
-                ForEach(favoriteRepositories) { recent in
-                  recentRepositoryRow(recent)
-                }
-              }
-            }
-            if !nonFavoriteRecentRepositories.isEmpty {
-              Section("Recent") {
-                ForEach(nonFavoriteRecentRepositories) { recent in
-                  recentRepositoryRow(recent)
-                }
-              }
-            }
-          }
-          .frame(height: min(CGFloat(recentRepositories.count) * 48 + 8, 300))
+      HStack {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(headTitle(status.head))
+            .font(.title2.weight(.semibold))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(headTitle(status.head))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
+          Text("\(status.changes.count) working-copy changes")
+            .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: 680)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
+        Spacer()
+        if status.ahead > 0 || status.behind > 0 {
+          Text("↑ \(status.ahead)  ↓ \(status.behind)")
+            .font(.system(.body, design: .monospaced))
+        }
+      }
+      .padding()
+      .padding(.trailing, 12)
+
+      if status.operation.isInProgress {
+        Divider()
+        operationBanner(status.operation)
       }
     }
-    .padding(32)
+  }
+
+  @ViewBuilder
+  private func workspaceContent(_ status: RepositoryStatus) -> some View {
+    switch workspace {
+    case .changes:
+      CurrentContentLayout(
+        separatesTop: false
+      ) {
+        EmptyView()
+      } middle: {
+        workingCopy(status)
+      } bottom: {
+        commitPanel(status)
+      }
+    case .history:
+      history
+    case .fileHistory:
+      fileHistoryAndBlame
+    case .stashes:
+      stashList
+    case .operations:
+      operationConsole
+    }
+  }
+
+  private func repositoryStatusBar(_ status: RepositoryStatus) -> some View {
+    HStack {
+      Text(gitVersion ?? "Git version unavailable")
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .help(gitVersion ?? "Git version unavailable")
+      Spacer()
+      Text("Generation \(status.generation.rawValue)")
+        .fixedSize(horizontal: true, vertical: false)
+    }
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .padding(8)
+    .padding(.trailing, 12)
+  }
+
+  private var welcomeView: some View {
+    GeometryReader { geometry in
+      ScrollView(.vertical) {
+        VStack(spacing: 20) {
+          VStack(spacing: 8) {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+              .font(.system(size: 46))
+              .foregroundStyle(.tint)
+            Text("Current")
+              .font(.largeTitle.weight(.semibold))
+            Text("A fast, native Git workspace for macOS")
+              .foregroundStyle(.secondary)
+          }
+
+          HStack(spacing: 12) {
+            Button("Open Repository…", action: openRepository)
+              .keyboardShortcut("o")
+            Button("Clone Repository…") {
+              cloneURL = ""
+              isCloningRepository = true
+            }
+            Button("Initialize Repository…", action: initializeRepository)
+          }
+          .controlSize(.large)
+
+          if let errorMessage {
+            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+              .font(.callout)
+              .foregroundStyle(.red)
+              .lineLimit(3)
+              .truncationMode(.tail)
+              .help(errorMessage)
+              .padding(10)
+              .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+              .frame(maxWidth: 620)
+          }
+
+          if !recentRepositories.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+              Text("Repositories")
+                .font(.headline)
+              List {
+                if !favoriteRepositories.isEmpty {
+                  Section("Favorites") {
+                    ForEach(favoriteRepositories) { recent in
+                      recentRepositoryRow(recent)
+                    }
+                  }
+                }
+                if !nonFavoriteRecentRepositories.isEmpty {
+                  Section("Recent") {
+                    ForEach(nonFavoriteRecentRepositories) { recent in
+                      recentRepositoryRow(recent)
+                    }
+                  }
+                }
+              }
+              .frame(height: min(CGFloat(recentRepositories.count) * 48 + 8, 300))
+            }
+            .frame(maxWidth: 680)
+          }
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+      }
+    }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
@@ -1703,30 +1728,42 @@ public struct CurrentRootView: View {
         Button("Abort", role: .destructive, action: abortOperation)
           .disabled(!operation.canAbort || isLoading)
       }
-      ForEach(operation.conflictedPaths, id: \.self) { path in
-        HStack {
-          Image(systemName: "doc.badge.ellipsis")
-          Text(path.displayString)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(path.displayString)
-          Spacer()
-          Button("Resolve…") {
-            conflictEditorPath = path
-          }
-          Menu {
-            Button("Use Ours") {
-              resolveConflict(path, .ours)
+      if !operation.conflictedPaths.isEmpty {
+        ScrollView(.vertical) {
+          LazyVStack(spacing: 6) {
+            ForEach(operation.conflictedPaths, id: \.self) { path in
+              HStack {
+                Image(systemName: "doc.badge.ellipsis")
+                Text(path.displayString)
+                  .lineLimit(1)
+                  .truncationMode(.middle)
+                  .help(path.displayString)
+                Spacer()
+                Button("Resolve…") {
+                  conflictEditorPath = path
+                }
+                Menu {
+                  Button("Use Ours") {
+                    resolveConflict(path, .ours)
+                  }
+                  Button("Use Theirs") {
+                    resolveConflict(path, .theirs)
+                  }
+                } label: {
+                  Label("Choose Version", systemImage: "arrow.triangle.branch")
+                }
+                .menuStyle(.borderlessButton)
+              }
+              .padding(.leading, 30)
             }
-            Button("Use Theirs") {
-              resolveConflict(path, .theirs)
-            }
-          } label: {
-            Label("Choose Version", systemImage: "arrow.triangle.branch")
           }
-          .menuStyle(.borderlessButton)
         }
-        .padding(.leading, 30)
+        .frame(
+          height: min(
+            CGFloat(operation.conflictedPaths.count) * 30,
+            CurrentUILayout.operationConflictListMaximumHeight
+          )
+        )
       }
     }
     .padding(10)
@@ -1802,7 +1839,9 @@ public struct CurrentRootView: View {
         description: Text("Stashed changes will appear here.")
       )
     } else {
-      VStack(spacing: 0) {
+      CurrentContentLayout(
+        separatesBottom: false
+      ) {
         HStack {
           Button("New Stash…") {
             beginCreatingStash(paths: [])
@@ -1811,7 +1850,8 @@ public struct CurrentRootView: View {
           Spacer()
         }
         .padding(10)
-        Divider()
+        .padding(.trailing, 12)
+      } middle: {
         List(stashes) { stash in
           HStack {
             VStack(alignment: .leading, spacing: 3) {
@@ -1836,54 +1876,68 @@ public struct CurrentRootView: View {
             .help("Drop stash")
           }
         }
+      } bottom: {
+        EmptyView()
       }
     }
   }
 
   private func commitPanel(_ status: RepositoryStatus) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .top, spacing: 8) {
-        TextField("Commit message", text: $commitMessage, axis: .vertical)
-          .lineLimit(2...7)
-          .textFieldStyle(.roundedBorder)
-        if let commitTemplate,
-          !commitTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-          Button("Use Template") {
-            commitMessage =
-              commitTemplate
-              .split(separator: "\n", omittingEmptySubsequences: false)
-              .filter {
-                !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
+    VStack(spacing: 0) {
+      ScrollView(.vertical) {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack(alignment: .top, spacing: 8) {
+            TextField("Commit message", text: $commitMessage, axis: .vertical)
+              .lineLimit(2...7)
+              .textFieldStyle(.roundedBorder)
+            if let commitTemplate,
+              !commitTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+              Button("Use Template") {
+                commitMessage =
+                  commitTemplate
+                  .split(separator: "\n", omittingEmptySubsequences: false)
+                  .filter {
+                    !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
+                  }
+                  .joined(separator: "\n")
+                  .trimmingCharacters(in: .whitespacesAndNewlines)
               }
-              .joined(separator: "\n")
-              .trimmingCharacters(in: .whitespacesAndNewlines)
+              .disabled(!commitMessage.isEmpty)
+              .help("Insert the repository's configured commit.template")
+            }
           }
-          .disabled(!commitMessage.isEmpty)
-          .help("Insert the repository's configured commit.template")
-        }
-      }
 
-      DisclosureGroup("Commit Options", isExpanded: $showCommitOptions) {
-        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
-          GridRow {
-            Toggle("Amend HEAD", isOn: $amendCommit)
-            Toggle("Sign commit", isOn: $signCommit)
-            Toggle("Skip hooks", isOn: $skipCommitHooks)
+          DisclosureGroup("Commit Options", isExpanded: $showCommitOptions) {
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+              GridRow {
+                Toggle("Amend HEAD", isOn: $amendCommit)
+                Toggle("Sign commit", isOn: $signCommit)
+                Toggle("Skip hooks", isOn: $skipCommitHooks)
+              }
+              GridRow {
+                Text("Co-author")
+                  .foregroundStyle(.secondary)
+                TextField("Name", text: $coAuthorName)
+                  .textFieldStyle(.roundedBorder)
+                TextField("Email", text: $coAuthorEmail)
+                  .textFieldStyle(.roundedBorder)
+              }
+            }
+            .padding(.top, 4)
           }
-          GridRow {
-            Text("Co-author")
-              .foregroundStyle(.secondary)
-            TextField("Name", text: $coAuthorName)
-              .textFieldStyle(.roundedBorder)
-            TextField("Email", text: $coAuthorEmail)
-              .textFieldStyle(.roundedBorder)
-          }
+          .font(.caption)
         }
-        .padding(.top, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
       }
-      .font(.caption)
+      .frame(
+        minHeight: CurrentUILayout.commitEditorMinimumHeight,
+        idealHeight: CurrentUILayout.commitEditorIdealHeight,
+        maxHeight: CurrentUILayout.commitEditorMaximumHeight
+      )
 
+      Divider()
       HStack {
         if !coAuthorFieldsValid {
           Text("Enter both co-author name and email.")
@@ -1902,9 +1956,9 @@ public struct CurrentRootView: View {
         .disabled(remotes.isEmpty || commitDisabled(status))
       }
       .disabled(commitDisabled(status))
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
     }
-    .padding(12)
-    .padding(.trailing, 12)
     .confirmationDialog(
       "Amend the current HEAD commit?",
       isPresented: Binding(
@@ -2375,7 +2429,9 @@ public struct CurrentRootView: View {
   }
 
   private var fileHistoryAndBlame: some View {
-    VStack(spacing: 0) {
+    CurrentContentLayout(
+      separatesBottom: false
+    ) {
       HStack(spacing: 8) {
         TextField("Repository-relative path", text: $fileInsightPathText)
           .textFieldStyle(.roundedBorder)
@@ -2393,9 +2449,8 @@ public struct CurrentRootView: View {
         }
       }
       .padding(10)
-
-      Divider()
-
+      .padding(.trailing, 12)
+    } middle: {
       HSplitView {
         fileHistoryList
           .frame(
@@ -2407,6 +2462,8 @@ public struct CurrentRootView: View {
           .frame(minWidth: CurrentUILayout.blameMinimumWidth)
           .layoutPriority(1)
       }
+    } bottom: {
+      EmptyView()
     }
   }
 
@@ -2588,7 +2645,9 @@ public struct CurrentRootView: View {
         description: Text("This repository has no reachable commits.")
       )
     } else {
-      VStack(spacing: 0) {
+      CurrentContentLayout(
+        separatesBottom: false
+      ) {
         VStack(spacing: 8) {
           HStack(spacing: 8) {
             Text(graphSelectionTitle)
@@ -2622,7 +2681,7 @@ public struct CurrentRootView: View {
         }
         .padding(10)
         .padding(.trailing, 12)
-        Divider()
+      } middle: {
         HSplitView {
           ZStack(alignment: .bottomTrailing) {
             CommitGraphView(
@@ -2683,6 +2742,8 @@ public struct CurrentRootView: View {
           .frame(minWidth: CurrentUILayout.graphMinimumWidth)
           graphInspector
         }
+      } bottom: {
+        EmptyView()
       }
       .onChange(of: graphSearchScope) {
         selectedGraphRows = []
@@ -3181,7 +3242,7 @@ public struct CurrentRootView: View {
       } icon: {
         Image(systemName: referenceIcon(reference.kind))
       }
-        .help(reference.fullName)
+      .help(reference.fullName)
     }
   }
 
@@ -3285,7 +3346,8 @@ public struct CurrentRootView: View {
     guard case .branch(let branch) = status?.head else { return nil }
     let remote: String?
     if let upstream = status?.upstream {
-      remote = remotes
+      remote =
+        remotes
         .sorted { $0.name.count > $1.name.count }
         .first { upstream.hasPrefix("\($0.name)/") }?
         .name

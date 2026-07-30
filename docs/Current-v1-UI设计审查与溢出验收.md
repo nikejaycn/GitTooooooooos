@@ -17,6 +17,8 @@
 | --- | --- |
 | 主窗口 | 最小 `880 × 560`，由 `CurrentUILayout` 统一定义 |
 | 侧边栏 | 固定 220；使用确定性可折叠 `HStack`，展开时真实占据宽度，正文仅使用剩余空间 |
+| 内容区纵向结构 | 统一使用 Top / Adaptive Middle / Bottom 三段式容器；上下区域贴边并保持本征高度，中部获得全部剩余高度且裁切到内容边界 |
+| 内容滚动 | List、Graph、Diff、Blame 等中部表面各自滚动，禁止在外层叠加滚动；可增长的顶部冲突列表和底部提交编辑器分别设上限并独立纵向滚动 |
 | Changes | 文件列表固定 300、Diff 最小 300；使用确定性双栏并靠左占满正文，避免侧边栏切换后错位或压缩 |
 | File History | 历史列表最小 230、Blame 最小 320 |
 | History | 提交图最小 320、Inspector 最小 220 |
@@ -26,7 +28,7 @@
 | 密集操作 | 保留一个明确主操作，其余进入语义清晰的 Menu；图标按钮提供 help 和 accessibility label |
 | 颜色和背景 | 仅使用系统语义颜色、material、Form、List 和 ContentUnavailableView |
 
-三个主分栏预算由自动化测试验证，防止以后新增固定宽度时重新超过最小窗口。
+三个主分栏预算和可增长纵向区域的上限由自动化测试验证，防止以后新增固定尺寸时重新超过最小窗口。
 
 ## 全界面审查矩阵
 
@@ -38,7 +40,7 @@
 | Changes 筛选栏 | 搜索框、状态 Picker、Stash 操作竞争宽度 | 搜索框优先伸缩；状态固定语义宽度；Stash 改为带辅助标签的图标按钮 | 通过 |
 | Changes 文件列表 | 长路径、类型和多个操作按钮 | 路径中部截断；文件操作统一进入尾部 Menu；状态字符和类型保持可读 | 通过 |
 | Unified / Split Diff | 长路径、外部工具名、Whitespace、hunk/line 操作 | 文件与空白选项使用紧凑 Menu；显示模式独立成行；hunk 操作栏显式横向滚动；正文使用 TextKit 滚动视图 | 通过 |
-| Commit 面板 | 多行消息、Co-author、校验信息、两个提交动作 | 消息限制 2–7 行；Grid 保持对齐；Commit 为主按钮，Commit & Push 为带 help/辅助标签的紧凑按钮 | 通过 |
+| Commit 面板 | 多行消息、Co-author、校验信息、两个提交动作 | 编辑器和选项在受控高度内独立滚动；校验与 Commit / Commit & Push 动作栏固定贴底，窗口变矮时仍可到达 | 通过 |
 | History 搜索与操作 | 选择摘要、搜索框、多个历史操作 | 工具栏拆为两行；Graph Options 与 Commit Actions 分组；搜索框可伸缩 | 通过 |
 | Commit Graph | 长 decoration、主题、作者、多列、AppKit 表格边界 | 外层确定性分栏保证表格不进入侧边栏；首次显示、选择提交和状态刷新后恢复 Graph / Commit 首列；用户仍可主动横滚查看可选列 | 通过 |
 | Commit Inspector / Compare | 长主题、作者邮件、路径、旧路径 | 主题和字段限制行数并提供 help；文件路径中部截断 | 通过 |
@@ -46,7 +48,7 @@
 | Blame | 长路径、作者和源码行 | 顶部路径截断；源码区域显式横向/纵向滚动；固定元数据列保持对齐 | 通过 |
 | Stashes | 长 stash 主题、selector | 主题中部截断并提供 help；selector 单行；Pop/Drop 保持固定尾部位置 | 通过 |
 | Operations | 长操作标题、detail、错误 | 标题单行；detail 最多三行并提供 help；操作列表滚动 | 通过 |
-| 冲突操作 Banner | 长冲突路径、多动作 | 路径中部截断；Resolve 保留主按钮；Ours/Theirs 收入 Choose Version Menu | 通过 |
+| 冲突操作 Banner | 长冲突路径、多动作、大量冲突 | 路径中部截断；Resolve 保留主按钮；Ours/Theirs 收入 Choose Version Menu；冲突列表达到高度上限后独立滚动 | 通过 |
 | Command Palette | 长命令、分支、文件和仓库路径 | 标题与 detail 中部截断；完整内容提供 help；固定尺寸列表滚动 | 通过 |
 | Conflict Resolution | 长路径、三方内容、错误、冲突计数 | 路径截断；三方内容显式双向滚动；错误最多三行；编辑区保持最小高度 | 通过 |
 | Interactive Rebase | 长错误、提交主题、reword 消息 | 错误最多五行；主题中部截断并提供 help；消息框可伸缩；操作 Picker 固定宽度 | 通过 |
@@ -82,8 +84,8 @@
 
 ## 本次验收证据
 
-- `CurrentUILayoutTests`：4 项通过。
-- 完整 `swift test`：154 项通过；3 项因运行环境缺少 FSEvents / bundled LFS 条件而按设计跳过。
+- `CurrentUILayoutTests`：5 项通过。
+- 完整 `swift test`：155 项通过；3 项因运行环境缺少 FSEvents / bundled LFS 条件而按设计跳过。
 - macOS arm64 Debug：`xcodebuild build` 通过。
-- 极端内容夹具：Changes、Unified Diff、History、Operations、Command Palette、Settings 深色与系统外观均完成运行态检查。
+- 极端内容夹具：最小窗口下完成 Changes、History、File History、Stashes、Operations、提交选项独立滚动，以及深色与系统外观的运行态检查。
 - `git diff --check`：通过。

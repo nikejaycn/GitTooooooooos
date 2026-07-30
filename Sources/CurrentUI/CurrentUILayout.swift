@@ -18,6 +18,10 @@ public enum CurrentUILayout {
   static let graphMinimumWidth: CGFloat = 320
   static let inspectorMinimumWidth: CGFloat = 220
   static let splitViewDividerAllowance: CGFloat = 12
+  static let operationConflictListMaximumHeight: CGFloat = 72
+  static let commitEditorMinimumHeight: CGFloat = 54
+  static let commitEditorIdealHeight: CGFloat = 74
+  static let commitEditorMaximumHeight: CGFloat = 112
 
   static var workingCopyMinimumWidth: CGFloat {
     workingCopyListIdealWidth + diffMinimumWidth + splitViewDividerAllowance
