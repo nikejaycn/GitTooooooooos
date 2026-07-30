@@ -1,25 +1,12 @@
 import AppKit
+import CurrentAppSupport
 import CurrentDomain
 import CurrentUI
 import GraphKit
 import SwiftUI
 import UpdateKit
 
-enum AppAppearance: String, CaseIterable, Identifiable {
-  case system
-  case light
-  case dark
-
-  var id: Self { self }
-
-  var title: String {
-    switch self {
-    case .system: "System"
-    case .light: "Light"
-    case .dark: "Dark"
-    }
-  }
-
+extension AppAppearance {
   var colorScheme: ColorScheme? {
     switch self {
     case .system: nil

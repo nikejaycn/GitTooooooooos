@@ -4,205 +4,6 @@ import DiffKit
 import GraphKit
 import SwiftUI
 
-private struct BranchDialogsModifier: ViewModifier {
-  @Binding var branchToRename: GitReference?
-  @Binding var renamedBranchName: String
-  @Binding var pendingBranchDeletion: GitReference?
-  let renameBranch: (String, String) -> Void
-  let deleteBranch: (String) -> Void
-
-  func body(content: Content) -> some View {
-    content
-      .alert(
-        "Rename Branch",
-        isPresented: Binding(
-          get: { branchToRename != nil },
-          set: { if !$0 { branchToRename = nil } }
-        )
-      ) {
-        TextField("New branch name", text: $renamedBranchName)
-        Button("Rename") {
-          if let branchToRename {
-            renameBranch(branchToRename.shortName, renamedBranchName)
-          }
-          branchToRename = nil
-        }
-        .disabled(
-          renamedBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || renamedBranchName == branchToRename?.shortName
-        )
-        Button("Cancel", role: .cancel) {
-          branchToRename = nil
-        }
-      } message: {
-        Text("This renames the local branch. Remote branches are unchanged.")
-      }
-      .confirmationDialog(
-        "Delete \(pendingBranchDeletion?.shortName ?? "this branch")?",
-        isPresented: Binding(
-          get: { pendingBranchDeletion != nil },
-          set: { if !$0 { pendingBranchDeletion = nil } }
-        ),
-        titleVisibility: .visible
-      ) {
-        Button("Delete Merged Branch", role: .destructive) {
-          if let pendingBranchDeletion {
-            deleteBranch(pendingBranchDeletion.shortName)
-          }
-          pendingBranchDeletion = nil
-        }
-        Button("Cancel", role: .cancel) {
-          pendingBranchDeletion = nil
-        }
-      } message: {
-        Text(
-          "GitCurrent uses Git's safe delete and refuses if the branch contains unmerged commits."
-        )
-      }
-  }
-}
-
-private struct PendingMergeRequest {
-  let branch: String
-  let squash: Bool
-}
-
-private struct PartialDiscardRequest {
-  let document: DiffDocument
-  let hunk: DiffHunk
-  let lineIndex: Int?
-}
-
-private enum WorkingCopyStatusFilter: String, CaseIterable, Identifiable {
-  case all
-  case staged
-  case unstaged
-  case untracked
-  case conflicted
-
-  var id: Self { self }
-
-  var title: String {
-    switch self {
-    case .all: "All"
-    case .staged: "Staged"
-    case .unstaged: "Unstaged"
-    case .untracked: "Untracked"
-    case .conflicted: "Conflicted"
-    }
-  }
-
-  func includes(_ change: FileChange) -> Bool {
-    switch self {
-    case .all:
-      true
-    case .staged:
-      change.isStaged
-    case .unstaged:
-      change.isUnstaged
-    case .untracked:
-      change.kind == .untracked
-    case .conflicted:
-      change.kind == .unmerged
-    }
-  }
-}
-
-private struct PartialDiscardDialogModifier: ViewModifier {
-  @Binding var request: PartialDiscardRequest?
-  let discardHunk: (DiffDocument, DiffHunk) -> Void
-  let discardLine: (DiffDocument, DiffHunk, Int) -> Void
-
-  func body(content: Content) -> some View {
-    content.confirmationDialog(
-      request?.lineIndex == nil ? "Discard selected hunk?" : "Discard selected line?",
-      isPresented: Binding(
-        get: { request != nil },
-        set: { if !$0 { request = nil } }
-      ),
-      titleVisibility: .visible
-    ) {
-      Button(
-        request?.lineIndex == nil ? "Discard Hunk" : "Discard Line",
-        role: .destructive
-      ) {
-        if let request {
-          if let lineIndex = request.lineIndex {
-            discardLine(request.document, request.hunk, lineIndex)
-          } else {
-            discardHunk(request.document, request.hunk)
-          }
-        }
-        request = nil
-      }
-      Button("Cancel", role: .cancel) {
-        request = nil
-      }
-    } message: {
-      Text(
-        "GitCurrent stores the original file blob behind a hidden recovery reference. Undo restores it only if the file still matches the post-discard state."
-      )
-    }
-  }
-}
-
-private struct HooksConfigurationDialogModifier: ViewModifier {
-  @Binding var isPresented: Bool
-  @Binding var path: String
-  let apply: (String?) -> Void
-
-  func body(content: Content) -> some View {
-    content.alert("Repository Hooks Directory", isPresented: $isPresented) {
-      TextField(".git/hooks or another path", text: $path)
-      Button("Apply") {
-        apply(path)
-      }
-      Button("Use Default") {
-        apply(nil)
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "This writes core.hooksPath only to the current repository. Relative paths are resolved by Git."
-      )
-    }
-  }
-}
-
-private struct MergeStartDialogModifier: ViewModifier {
-  @Binding var request: PendingMergeRequest?
-  let merge: (String) -> Void
-  let squashMerge: (String) -> Void
-
-  func body(content: Content) -> some View {
-    content.confirmationDialog(
-      request?.squash == true ? "Squash merge branch?" : "Merge branch?",
-      isPresented: Binding(
-        get: { request != nil },
-        set: { if !$0 { request = nil } }
-      ),
-      titleVisibility: .visible
-    ) {
-      Button(
-        request?.squash == true ? "Squash Merge" : "Merge",
-        role: .destructive
-      ) {
-        if let request {
-          request.squash ? squashMerge(request.branch) : merge(request.branch)
-        }
-        request = nil
-      }
-      Button("Cancel", role: .cancel) {
-        request = nil
-      }
-    } message: {
-      Text(
-        "GitCurrent resolves the target before execution and preserves the current HEAD in a hidden recovery reference. Without auto-stash, the operation requires a clean working copy."
-      )
-    }
-  }
-}
-
 public struct CurrentRootView: View {
   @Environment(\.openSettings) private var openSettings
 
@@ -247,142 +48,8 @@ public struct CurrentRootView: View {
     let content: Content
   }
 
-  private let repositoryName: String?
-  private let gitVersion: String?
-  private let commitTemplate: String?
-  private let status: RepositoryStatus?
-  private let commits: [CommitSummary]
-  private let graphRows: [GraphRow]
-  private let graphDisplayConfiguration: GraphDisplayConfiguration
-  private let visibleSidebarSections: Set<SidebarSection>
-  private let hiddenGraphReferences: Set<String>
-  private let soloGraphReference: String?
-  private let pinnedGraphReferences: Set<String>
-  private let repositorySearchRows: [GraphRow]
-  private let isRepositorySearchLoading: Bool
-  private let isHistoryPageLoading: Bool
-  private let hasMoreHistory: Bool
-  private let commitComparison: CommitComparison?
-  private let isCommitComparisonLoading: Bool
-  private let references: [GitReference]
-  private let stashes: [StashEntry]
-  private let remotes: [GitRemote]
-  private let worktrees: [GitWorktree]
-  private let submodules: [GitSubmodule]
-  private let gitLFS: GitLFSRepositoryState
-  private let gitHooks: GitHooksState
-  private let activities: [OperationActivity]
-  private let recentRepositories: [RecentRepository]
-  private let lastRecoveryReference: RecoveryReference?
-  private let selectedDiff: DiffDocument?
-  private let selectedCommitDiff: DiffDocument?
-  private let selectedCommitDiffComparison: CommitComparison?
-  private let diffOptions: DiffOptions
-  private let externalDiffTool: ExternalTool
-  private let externalMergeTool: ExternalTool
-  private let isDiffLoading: Bool
-  private let isCommitDiffLoading: Bool
-  private let fileHistory: FileHistoryResult?
-  private let blameDocument: BlameDocument?
-  private let isFileHistoryLoading: Bool
-  private let isBlameLoading: Bool
-  private let isLoading: Bool
-  private let isRepositoryOperation: Bool
-  private let errorMessage: String?
-  private let openRepository: () -> Void
-  private let newRepositoryWindow: () -> Void
-  private let initializeRepository: () -> Void
-  private let cloneRepository: (String) -> Void
-  private let openRecentRepository: (RecentRepository) -> Void
-  private let openRecentRepositoryInNewWindow: (RecentRepository) -> Void
-  private let toggleFavoriteRepository: (RecentRepository) -> Void
-  private let removeRecentRepository: (RecentRepository) -> Void
-  private let revealRepositoryInFinder: () -> Void
-  private let chooseExternalApplication: () -> Void
-  private let cancelRepositoryOperation: () -> Void
-  private let refresh: () -> Void
-  private let loadNextHistoryPage: () -> Void
-  private let searchRepositoryHistory: (String) -> Void
-  private let clearRepositoryHistorySearch: () -> Void
-  private let toggleHiddenGraphReference: (String) -> Void
-  private let setSoloGraphReference: (String?) -> Void
-  private let togglePinnedGraphReference: (String) -> Void
-  private let compareSelectedCommits: ([String]) -> Void
-  private let stage: (GitPath) -> Void
-  private let unstage: (GitPath) -> Void
-  private let discard: (GitPath) -> Void
-  private let ignore: (GitPath) -> Void
-  private let commit: (CommitRequest) async throws -> Void
-  private let exportPatch: (String) -> Void
-  private let applyPatch: () -> Void
-  private let loadDiff: (FileChange) -> Void
-  private let loadCommitDiff: (CommitFileChange, CommitComparison) -> Void
-  private let clearCommitDiff: () -> Void
-  private let setDiffOptions: (DiffOptions) -> Void
-  private let openExternalDiff: (DiffDocument) -> Void
-  private let loadFileInsights: (GitPath) -> Void
-  private let loadBlame: (GitPath, String?) -> Void
-  private let loadNextBlamePage: () -> Void
-  private let createBranch: (String) -> Void
-  private let checkoutBranch: (String) -> Void
-  private let checkoutRemoteBranch: (String, String) -> Void
-  private let renameBranch: (String, String) -> Void
-  private let deleteBranch: (String) -> Void
-  private let mergeBranch: (String) -> Void
-  private let squashMergeBranch: (String) -> Void
-  private let createTag: (String, String?, String?) -> Void
-  private let deleteTag: (GitReference) -> Void
-  private let pushTag: (GitReference, GitRemote) -> Void
-  private let deleteRemoteTag: (GitReference, GitRemote) -> Void
-  private let createWorktree: (String, String?) -> Void
-  private let openWorktree: (GitWorktree) -> Void
-  private let lockWorktree: (GitWorktree) -> Void
-  private let unlockWorktree: (GitWorktree) -> Void
-  private let removeWorktree: (GitWorktree, Bool) -> Void
-  private let pruneWorktrees: () -> Void
-  private let addSubmodule: (String, String, String?) -> Void
-  private let openSubmodule: (GitSubmodule) -> Void
-  private let initializeSubmodule: (GitSubmodule) -> Void
-  private let checkoutRecordedSubmodule: (GitSubmodule) -> Void
-  private let updateSubmoduleFromRemote: (GitSubmodule) -> Void
-  private let stageSubmodulePointer: (GitSubmodule) -> Void
-  private let removeSubmodule: (GitSubmodule, Bool) -> Void
-  private let installLFS: () -> Void
-  private let trackLFS: (String, Bool) -> Void
-  private let untrackLFS: (GitLFSPattern) -> Void
-  private let fetchLFS: (Bool) -> Void
-  private let pullLFS: () -> Void
-  private let pruneLFS: () -> Void
-  private let performMaintenance: (RepositoryMaintenanceTask) -> Void
-  private let setHooksPath: (String?) -> Void
-  private let continueOperation: () -> Void
-  private let abortOperation: () -> Void
-  private let resolveConflict: (GitPath, ConflictSide) -> Void
-  private let loadConflict: (GitPath) async throws -> ConflictFileContents
-  private let saveConflict: (GitPath, String) async throws -> Void
-  private let openExternalMerge: (GitPath) async throws -> Void
-  private let cherryPick: (String) -> Void
-  private let revert: (String) -> Void
-  private let reset: (String, ResetMode) -> Void
-  private let rebase: (String) -> Void
-  private let loadInteractiveRebase: (String) async throws -> InteractiveRebasePlan
-  private let runInteractiveRebase: (InteractiveRebasePlan) -> Void
-  private let undoLastOperation: () -> Void
-  private let applyHunk: (DiffDocument, DiffHunk) -> Void
-  private let applyLine: (DiffDocument, DiffHunk, Int) -> Void
-  private let discardHunk: (DiffDocument, DiffHunk) -> Void
-  private let discardLine: (DiffDocument, DiffHunk, Int) -> Void
-  private let saveStash: (String?, Bool, [GitPath]) -> Void
-  private let popStash: (String) -> Void
-  private let dropStash: (String) -> Void
-  private let fetch: () -> Void
-  private let fetchRemote: (GitRemote) -> Void
-  private let pull: (PullStrategy) -> Void
-  private let push: () -> Void
-  private let addRemote: (String, String, String?) -> Void
-  private let updateRemote: (GitRemote, String, String, String) -> Void
-  private let removeRemote: (GitRemote) -> Void
-  private let forcePushWithLease: () -> Void
+  private let state: CurrentRootState
+  private let actions: CurrentRootActions
   @State private var workspace: Workspace = .history
   @State private var isSidebarVisible = true
   @State private var expandedBranchFolders = Set<String>()
@@ -456,281 +123,215 @@ public struct CurrentRootView: View {
   @State private var stashRequest: StashRequest?
   @State private var pendingStashDrop: StashEntry?
 
-  public init(
-    repositoryName: String?,
-    gitVersion: String?,
-    commitTemplate: String?,
-    status: RepositoryStatus?,
-    commits: [CommitSummary],
-    graphRows: [GraphRow],
-    graphDisplayConfiguration: GraphDisplayConfiguration,
-    visibleSidebarSections: Set<SidebarSection>,
-    hiddenGraphReferences: Set<String>,
-    soloGraphReference: String?,
-    pinnedGraphReferences: Set<String>,
-    repositorySearchRows: [GraphRow],
-    isRepositorySearchLoading: Bool,
-    isHistoryPageLoading: Bool,
-    hasMoreHistory: Bool,
-    commitComparison: CommitComparison?,
-    isCommitComparisonLoading: Bool,
-    references: [GitReference],
-    stashes: [StashEntry],
-    remotes: [GitRemote],
-    worktrees: [GitWorktree],
-    submodules: [GitSubmodule],
-    gitLFS: GitLFSRepositoryState,
-    gitHooks: GitHooksState,
-    activities: [OperationActivity],
-    recentRepositories: [RecentRepository],
-    lastRecoveryReference: RecoveryReference?,
-    selectedDiff: DiffDocument?,
-    selectedCommitDiff: DiffDocument?,
-    selectedCommitDiffComparison: CommitComparison?,
-    diffOptions: DiffOptions,
-    externalDiffTool: ExternalTool,
-    externalMergeTool: ExternalTool,
-    isDiffLoading: Bool,
-    isCommitDiffLoading: Bool,
-    fileHistory: FileHistoryResult?,
-    blameDocument: BlameDocument?,
-    isFileHistoryLoading: Bool,
-    isBlameLoading: Bool,
-    isLoading: Bool,
-    isRepositoryOperation: Bool,
-    errorMessage: String?,
-    openRepository: @escaping () -> Void,
-    newRepositoryWindow: @escaping () -> Void,
-    initializeRepository: @escaping () -> Void,
-    cloneRepository: @escaping (String) -> Void,
-    openRecentRepository: @escaping (RecentRepository) -> Void,
-    openRecentRepositoryInNewWindow: @escaping (RecentRepository) -> Void,
-    toggleFavoriteRepository: @escaping (RecentRepository) -> Void,
-    removeRecentRepository: @escaping (RecentRepository) -> Void,
-    revealRepositoryInFinder: @escaping () -> Void,
-    chooseExternalApplication: @escaping () -> Void,
-    cancelRepositoryOperation: @escaping () -> Void,
-    refresh: @escaping () -> Void,
-    loadNextHistoryPage: @escaping () -> Void,
-    searchRepositoryHistory: @escaping (String) -> Void,
-    clearRepositoryHistorySearch: @escaping () -> Void,
-    toggleHiddenGraphReference: @escaping (String) -> Void,
-    setSoloGraphReference: @escaping (String?) -> Void,
-    togglePinnedGraphReference: @escaping (String) -> Void,
-    compareSelectedCommits: @escaping ([String]) -> Void,
-    stage: @escaping (GitPath) -> Void,
-    unstage: @escaping (GitPath) -> Void,
-    discard: @escaping (GitPath) -> Void,
-    ignore: @escaping (GitPath) -> Void,
-    commit: @escaping (CommitRequest) async throws -> Void,
-    exportPatch: @escaping (String) -> Void,
-    applyPatch: @escaping () -> Void,
-    loadDiff: @escaping (FileChange) -> Void,
-    loadCommitDiff: @escaping (CommitFileChange, CommitComparison) -> Void,
-    clearCommitDiff: @escaping () -> Void,
-    setDiffOptions: @escaping (DiffOptions) -> Void,
-    openExternalDiff: @escaping (DiffDocument) -> Void,
-    loadFileInsights: @escaping (GitPath) -> Void,
-    loadBlame: @escaping (GitPath, String?) -> Void,
-    loadNextBlamePage: @escaping () -> Void,
-    createBranch: @escaping (String) -> Void,
-    checkoutBranch: @escaping (String) -> Void,
-    checkoutRemoteBranch: @escaping (String, String) -> Void,
-    renameBranch: @escaping (String, String) -> Void,
-    deleteBranch: @escaping (String) -> Void,
-    mergeBranch: @escaping (String) -> Void,
-    squashMergeBranch: @escaping (String) -> Void,
-    createTag: @escaping (String, String?, String?) -> Void,
-    deleteTag: @escaping (GitReference) -> Void,
-    pushTag: @escaping (GitReference, GitRemote) -> Void,
-    deleteRemoteTag: @escaping (GitReference, GitRemote) -> Void,
-    createWorktree: @escaping (String, String?) -> Void,
-    openWorktree: @escaping (GitWorktree) -> Void,
-    lockWorktree: @escaping (GitWorktree) -> Void,
-    unlockWorktree: @escaping (GitWorktree) -> Void,
-    removeWorktree: @escaping (GitWorktree, Bool) -> Void,
-    pruneWorktrees: @escaping () -> Void,
-    addSubmodule: @escaping (String, String, String?) -> Void,
-    openSubmodule: @escaping (GitSubmodule) -> Void,
-    initializeSubmodule: @escaping (GitSubmodule) -> Void,
-    checkoutRecordedSubmodule: @escaping (GitSubmodule) -> Void,
-    updateSubmoduleFromRemote: @escaping (GitSubmodule) -> Void,
-    stageSubmodulePointer: @escaping (GitSubmodule) -> Void,
-    removeSubmodule: @escaping (GitSubmodule, Bool) -> Void,
-    installLFS: @escaping () -> Void,
-    trackLFS: @escaping (String, Bool) -> Void,
-    untrackLFS: @escaping (GitLFSPattern) -> Void,
-    fetchLFS: @escaping (Bool) -> Void,
-    pullLFS: @escaping () -> Void,
-    pruneLFS: @escaping () -> Void,
-    performMaintenance: @escaping (RepositoryMaintenanceTask) -> Void,
-    setHooksPath: @escaping (String?) -> Void,
-    continueOperation: @escaping () -> Void,
-    abortOperation: @escaping () -> Void,
-    resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
-    loadConflict: @escaping (GitPath) async throws -> ConflictFileContents,
-    saveConflict: @escaping (GitPath, String) async throws -> Void,
-    openExternalMerge: @escaping (GitPath) async throws -> Void,
-    cherryPick: @escaping (String) -> Void,
-    revert: @escaping (String) -> Void,
-    reset: @escaping (String, ResetMode) -> Void,
-    rebase: @escaping (String) -> Void,
-    loadInteractiveRebase: @escaping (String) async throws -> InteractiveRebasePlan,
-    runInteractiveRebase: @escaping (InteractiveRebasePlan) -> Void,
-    undoLastOperation: @escaping () -> Void,
-    applyHunk: @escaping (DiffDocument, DiffHunk) -> Void,
-    applyLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
-    discardHunk: @escaping (DiffDocument, DiffHunk) -> Void,
-    discardLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
-    saveStash: @escaping (String?, Bool, [GitPath]) -> Void,
-    popStash: @escaping (String) -> Void,
-    dropStash: @escaping (String) -> Void,
-    fetch: @escaping () -> Void,
-    fetchRemote: @escaping (GitRemote) -> Void,
-    pull: @escaping (PullStrategy) -> Void,
-    push: @escaping () -> Void,
-    addRemote: @escaping (String, String, String?) -> Void,
-    updateRemote: @escaping (GitRemote, String, String, String) -> Void,
-    removeRemote: @escaping (GitRemote) -> Void,
-    forcePushWithLease: @escaping () -> Void
-  ) {
-    self.repositoryName = repositoryName
-    self.gitVersion = gitVersion
-    self.commitTemplate = commitTemplate
-    self.status = status
-    self.commits = commits
-    self.graphRows = graphRows
-    self.graphDisplayConfiguration = graphDisplayConfiguration
-    self.visibleSidebarSections = visibleSidebarSections
-    self.hiddenGraphReferences = hiddenGraphReferences
-    self.soloGraphReference = soloGraphReference
-    self.pinnedGraphReferences = pinnedGraphReferences
-    self.repositorySearchRows = repositorySearchRows
-    self.isRepositorySearchLoading = isRepositorySearchLoading
-    self.isHistoryPageLoading = isHistoryPageLoading
-    self.hasMoreHistory = hasMoreHistory
-    self.commitComparison = commitComparison
-    self.isCommitComparisonLoading = isCommitComparisonLoading
-    self.references = references
-    self.stashes = stashes
-    self.remotes = remotes
-    self.worktrees = worktrees
-    self.submodules = submodules
-    self.gitLFS = gitLFS
-    self.gitHooks = gitHooks
-    self.activities = activities
-    self.recentRepositories = recentRepositories
-    self.lastRecoveryReference = lastRecoveryReference
-    self.selectedDiff = selectedDiff
-    self.selectedCommitDiff = selectedCommitDiff
-    self.selectedCommitDiffComparison = selectedCommitDiffComparison
-    self.diffOptions = diffOptions
-    self.externalDiffTool = externalDiffTool
-    self.externalMergeTool = externalMergeTool
-    self.isDiffLoading = isDiffLoading
-    self.isCommitDiffLoading = isCommitDiffLoading
-    self.fileHistory = fileHistory
-    self.blameDocument = blameDocument
-    self.isFileHistoryLoading = isFileHistoryLoading
-    self.isBlameLoading = isBlameLoading
-    self.isLoading = isLoading
-    self.isRepositoryOperation = isRepositoryOperation
-    self.errorMessage = errorMessage
-    self.openRepository = openRepository
-    self.newRepositoryWindow = newRepositoryWindow
-    self.initializeRepository = initializeRepository
-    self.cloneRepository = cloneRepository
-    self.openRecentRepository = openRecentRepository
-    self.openRecentRepositoryInNewWindow = openRecentRepositoryInNewWindow
-    self.toggleFavoriteRepository = toggleFavoriteRepository
-    self.removeRecentRepository = removeRecentRepository
-    self.revealRepositoryInFinder = revealRepositoryInFinder
-    self.chooseExternalApplication = chooseExternalApplication
-    self.cancelRepositoryOperation = cancelRepositoryOperation
-    self.refresh = refresh
-    self.loadNextHistoryPage = loadNextHistoryPage
-    self.searchRepositoryHistory = searchRepositoryHistory
-    self.clearRepositoryHistorySearch = clearRepositoryHistorySearch
-    self.toggleHiddenGraphReference = toggleHiddenGraphReference
-    self.setSoloGraphReference = setSoloGraphReference
-    self.togglePinnedGraphReference = togglePinnedGraphReference
-    self.compareSelectedCommits = compareSelectedCommits
-    self.stage = stage
-    self.unstage = unstage
-    self.discard = discard
-    self.ignore = ignore
-    self.commit = commit
-    self.exportPatch = exportPatch
-    self.applyPatch = applyPatch
-    self.loadDiff = loadDiff
-    self.loadCommitDiff = loadCommitDiff
-    self.clearCommitDiff = clearCommitDiff
-    self.setDiffOptions = setDiffOptions
-    self.openExternalDiff = openExternalDiff
-    self.loadFileInsights = loadFileInsights
-    self.loadBlame = loadBlame
-    self.loadNextBlamePage = loadNextBlamePage
-    self.createBranch = createBranch
-    self.checkoutBranch = checkoutBranch
-    self.checkoutRemoteBranch = checkoutRemoteBranch
-    self.renameBranch = renameBranch
-    self.deleteBranch = deleteBranch
-    self.mergeBranch = mergeBranch
-    self.squashMergeBranch = squashMergeBranch
-    self.createTag = createTag
-    self.deleteTag = deleteTag
-    self.pushTag = pushTag
-    self.deleteRemoteTag = deleteRemoteTag
-    self.createWorktree = createWorktree
-    self.openWorktree = openWorktree
-    self.lockWorktree = lockWorktree
-    self.unlockWorktree = unlockWorktree
-    self.removeWorktree = removeWorktree
-    self.pruneWorktrees = pruneWorktrees
-    self.addSubmodule = addSubmodule
-    self.openSubmodule = openSubmodule
-    self.initializeSubmodule = initializeSubmodule
-    self.checkoutRecordedSubmodule = checkoutRecordedSubmodule
-    self.updateSubmoduleFromRemote = updateSubmoduleFromRemote
-    self.stageSubmodulePointer = stageSubmodulePointer
-    self.removeSubmodule = removeSubmodule
-    self.installLFS = installLFS
-    self.trackLFS = trackLFS
-    self.untrackLFS = untrackLFS
-    self.fetchLFS = fetchLFS
-    self.pullLFS = pullLFS
-    self.pruneLFS = pruneLFS
-    self.performMaintenance = performMaintenance
-    self.setHooksPath = setHooksPath
-    self.continueOperation = continueOperation
-    self.abortOperation = abortOperation
-    self.resolveConflict = resolveConflict
-    self.loadConflict = loadConflict
-    self.saveConflict = saveConflict
-    self.openExternalMerge = openExternalMerge
-    self.cherryPick = cherryPick
-    self.revert = revert
-    self.reset = reset
-    self.rebase = rebase
-    self.loadInteractiveRebase = loadInteractiveRebase
-    self.runInteractiveRebase = runInteractiveRebase
-    self.undoLastOperation = undoLastOperation
-    self.applyHunk = applyHunk
-    self.applyLine = applyLine
-    self.discardHunk = discardHunk
-    self.discardLine = discardLine
-    self.saveStash = saveStash
-    self.popStash = popStash
-    self.dropStash = dropStash
-    self.fetch = fetch
-    self.fetchRemote = fetchRemote
-    self.pull = pull
-    self.push = push
-    self.addRemote = addRemote
-    self.updateRemote = updateRemote
-    self.removeRemote = removeRemote
-    self.forcePushWithLease = forcePushWithLease
+  public init(state: CurrentRootState, actions: CurrentRootActions) {
+    self.state = state
+    self.actions = actions
   }
+
+  // MARK: - Feature state forwarding
+
+  private var repositoryName: String? { state.repository.name }
+  private var gitVersion: String? { state.repository.gitVersion }
+  private var commitTemplate: String? { state.repository.commitTemplate }
+  private var status: RepositoryStatus? { state.repository.status }
+  private var references: [GitReference] { state.repository.references }
+  private var stashes: [StashEntry] { state.repository.stashes }
+  private var remotes: [GitRemote] { state.repository.remotes }
+  private var worktrees: [GitWorktree] { state.repository.worktrees }
+  private var submodules: [GitSubmodule] { state.repository.submodules }
+  private var gitLFS: GitLFSRepositoryState { state.repository.gitLFS }
+  private var gitHooks: GitHooksState { state.repository.gitHooks }
+  private var activities: [OperationActivity] { state.repository.activities }
+  private var recentRepositories: [RecentRepository] { state.repository.recentRepositories }
+  private var lastRecoveryReference: RecoveryReference? {
+    state.repository.lastRecoveryReference
+  }
+  private var isLoading: Bool { state.repository.isLoading }
+  private var isRepositoryOperation: Bool { state.repository.isOperationRunning }
+  private var errorMessage: String? { state.repository.errorMessage }
+
+  private var commits: [CommitSummary] { state.history.commits }
+  private var graphRows: [GraphRow] { state.history.graphRows }
+  private var graphDisplayConfiguration: GraphDisplayConfiguration {
+    state.history.graphDisplayConfiguration
+  }
+  private var hiddenGraphReferences: Set<String> { state.history.hiddenGraphReferences }
+  private var soloGraphReference: String? { state.history.soloGraphReference }
+  private var pinnedGraphReferences: Set<String> { state.history.pinnedGraphReferences }
+  private var repositorySearchRows: [GraphRow] { state.history.repositorySearchRows }
+  private var isRepositorySearchLoading: Bool { state.history.isRepositorySearchLoading }
+  private var isHistoryPageLoading: Bool { state.history.isPageLoading }
+  private var hasMoreHistory: Bool { state.history.hasMore }
+  private var commitComparison: CommitComparison? { state.history.comparison }
+  private var isCommitComparisonLoading: Bool { state.history.isComparisonLoading }
+
+  private var selectedDiff: DiffDocument? { state.diff.selected }
+  private var selectedCommitDiff: DiffDocument? { state.diff.selectedCommit }
+  private var selectedCommitDiffComparison: CommitComparison? {
+    state.diff.selectedCommitComparison
+  }
+  private var diffOptions: DiffOptions { state.diff.options }
+  private var externalDiffTool: ExternalTool { state.diff.externalDiffTool }
+  private var externalMergeTool: ExternalTool { state.diff.externalMergeTool }
+  private var isDiffLoading: Bool { state.diff.isLoading }
+  private var isCommitDiffLoading: Bool { state.diff.isCommitLoading }
+
+  private var fileHistory: FileHistoryResult? { state.fileInsights.history }
+  private var blameDocument: BlameDocument? { state.fileInsights.blame }
+  private var isFileHistoryLoading: Bool { state.fileInsights.isHistoryLoading }
+  private var isBlameLoading: Bool { state.fileInsights.isBlameLoading }
+
+  private var visibleSidebarSections: Set<SidebarSection> { state.sidebar.visibleSections }
+
+  // MARK: - Feature action forwarding
+
+  private var openRepository: () -> Void { actions.repository.open }
+  private var newRepositoryWindow: () -> Void { actions.repository.openNewWindow }
+  private var initializeRepository: () -> Void { actions.repository.initialize }
+  private var cloneRepository: (String) -> Void { actions.repository.clone }
+  private var openRecentRepository: (RecentRepository) -> Void { actions.repository.openRecent }
+  private var openRecentRepositoryInNewWindow: (RecentRepository) -> Void {
+    actions.repository.openRecentInNewWindow
+  }
+  private var toggleFavoriteRepository: (RecentRepository) -> Void {
+    actions.repository.toggleFavorite
+  }
+  private var removeRecentRepository: (RecentRepository) -> Void {
+    actions.repository.removeRecent
+  }
+  private var revealRepositoryInFinder: () -> Void { actions.repository.revealInFinder }
+  private var chooseExternalApplication: () -> Void {
+    actions.repository.chooseExternalApplication
+  }
+  private var cancelRepositoryOperation: () -> Void { actions.repository.cancelOperation }
+  private var refresh: () -> Void { actions.repository.refresh }
+
+  private var loadNextHistoryPage: () -> Void { actions.history.loadNextPage }
+  private var searchRepositoryHistory: (String) -> Void { actions.history.search }
+  private var clearRepositoryHistorySearch: () -> Void { actions.history.clearSearch }
+  private var toggleHiddenGraphReference: (String) -> Void {
+    actions.history.toggleHiddenReference
+  }
+  private var setSoloGraphReference: (String?) -> Void { actions.history.setSoloReference }
+  private var togglePinnedGraphReference: (String) -> Void {
+    actions.history.togglePinnedReference
+  }
+  private var compareSelectedCommits: ([String]) -> Void { actions.history.compareCommits }
+  private var exportPatch: (String) -> Void { actions.history.exportPatch }
+  private var applyPatch: () -> Void { actions.history.applyPatch }
+  private var cherryPick: (String) -> Void { actions.history.cherryPick }
+  private var revert: (String) -> Void { actions.history.revert }
+  private var reset: (String, ResetMode) -> Void { actions.history.reset }
+  private var rebase: (String) -> Void { actions.history.rebase }
+  private var loadInteractiveRebase: (String) async throws -> InteractiveRebasePlan {
+    actions.history.loadInteractiveRebase
+  }
+  private var runInteractiveRebase: (InteractiveRebasePlan) -> Void {
+    actions.history.runInteractiveRebase
+  }
+
+  private var stage: (GitPath) -> Void { actions.workingCopy.stage }
+  private var unstage: (GitPath) -> Void { actions.workingCopy.unstage }
+  private var discard: (GitPath) -> Void { actions.workingCopy.discard }
+  private var ignore: (GitPath) -> Void { actions.workingCopy.ignore }
+  private var commit: (CommitRequest) async throws -> Void { actions.workingCopy.commit }
+  private var applyHunk: (DiffDocument, DiffHunk) -> Void { actions.workingCopy.applyHunk }
+  private var applyLine: (DiffDocument, DiffHunk, Int) -> Void {
+    actions.workingCopy.applyLine
+  }
+  private var discardHunk: (DiffDocument, DiffHunk) -> Void {
+    actions.workingCopy.discardHunk
+  }
+  private var discardLine: (DiffDocument, DiffHunk, Int) -> Void {
+    actions.workingCopy.discardLine
+  }
+
+  private var loadDiff: (FileChange) -> Void { actions.diff.load }
+  private var loadCommitDiff: (CommitFileChange, CommitComparison) -> Void {
+    actions.diff.loadCommit
+  }
+  private var clearCommitDiff: () -> Void { actions.diff.clearCommit }
+  private var setDiffOptions: (DiffOptions) -> Void { actions.diff.setOptions }
+  private var openExternalDiff: (DiffDocument) -> Void { actions.diff.openExternal }
+  private var loadFileInsights: (GitPath) -> Void { actions.diff.loadFileInsights }
+  private var loadBlame: (GitPath, String?) -> Void { actions.diff.loadBlame }
+  private var loadNextBlamePage: () -> Void { actions.diff.loadNextBlamePage }
+
+  private var createBranch: (String) -> Void { actions.branches.create }
+  private var checkoutBranch: (String) -> Void { actions.branches.checkout }
+  private var checkoutRemoteBranch: (String, String) -> Void {
+    actions.branches.checkoutRemote
+  }
+  private var renameBranch: (String, String) -> Void { actions.branches.rename }
+  private var deleteBranch: (String) -> Void { actions.branches.delete }
+  private var mergeBranch: (String) -> Void { actions.branches.merge }
+  private var squashMergeBranch: (String) -> Void { actions.branches.squashMerge }
+
+  private var createTag: (String, String?, String?) -> Void { actions.tags.create }
+  private var deleteTag: (GitReference) -> Void { actions.tags.delete }
+  private var pushTag: (GitReference, GitRemote) -> Void { actions.tags.push }
+  private var deleteRemoteTag: (GitReference, GitRemote) -> Void { actions.tags.deleteRemote }
+
+  private var createWorktree: (String, String?) -> Void { actions.worktrees.create }
+  private var openWorktree: (GitWorktree) -> Void { actions.worktrees.open }
+  private var lockWorktree: (GitWorktree) -> Void { actions.worktrees.lock }
+  private var unlockWorktree: (GitWorktree) -> Void { actions.worktrees.unlock }
+  private var removeWorktree: (GitWorktree, Bool) -> Void { actions.worktrees.remove }
+  private var pruneWorktrees: () -> Void { actions.worktrees.prune }
+
+  private var addSubmodule: (String, String, String?) -> Void { actions.submodules.add }
+  private var openSubmodule: (GitSubmodule) -> Void { actions.submodules.open }
+  private var initializeSubmodule: (GitSubmodule) -> Void { actions.submodules.initialize }
+  private var checkoutRecordedSubmodule: (GitSubmodule) -> Void {
+    actions.submodules.checkoutRecorded
+  }
+  private var updateSubmoduleFromRemote: (GitSubmodule) -> Void {
+    actions.submodules.updateFromRemote
+  }
+  private var stageSubmodulePointer: (GitSubmodule) -> Void { actions.submodules.stagePointer }
+  private var removeSubmodule: (GitSubmodule, Bool) -> Void { actions.submodules.remove }
+
+  private var installLFS: () -> Void { actions.lfs.install }
+  private var trackLFS: (String, Bool) -> Void { actions.lfs.track }
+  private var untrackLFS: (GitLFSPattern) -> Void { actions.lfs.untrack }
+  private var fetchLFS: (Bool) -> Void { actions.lfs.fetch }
+  private var pullLFS: () -> Void { actions.lfs.pull }
+  private var pruneLFS: () -> Void { actions.lfs.prune }
+
+  private var performMaintenance: (RepositoryMaintenanceTask) -> Void {
+    actions.operations.performMaintenance
+  }
+  private var setHooksPath: (String?) -> Void { actions.operations.setHooksPath }
+  private var continueOperation: () -> Void { actions.operations.continueOperation }
+  private var abortOperation: () -> Void { actions.operations.abortOperation }
+  private var resolveConflict: (GitPath, ConflictSide) -> Void {
+    actions.operations.resolveConflict
+  }
+  private var loadConflict: (GitPath) async throws -> ConflictFileContents {
+    actions.operations.loadConflict
+  }
+  private var saveConflict: (GitPath, String) async throws -> Void {
+    actions.operations.saveConflict
+  }
+  private var openExternalMerge: (GitPath) async throws -> Void {
+    actions.operations.openExternalMerge
+  }
+  private var undoLastOperation: () -> Void { actions.operations.undoLastOperation }
+
+  private var saveStash: (String?, Bool, [GitPath]) -> Void { actions.stashes.save }
+  private var popStash: (String) -> Void { actions.stashes.pop }
+  private var dropStash: (String) -> Void { actions.stashes.drop }
+
+  private var fetch: () -> Void { actions.remotes.fetch }
+  private var fetchRemote: (GitRemote) -> Void { actions.remotes.fetchRemote }
+  private var pull: (PullStrategy) -> Void { actions.remotes.pull }
+  private var push: () -> Void { actions.remotes.push }
+  private var addRemote: (String, String, String?) -> Void { actions.remotes.add }
+  private var updateRemote: (GitRemote, String, String, String) -> Void {
+    actions.remotes.update
+  }
+  private var removeRemote: (GitRemote) -> Void { actions.remotes.remove }
+  private var forcePushWithLease: () -> Void { actions.remotes.forcePushWithLease }
 
   public var body: some View {
     HSplitView {
@@ -3122,7 +2723,7 @@ public struct CurrentRootView: View {
                   .font(.caption)
                   .foregroundStyle(.secondary)
                   .padding(8)
-                .allowsHitTesting(false)
+                  .allowsHitTesting(false)
               }
             }
             .frame(
@@ -4683,392 +4284,5 @@ public struct CurrentRootView: View {
     ]
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
-  }
-}
-
-private struct StashCreationView: View {
-  let paths: [GitPath]
-  let save: (String?, Bool, [GitPath]) -> Void
-  let dismiss: () -> Void
-
-  @State private var message = ""
-  @State private var includeUntracked = true
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text(paths.isEmpty ? "Stash Working Copy" : "Stash Selected Paths")
-          .font(.title2.weight(.semibold))
-        Text(scopeDescription)
-          .font(.callout)
-          .foregroundStyle(.secondary)
-      }
-
-      TextField("Message (optional)", text: $message)
-        .textFieldStyle(.roundedBorder)
-        .accessibilityLabel("Stash message")
-
-      Toggle("Include untracked files in this scope", isOn: $includeUntracked)
-
-      if !paths.isEmpty {
-        List(paths, id: \.self) { path in
-          Label(path.displayString, systemImage: "doc")
-            .lineLimit(1)
-        }
-        .frame(minHeight: 120)
-      }
-
-      HStack {
-        Spacer()
-        Button("Cancel", role: .cancel, action: dismiss)
-          .keyboardShortcut(.cancelAction)
-        Button("Create Stash") {
-          let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-          save(trimmed.isEmpty ? nil : trimmed, includeUntracked, paths)
-          dismiss()
-        }
-        .keyboardShortcut(.defaultAction)
-      }
-    }
-    .padding(20)
-    .frame(width: 500, height: paths.isEmpty ? 220 : 390)
-  }
-
-  private var scopeDescription: String {
-    if paths.isEmpty {
-      return "Save all working-copy changes and restore a clean worktree."
-    }
-    return "Save changes under \(paths.count) selected path\(paths.count == 1 ? "" : "s") only."
-  }
-}
-
-private struct RemoteDialogsModifier: ViewModifier {
-  @Binding var isEditing: Bool
-  @Binding var editingRemote: GitRemote?
-  @Binding var name: String
-  @Binding var fetchURL: String
-  @Binding var pushURL: String
-  @Binding var pendingRemoval: GitRemote?
-  @Binding var isConfirmingPush: Bool
-  @Binding var isConfirmingForcePush: Bool
-  let pushTargetDescription: String?
-  let pushRangeDescription: String
-  let pushCommitCount: Int?
-  let add: (String, String, String?) -> Void
-  let update: (GitRemote, String, String, String) -> Void
-  let remove: (GitRemote) -> Void
-  let push: () -> Void
-  let forcePushWithLease: () -> Void
-
-  func body(content: Content) -> some View {
-    content
-      .alert(editingRemote == nil ? "Add Remote" : "Edit Remote", isPresented: $isEditing) {
-        TextField("Name", text: $name)
-        TextField("Fetch URL", text: $fetchURL)
-        TextField("Push URL (optional)", text: $pushURL)
-        Button(editingRemote == nil ? "Add" : "Save") {
-          let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-          let cleanFetchURL = fetchURL.trimmingCharacters(in: .whitespacesAndNewlines)
-          let cleanPushURL = pushURL.trimmingCharacters(in: .whitespacesAndNewlines)
-          if let editingRemote {
-            update(
-              editingRemote,
-              cleanName,
-              cleanFetchURL,
-              cleanPushURL.isEmpty ? cleanFetchURL : cleanPushURL
-            )
-          } else {
-            add(
-              cleanName,
-              cleanFetchURL,
-              cleanPushURL.isEmpty ? nil : cleanPushURL
-            )
-          }
-          self.editingRemote = nil
-        }
-        .disabled(
-          name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || fetchURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        )
-        Button("Cancel", role: .cancel) {
-          editingRemote = nil
-        }
-      } message: {
-        Text("Fetch and push URLs may use HTTPS, SSH, or a local repository path.")
-      }
-      .confirmationDialog(
-        "Remove remote \(pendingRemoval?.name ?? "")?",
-        isPresented: Binding(
-          get: { pendingRemoval != nil },
-          set: { if !$0 { pendingRemoval = nil } }
-        ),
-        titleVisibility: .visible
-      ) {
-        Button("Remove Remote", role: .destructive) {
-          if let pendingRemoval {
-            remove(pendingRemoval)
-          }
-          pendingRemoval = nil
-        }
-        Button("Cancel", role: .cancel) {
-          pendingRemoval = nil
-        }
-      } message: {
-        Text("This removes the local remote configuration and remote-tracking refs.")
-      }
-      .confirmationDialog(
-        "Push to \(pushTargetDescription ?? "remote branch")?",
-        isPresented: $isConfirmingPush,
-        titleVisibility: .visible
-      ) {
-        Button(pushButtonTitle) {
-          push()
-        }
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text(
-          "Target: \(pushTargetDescription ?? "Unavailable"). Outgoing range: \(pushRangeDescription)\(pushCountDescription)."
-        )
-      }
-      .confirmationDialog(
-        "Force push the current branch with lease?",
-        isPresented: $isConfirmingForcePush,
-        titleVisibility: .visible
-      ) {
-        Button("Force Push with Lease", role: .destructive, action: forcePushWithLease)
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text(
-          "GitCurrent pins the expected remote-tracking OID. Git rejects the push if the remote branch changed since your last fetch."
-        )
-      }
-  }
-
-  private var pushButtonTitle: String {
-    guard let pushCommitCount else { return "Push Current Branch" }
-    return pushCommitCount == 1 ? "Push 1 Commit" : "Push \(pushCommitCount) Commits"
-  }
-
-  private var pushCountDescription: String {
-    guard let pushCommitCount else { return "" }
-    return " (\(pushCommitCount) commit\(pushCommitCount == 1 ? "" : "s"))"
-  }
-}
-
-private struct PendingRemoteTagDeletion {
-  let reference: GitReference
-  let remote: GitRemote
-}
-
-private struct TagCreationDialogModifier: ViewModifier {
-  @Binding var isPresented: Bool
-  @Binding var name: String
-  @Binding var target: String
-  @Binding var message: String
-  let create: (String, String?, String?) -> Void
-
-  func body(content: Content) -> some View {
-    content
-      .alert("Create Tag", isPresented: $isPresented) {
-        TextField("Tag name", text: $name)
-        TextField("Target (optional, defaults to HEAD)", text: $target)
-        TextField("Annotation message", text: $message)
-        Button("Create Annotated") {
-          create(
-            name, trimmedOrNil(target), message.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        .disabled(
-          name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        )
-        Button("Create Lightweight") {
-          create(name, trimmedOrNil(target), nil)
-        }
-        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text(
-          "Annotated tags store the message, tagger, and date. Lightweight tags are only a named commit reference."
-        )
-      }
-  }
-
-  private func trimmedOrNil(_ value: String) -> String? {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? nil : trimmed
-  }
-}
-
-private struct TagDialogsModifier: ViewModifier {
-  @Binding var pendingLocalDeletion: GitReference?
-  @Binding var pendingRemoteDeletion: PendingRemoteTagDeletion?
-  @State private var finalRemoteDeletion: PendingRemoteTagDeletion?
-  let deleteLocal: (GitReference) -> Void
-  let deleteRemote: (GitReference, GitRemote) -> Void
-
-  func body(content: Content) -> some View {
-    content
-      .confirmationDialog(
-        "Delete local tag \(pendingLocalDeletion?.shortName ?? "")?",
-        isPresented: Binding(
-          get: { pendingLocalDeletion != nil },
-          set: { if !$0 { pendingLocalDeletion = nil } }
-        ),
-        titleVisibility: .visible
-      ) {
-        Button("Delete Local Tag", role: .destructive) {
-          if let pendingLocalDeletion {
-            deleteLocal(pendingLocalDeletion)
-          }
-          pendingLocalDeletion = nil
-        }
-        Button("Cancel", role: .cancel) {
-          pendingLocalDeletion = nil
-        }
-      } message: {
-        Text("This removes only the local reference. Existing remote tags are unchanged.")
-      }
-      .confirmationDialog(
-        "Delete remote tag \(pendingRemoteDeletion?.reference.shortName ?? "")?",
-        isPresented: Binding(
-          get: { pendingRemoteDeletion != nil },
-          set: { if !$0 { pendingRemoteDeletion = nil } }
-        ),
-        titleVisibility: .visible
-      ) {
-        Button("Continue") {
-          if let pendingRemoteDeletion {
-            finalRemoteDeletion = pendingRemoteDeletion
-          }
-          pendingRemoteDeletion = nil
-        }
-        Button("Cancel", role: .cancel) {
-          pendingRemoteDeletion = nil
-        }
-      } message: {
-        Text(
-          "This updates \(pendingRemoteDeletion?.remote.name ?? "the remote") immediately and cannot be undone locally."
-        )
-      }
-      .alert(
-        "Final confirmation: delete remote tag?",
-        isPresented: Binding(
-          get: { finalRemoteDeletion != nil },
-          set: { if !$0 { finalRemoteDeletion = nil } }
-        )
-      ) {
-        Button("Delete Remote Tag", role: .destructive) {
-          if let finalRemoteDeletion {
-            deleteRemote(
-              finalRemoteDeletion.reference,
-              finalRemoteDeletion.remote
-            )
-          }
-          finalRemoteDeletion = nil
-        }
-        Button("Cancel", role: .cancel) {
-          finalRemoteDeletion = nil
-        }
-      } message: {
-        Text(
-          "GitCurrent will verify the remote tag has not changed since inspection. This deletion cannot be undone locally."
-        )
-      }
-  }
-}
-
-private struct StashDropDialogModifier: ViewModifier {
-  @Binding var pendingDrop: StashEntry?
-  let drop: (String) -> Void
-
-  func body(content: Content) -> some View {
-    content.confirmationDialog(
-      "Drop \(pendingDrop?.selector ?? "stash")?",
-      isPresented: Binding(
-        get: { pendingDrop != nil },
-        set: { if !$0 { pendingDrop = nil } }
-      ),
-      titleVisibility: .visible
-    ) {
-      Button("Drop Stash", role: .destructive) {
-        if let pendingDrop {
-          drop(pendingDrop.selector)
-        }
-        pendingDrop = nil
-      }
-      Button("Cancel", role: .cancel) {
-        pendingDrop = nil
-      }
-    } message: {
-      Text(
-        "GitCurrent keeps a hidden recovery reference so this stash can be restored with Undo."
-      )
-    }
-  }
-}
-
-private struct LFSDialogsModifier: ViewModifier {
-  @Binding var isTracking: Bool
-  @Binding var pattern: String
-  let isLockable: Bool
-  @Binding var pendingUntrack: GitLFSPattern?
-  @Binding var isConfirmingPrune: Bool
-  let track: (String, Bool) -> Void
-  let untrack: (GitLFSPattern) -> Void
-  let prune: () -> Void
-
-  func body(content: Content) -> some View {
-    content
-      .alert(
-        isLockable ? "Track Lockable Git LFS Pattern" : "Track Git LFS Pattern",
-        isPresented: $isTracking
-      ) {
-        TextField("Pattern, for example *.psd", text: $pattern)
-        Button("Track") {
-          track(pattern, isLockable)
-        }
-        .disabled(pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text(
-          isLockable
-            ? "This updates .gitattributes and makes matching files read-only unless locked. Existing Git blobs are not migrated automatically."
-            : "This updates .gitattributes. Existing Git blobs are not migrated automatically."
-        )
-      }
-      .confirmationDialog(
-        "Stop tracking \(pendingUntrack?.pattern ?? "this pattern") with Git LFS?",
-        isPresented: Binding(
-          get: { pendingUntrack != nil },
-          set: { if !$0 { pendingUntrack = nil } }
-        ),
-        titleVisibility: .visible
-      ) {
-        Button("Stop Tracking", role: .destructive) {
-          if let pendingUntrack {
-            untrack(pendingUntrack)
-          }
-          pendingUntrack = nil
-        }
-        Button("Cancel", role: .cancel) {
-          pendingUntrack = nil
-        }
-      } message: {
-        Text(
-          "This removes the root .gitattributes rule. Existing LFS objects and repository history are not rewritten."
-        )
-      }
-      .confirmationDialog(
-        "Prune local Git LFS objects?",
-        isPresented: $isConfirmingPrune,
-        titleVisibility: .visible
-      ) {
-        Button("Prune Verified Objects", role: .destructive, action: prune)
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text(
-          "Git LFS keeps objects needed by current and recent refs and verifies prune candidates exist on the remote before deleting local copies."
-        )
-      }
   }
 }

@@ -170,146 +170,8 @@ private struct CurrentWorkspaceWindow: View {
 
   var body: some View {
     CurrentRootView(
-      repositoryName: model.repositoryName,
-      gitVersion: model.gitVersion,
-      commitTemplate: model.commitTemplate,
-      status: model.repositoryStatus,
-      commits: model.commits,
-      graphRows: model.graphRows,
-      graphDisplayConfiguration: model.graphDisplayConfiguration,
-      visibleSidebarSections: settingsModel.visibleSidebarSections,
-      hiddenGraphReferences: model.hiddenGraphReferences,
-      soloGraphReference: model.soloGraphReference,
-      pinnedGraphReferences: model.pinnedGraphReferences,
-      repositorySearchRows: model.repositorySearchRows,
-      isRepositorySearchLoading: model.isRepositorySearchLoading,
-      isHistoryPageLoading: model.isHistoryPageLoading,
-      hasMoreHistory: model.hasMoreHistory,
-      commitComparison: model.commitComparison,
-      isCommitComparisonLoading: model.isCommitComparisonLoading,
-      references: model.references,
-      stashes: model.stashes,
-      remotes: model.remotes,
-      worktrees: model.worktrees,
-      submodules: model.submodules,
-      gitLFS: model.gitLFS,
-      gitHooks: model.gitHooks,
-      activities: model.activities,
-      recentRepositories: model.recentRepositories,
-      lastRecoveryReference: model.lastRecoveryReference,
-      selectedDiff: model.selectedDiff,
-      selectedCommitDiff: model.selectedCommitDiff,
-      selectedCommitDiffComparison: model.selectedCommitDiffComparison,
-      diffOptions: model.diffOptions,
-      externalDiffTool: model.externalDiffTool,
-      externalMergeTool: model.externalMergeTool,
-      isDiffLoading: model.isDiffLoading,
-      isCommitDiffLoading: model.isCommitDiffLoading,
-      fileHistory: model.fileHistory,
-      blameDocument: model.blameDocument,
-      isFileHistoryLoading: model.isFileHistoryLoading,
-      isBlameLoading: model.isBlameLoading,
-      isLoading: model.isLoading,
-      isRepositoryOperation: model.isRepositoryOperation,
-      errorMessage: model.errorMessage,
-      openRepository: model.chooseRepository,
-      newRepositoryWindow: {
-        openWindow(value: WorkspaceWindowState())
-      },
-      initializeRepository: model.chooseInitializationDirectory,
-      cloneRepository: model.chooseCloneDestination,
-      openRecentRepository: model.openRecentRepository,
-      openRecentRepositoryInNewWindow: { recent in
-        openWindow(value: WorkspaceWindowState(repositoryPath: recent.path))
-      },
-      toggleFavoriteRepository: model.toggleFavoriteRepository,
-      removeRecentRepository: model.removeRecentRepository,
-      revealRepositoryInFinder: model.revealRepositoryInFinder,
-      chooseExternalApplication: model.chooseExternalApplication,
-      cancelRepositoryOperation: model.cancelRepositoryOperation,
-      refresh: model.refresh,
-      loadNextHistoryPage: model.loadNextHistoryPage,
-      searchRepositoryHistory: model.searchRepositoryHistory,
-      clearRepositoryHistorySearch: model.clearRepositoryHistorySearch,
-      toggleHiddenGraphReference: model.toggleHiddenGraphReference,
-      setSoloGraphReference: model.setSoloGraphReference,
-      togglePinnedGraphReference: model.togglePinnedGraphReference,
-      compareSelectedCommits: model.compareSelectedCommits,
-      stage: model.stage,
-      unstage: model.unstage,
-      discard: model.discard,
-      ignore: model.ignore,
-      commit: model.commit,
-      exportPatch: model.exportPatch,
-      applyPatch: model.choosePatchToApply,
-      loadDiff: model.loadDiff,
-      loadCommitDiff: model.loadCommitDiff,
-      clearCommitDiff: model.clearCommitDiff,
-      setDiffOptions: model.setDiffOptions,
-      openExternalDiff: model.openExternalDiff,
-      loadFileInsights: model.loadFileInsights,
-      loadBlame: model.loadBlame,
-      loadNextBlamePage: model.loadNextBlamePage,
-      createBranch: model.createBranch,
-      checkoutBranch: model.checkoutBranch,
-      checkoutRemoteBranch: model.checkoutRemoteBranch,
-      renameBranch: model.renameBranch,
-      deleteBranch: model.deleteBranch,
-      mergeBranch: model.mergeBranch,
-      squashMergeBranch: model.squashMergeBranch,
-      createTag: model.createTag,
-      deleteTag: model.deleteTag,
-      pushTag: model.pushTag,
-      deleteRemoteTag: model.deleteRemoteTag,
-      createWorktree: model.chooseWorktreeDestination,
-      openWorktree: model.openWorktree,
-      lockWorktree: model.lockWorktree,
-      unlockWorktree: model.unlockWorktree,
-      removeWorktree: model.removeWorktree,
-      pruneWorktrees: model.pruneWorktrees,
-      addSubmodule: model.addSubmodule,
-      openSubmodule: model.openSubmodule,
-      initializeSubmodule: model.initializeSubmodule,
-      checkoutRecordedSubmodule: model.checkoutRecordedSubmodule,
-      updateSubmoduleFromRemote: model.updateSubmoduleFromRemote,
-      stageSubmodulePointer: model.stageSubmodulePointer,
-      removeSubmodule: model.removeSubmodule,
-      installLFS: model.installLFS,
-      trackLFS: model.trackLFS,
-      untrackLFS: model.untrackLFS,
-      fetchLFS: model.fetchLFS,
-      pullLFS: model.pullLFS,
-      pruneLFS: model.pruneLFS,
-      performMaintenance: model.performMaintenance,
-      setHooksPath: model.setHooksPath,
-      continueOperation: model.continueOperation,
-      abortOperation: model.abortOperation,
-      resolveConflict: model.resolveConflict,
-      loadConflict: model.loadConflict,
-      saveConflict: model.saveConflict,
-      openExternalMerge: model.openExternalMerge,
-      cherryPick: model.cherryPick,
-      revert: model.revert,
-      reset: model.reset,
-      rebase: model.rebase,
-      loadInteractiveRebase: model.interactiveRebasePlan,
-      runInteractiveRebase: model.runInteractiveRebase,
-      undoLastOperation: model.undoLastRecoverableOperation,
-      applyHunk: model.applyHunk,
-      applyLine: model.applyLine,
-      discardHunk: model.discardHunk,
-      discardLine: model.discardLine,
-      saveStash: model.saveStash,
-      popStash: model.popStash,
-      dropStash: model.dropStash,
-      fetch: model.fetch,
-      fetchRemote: model.fetchRemote,
-      pull: model.pull,
-      push: model.push,
-      addRemote: model.addRemote,
-      updateRemote: model.updateRemote,
-      removeRemote: model.removeRemote,
-      forcePushWithLease: model.forcePushWithLease
+      state: makeRootState(),
+      actions: makeRootActions()
     )
     .frame(
       minWidth: CurrentUILayout.minimumWindowWidth,
@@ -349,6 +211,188 @@ private struct CurrentWorkspaceWindow: View {
           guard let path = historyStore.takeMostRecentlyClosed() else { return }
           openWindow(value: WorkspaceWindowState(repositoryPath: path))
         }
+      )
+    )
+  }
+
+  private func makeRootState() -> CurrentRootState {
+    CurrentRootState(
+      repository: .init(
+        name: model.repositoryName,
+        gitVersion: model.gitVersion,
+        commitTemplate: model.commitTemplate,
+        status: model.repositoryStatus,
+        references: model.references,
+        stashes: model.stashes,
+        remotes: model.remotes,
+        worktrees: model.worktrees,
+        submodules: model.submodules,
+        gitLFS: model.gitLFS,
+        gitHooks: model.gitHooks,
+        activities: model.activities,
+        recentRepositories: model.recentRepositories,
+        lastRecoveryReference: model.lastRecoveryReference,
+        isLoading: model.isLoading,
+        isOperationRunning: model.isRepositoryOperation,
+        errorMessage: model.errorMessage
+      ),
+      history: .init(
+        commits: model.commits,
+        graphRows: model.graphRows,
+        graphDisplayConfiguration: model.graphDisplayConfiguration,
+        hiddenGraphReferences: model.hiddenGraphReferences,
+        soloGraphReference: model.soloGraphReference,
+        pinnedGraphReferences: model.pinnedGraphReferences,
+        repositorySearchRows: model.repositorySearchRows,
+        isRepositorySearchLoading: model.isRepositorySearchLoading,
+        isPageLoading: model.isHistoryPageLoading,
+        hasMore: model.hasMoreHistory,
+        comparison: model.commitComparison,
+        isComparisonLoading: model.isCommitComparisonLoading
+      ),
+      diff: .init(
+        selected: model.selectedDiff,
+        selectedCommit: model.selectedCommitDiff,
+        selectedCommitComparison: model.selectedCommitDiffComparison,
+        options: model.diffOptions,
+        externalDiffTool: model.externalDiffTool,
+        externalMergeTool: model.externalMergeTool,
+        isLoading: model.isDiffLoading,
+        isCommitLoading: model.isCommitDiffLoading
+      ),
+      fileInsights: .init(
+        history: model.fileHistory,
+        blame: model.blameDocument,
+        isHistoryLoading: model.isFileHistoryLoading,
+        isBlameLoading: model.isBlameLoading
+      ),
+      sidebar: .init(visibleSections: settingsModel.visibleSidebarSections)
+    )
+  }
+
+  private func makeRootActions() -> CurrentRootActions {
+    CurrentRootActions(
+      repository: .init(
+        open: model.chooseRepository,
+        openNewWindow: {
+          openWindow(value: WorkspaceWindowState())
+        },
+        initialize: model.chooseInitializationDirectory,
+        clone: model.chooseCloneDestination,
+        openRecent: model.openRecentRepository,
+        openRecentInNewWindow: { recent in
+          openWindow(value: WorkspaceWindowState(repositoryPath: recent.path))
+        },
+        toggleFavorite: model.toggleFavoriteRepository,
+        removeRecent: model.removeRecentRepository,
+        revealInFinder: model.revealRepositoryInFinder,
+        chooseExternalApplication: model.chooseExternalApplication,
+        cancelOperation: model.cancelRepositoryOperation,
+        refresh: model.refresh
+      ),
+      history: .init(
+        loadNextPage: model.loadNextHistoryPage,
+        search: model.searchRepositoryHistory,
+        clearSearch: model.clearRepositoryHistorySearch,
+        toggleHiddenReference: model.toggleHiddenGraphReference,
+        setSoloReference: model.setSoloGraphReference,
+        togglePinnedReference: model.togglePinnedGraphReference,
+        compareCommits: model.compareSelectedCommits,
+        exportPatch: model.exportPatch,
+        applyPatch: model.choosePatchToApply,
+        cherryPick: model.cherryPick,
+        revert: model.revert,
+        reset: model.reset,
+        rebase: model.rebase,
+        loadInteractiveRebase: model.interactiveRebasePlan,
+        runInteractiveRebase: model.runInteractiveRebase
+      ),
+      workingCopy: .init(
+        stage: model.stage,
+        unstage: model.unstage,
+        discard: model.discard,
+        ignore: model.ignore,
+        commit: model.commit,
+        applyHunk: model.applyHunk,
+        applyLine: model.applyLine,
+        discardHunk: model.discardHunk,
+        discardLine: model.discardLine
+      ),
+      diff: .init(
+        load: model.loadDiff,
+        loadCommit: model.loadCommitDiff,
+        clearCommit: model.clearCommitDiff,
+        setOptions: model.setDiffOptions,
+        openExternal: model.openExternalDiff,
+        loadFileInsights: model.loadFileInsights,
+        loadBlame: model.loadBlame,
+        loadNextBlamePage: model.loadNextBlamePage
+      ),
+      branches: .init(
+        create: model.createBranch,
+        checkout: model.checkoutBranch,
+        checkoutRemote: model.checkoutRemoteBranch,
+        rename: model.renameBranch,
+        delete: model.deleteBranch,
+        merge: model.mergeBranch,
+        squashMerge: model.squashMergeBranch
+      ),
+      tags: .init(
+        create: model.createTag,
+        delete: model.deleteTag,
+        push: model.pushTag,
+        deleteRemote: model.deleteRemoteTag
+      ),
+      worktrees: .init(
+        create: model.chooseWorktreeDestination,
+        open: model.openWorktree,
+        lock: model.lockWorktree,
+        unlock: model.unlockWorktree,
+        remove: model.removeWorktree,
+        prune: model.pruneWorktrees
+      ),
+      submodules: .init(
+        add: model.addSubmodule,
+        open: model.openSubmodule,
+        initialize: model.initializeSubmodule,
+        checkoutRecorded: model.checkoutRecordedSubmodule,
+        updateFromRemote: model.updateSubmoduleFromRemote,
+        stagePointer: model.stageSubmodulePointer,
+        remove: model.removeSubmodule
+      ),
+      lfs: .init(
+        install: model.installLFS,
+        track: model.trackLFS,
+        untrack: model.untrackLFS,
+        fetch: model.fetchLFS,
+        pull: model.pullLFS,
+        prune: model.pruneLFS
+      ),
+      operations: .init(
+        performMaintenance: model.performMaintenance,
+        setHooksPath: model.setHooksPath,
+        continueOperation: model.continueOperation,
+        abortOperation: model.abortOperation,
+        resolveConflict: model.resolveConflict,
+        loadConflict: model.loadConflict,
+        saveConflict: model.saveConflict,
+        openExternalMerge: model.openExternalMerge,
+        undoLastOperation: model.undoLastRecoverableOperation
+      ),
+      stashes: .init(
+        save: model.saveStash,
+        pop: model.popStash,
+        drop: model.dropStash
+      ),
+      remotes: .init(
+        fetch: model.fetch,
+        fetchRemote: model.fetchRemote,
+        pull: model.pull,
+        push: model.push,
+        add: model.addRemote,
+        update: model.updateRemote,
+        remove: model.removeRemote,
+        forcePushWithLease: model.forcePushWithLease
       )
     )
   }

@@ -23,6 +23,7 @@ let package = Package(
     .library(name: "CredentialKit", targets: ["CredentialKit"]),
     .library(name: "UpdateKit", targets: ["UpdateKit"]),
     .library(name: "CurrentUI", targets: ["CurrentUI"]),
+    .library(name: "CurrentAppSupport", targets: ["CurrentAppSupport"]),
   ],
   dependencies: [
     .package(
@@ -166,6 +167,10 @@ let package = Package(
       name: "CurrentUI",
       dependencies: ["CurrentDomain", "GraphKit", "DiffKit", "MergeKit"]
     ),
+    .target(
+      name: "CurrentAppSupport",
+      dependencies: ["CurrentDomain", "CurrentUI", "DiffKit", "GraphKit"]
+    ),
     .testTarget(
       name: "GitParsersTests",
       dependencies: ["GitParsers"]
@@ -205,6 +210,10 @@ let package = Package(
     .testTarget(
       name: "CurrentUITests",
       dependencies: ["CurrentUI"]
+    ),
+    .testTarget(
+      name: "CurrentAppSupportTests",
+      dependencies: ["CurrentAppSupport", "CurrentDomain", "CurrentUI", "DiffKit", "GraphKit"]
     ),
     .testTarget(
       name: "MergeKitTests",

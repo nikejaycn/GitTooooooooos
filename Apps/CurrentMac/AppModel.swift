@@ -1,4 +1,5 @@
 import AppKit
+import CurrentAppSupport
 import CurrentDomain
 import CurrentUI
 import DiffKit
@@ -9,46 +10,9 @@ import Observation
 import RepositoryModel
 import UniformTypeIdentifiers
 
-private enum ExternalToolError: LocalizedError {
-  case notConfigured(String)
-  case notFound(String)
-  case failed(String, Int32)
-
-  var errorDescription: String? {
-    switch self {
-    case .notConfigured(let role):
-      "Choose an external \(role) tool in Settings first."
-    case .notFound(let message):
-      message
-    case .failed(let tool, let status):
-      "\(tool) exited with status \(status). The conflict was not marked resolved."
-    }
-  }
-}
-
 @MainActor
 @Observable
 final class AppModel {
-  private static let recentRepositoriesKey = "Current.recentRepositories.v1"
-  private static let maximumLoadedCommitCountKey = "Current.maximumLoadedCommitCount.v1"
-  private static let useCustomGitKey = "Current.useCustomGit.v1"
-  private static let customGitPathKey = "Current.customGitPath.v1"
-  private static let appearanceKey = "Current.appearance.v1"
-  private static let autoStashEnabledKey = "Current.autoStashEnabled.v1"
-  private static let externalDiffToolKey = "Current.externalDiffTool.v1"
-  private static let externalMergeToolKey = "Current.externalMergeTool.v1"
-  private static let customDiffToolPathKey = "Current.customDiffToolPath.v1"
-  private static let customMergeToolPathKey = "Current.customMergeToolPath.v1"
-  private static let graphColumnsKey = "Current.graphColumns.v1"
-  private static let graphDensityKey = "Current.graphDensity.v1"
-  private static let graphScaleKey = "Current.graphScale.v1"
-  private static let ignoresWhitespaceChangesKey = "Current.ignoresWhitespaceChanges.v1"
-  private static let ignoresEndOfLineWhitespaceKey =
-    "Current.ignoresEndOfLineWhitespace.v1"
-  private static let hiddenGraphReferencesKey = "Current.hiddenGraphReferences.v1"
-  private static let soloGraphReferenceKey = "Current.soloGraphReference.v1"
-  private static let pinnedGraphReferencesKey = "Current.pinnedGraphReferences.v1"
-  private static let visibleSidebarSectionsKey = "Current.visibleSidebarSections.v1"
   private static let historyPageSize = 200
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
@@ -106,6 +70,8 @@ final class AppModel {
   private(set) var isRepositoryOperation = false
   private(set) var errorMessage: String?
 
+  private let preferences: AppPreferencesStore
+  private let externalTools: ExternalToolService
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
   private var repositoryWatchSession: RepositoryWatchSession?
@@ -130,63 +96,30 @@ final class AppModel {
   private var blameTask: Task<Void, Never>?
   private var blameRequestID: UUID?
   private var repositoryOperationTask: Task<Void, Never>?
-  private var externalDiffProcesses: [UUID: Process] = [:]
 
-  init(initialRepositoryPath: String? = nil) {
-    recentRepositories = Self.loadRecentRepositories()
-    useCustomGit = UserDefaults.standard.bool(forKey: Self.useCustomGitKey)
-    customGitPath = UserDefaults.standard.string(forKey: Self.customGitPathKey) ?? ""
-    autoStashEnabled = UserDefaults.standard.bool(forKey: Self.autoStashEnabledKey)
-    externalDiffTool =
-      UserDefaults.standard.string(forKey: Self.externalDiffToolKey)
-      .flatMap(ExternalTool.init(rawValue:)) ?? .none
-    externalMergeTool =
-      UserDefaults.standard.string(forKey: Self.externalMergeToolKey)
-      .flatMap(ExternalTool.init(rawValue:)) ?? .none
-    customDiffToolPath =
-      UserDefaults.standard.string(forKey: Self.customDiffToolPathKey) ?? ""
-    customMergeToolPath =
-      UserDefaults.standard.string(forKey: Self.customMergeToolPathKey) ?? ""
-    let savedGraphColumns = UserDefaults.standard.stringArray(forKey: Self.graphColumnsKey)
-    let visibleGraphColumns =
-      savedGraphColumns.map {
-        Set($0.compactMap(GraphOptionalColumn.init(rawValue:)))
-      } ?? Set(GraphOptionalColumn.allCases)
-    let graphDensity =
-      UserDefaults.standard.string(forKey: Self.graphDensityKey)
-      .flatMap(GraphRowDensity.init(rawValue:)) ?? .comfortable
-    let savedGraphScale = UserDefaults.standard.double(forKey: Self.graphScaleKey)
-    graphDisplayConfiguration = GraphDisplayConfiguration(
-      visibleOptionalColumns: visibleGraphColumns,
-      density: graphDensity,
-      scale: savedGraphScale == 0 ? 1 : savedGraphScale
-    )
-    hiddenGraphReferences = Set(
-      UserDefaults.standard.stringArray(forKey: Self.hiddenGraphReferencesKey) ?? []
-    )
-    soloGraphReference = UserDefaults.standard.string(
-      forKey: Self.soloGraphReferenceKey
-    )
-    pinnedGraphReferences = Set(
-      UserDefaults.standard.stringArray(forKey: Self.pinnedGraphReferencesKey) ?? []
-    )
-    visibleSidebarSections = SidebarSection.visibleSections(
-      from: UserDefaults.standard.stringArray(forKey: Self.visibleSidebarSectionsKey)
-    )
-    diffOptions = DiffOptions(
-      ignoresWhitespaceChanges: UserDefaults.standard.bool(
-        forKey: Self.ignoresWhitespaceChangesKey
-      ),
-      ignoresEndOfLineWhitespace: UserDefaults.standard.bool(
-        forKey: Self.ignoresEndOfLineWhitespaceKey
-      )
-    )
-    appearance =
-      UserDefaults.standard.string(forKey: Self.appearanceKey)
-      .flatMap(AppAppearance.init(rawValue:)) ?? .system
-    let savedCommitLimit = UserDefaults.standard.integer(
-      forKey: Self.maximumLoadedCommitCountKey
-    )
+  init(
+    initialRepositoryPath: String? = nil,
+    preferences: AppPreferencesStore = AppPreferencesStore(),
+    externalTools: ExternalToolService = ExternalToolService()
+  ) {
+    self.preferences = preferences
+    self.externalTools = externalTools
+    recentRepositories = preferences.recentRepositories
+    useCustomGit = preferences.useCustomGit
+    customGitPath = preferences.customGitPath
+    autoStashEnabled = preferences.autoStashEnabled
+    externalDiffTool = preferences.externalDiffTool
+    externalMergeTool = preferences.externalMergeTool
+    customDiffToolPath = preferences.customDiffToolPath
+    customMergeToolPath = preferences.customMergeToolPath
+    graphDisplayConfiguration = preferences.graphDisplayConfiguration
+    hiddenGraphReferences = preferences.hiddenGraphReferences
+    soloGraphReference = preferences.soloGraphReference
+    pinnedGraphReferences = preferences.pinnedGraphReferences
+    visibleSidebarSections = preferences.visibleSidebarSections
+    diffOptions = preferences.diffOptions
+    appearance = preferences.appearance
+    let savedCommitLimit = preferences.maximumLoadedCommitCount
     if Self.supportedCommitLimits.contains(savedCommitLimit) {
       maximumLoadedCommitCount = savedCommitLimit
     }
@@ -402,10 +335,7 @@ final class AppModel {
     }
     let previousLimit = maximumLoadedCommitCount
     maximumLoadedCommitCount = newLimit
-    UserDefaults.standard.set(
-      newLimit,
-      forKey: Self.maximumLoadedCommitCountKey
-    )
+    preferences.maximumLoadedCommitCount = newLimit
 
     if commits.count > newLimit {
       commits = Array(commits.prefix(newLimit))
@@ -426,7 +356,7 @@ final class AppModel {
   func setAppearance(_ newAppearance: AppAppearance) {
     guard newAppearance != appearance else { return }
     appearance = newAppearance
-    UserDefaults.standard.set(newAppearance.rawValue, forKey: Self.appearanceKey)
+    preferences.appearance = newAppearance
   }
 
   func toggleSidebarSection(_ section: SidebarSection) {
@@ -435,32 +365,27 @@ final class AppModel {
     } else {
       visibleSidebarSections.insert(section)
     }
-    UserDefaults.standard.set(
-      SidebarSection.allCases
-        .filter(visibleSidebarSections.contains)
-        .map(\.rawValue),
-      forKey: Self.visibleSidebarSectionsKey
-    )
+    preferences.visibleSidebarSections = visibleSidebarSections
   }
 
   func setExternalDiffTool(_ tool: ExternalTool) {
     externalDiffTool = tool
-    UserDefaults.standard.set(tool.rawValue, forKey: Self.externalDiffToolKey)
+    preferences.externalDiffTool = tool
   }
 
   func setExternalMergeTool(_ tool: ExternalTool) {
     externalMergeTool = tool
-    UserDefaults.standard.set(tool.rawValue, forKey: Self.externalMergeToolKey)
+    preferences.externalMergeTool = tool
   }
 
   func setCustomDiffToolPath(_ path: String) {
     customDiffToolPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
-    UserDefaults.standard.set(customDiffToolPath, forKey: Self.customDiffToolPathKey)
+    preferences.customDiffToolPath = customDiffToolPath
   }
 
   func setCustomMergeToolPath(_ path: String) {
     customMergeToolPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
-    UserDefaults.standard.set(customMergeToolPath, forKey: Self.customMergeToolPathKey)
+    preferences.customMergeToolPath = customMergeToolPath
   }
 
   func toggleGraphColumn(_ column: GraphOptionalColumn) {
@@ -475,12 +400,7 @@ final class AppModel {
       density: graphDisplayConfiguration.density,
       scale: graphDisplayConfiguration.scale
     )
-    UserDefaults.standard.set(
-      GraphOptionalColumn.allCases
-        .filter(columns.contains)
-        .map(\.rawValue),
-      forKey: Self.graphColumnsKey
-    )
+    preferences.graphDisplayConfiguration = graphDisplayConfiguration
   }
 
   func setGraphDensity(_ density: GraphRowDensity) {
@@ -490,7 +410,7 @@ final class AppModel {
       density: density,
       scale: graphDisplayConfiguration.scale
     )
-    UserDefaults.standard.set(density.rawValue, forKey: Self.graphDensityKey)
+    preferences.graphDisplayConfiguration = graphDisplayConfiguration
   }
 
   func setGraphScale(_ scale: Double) {
@@ -501,7 +421,7 @@ final class AppModel {
     )
     guard configuration.scale != graphDisplayConfiguration.scale else { return }
     graphDisplayConfiguration = configuration
-    UserDefaults.standard.set(configuration.scale, forKey: Self.graphScaleKey)
+    preferences.graphDisplayConfiguration = configuration
   }
 
   func toggleHiddenGraphReference(_ name: String) {
@@ -511,13 +431,10 @@ final class AppModel {
       hiddenGraphReferences.insert(name)
       if soloGraphReference == name {
         soloGraphReference = nil
-        UserDefaults.standard.removeObject(forKey: Self.soloGraphReferenceKey)
+        preferences.soloGraphReference = nil
       }
     }
-    UserDefaults.standard.set(
-      hiddenGraphReferences.sorted(),
-      forKey: Self.hiddenGraphReferencesKey
-    )
+    preferences.hiddenGraphReferences = hiddenGraphReferences
     rebuildGraphForCurrentGeneration()
   }
 
@@ -525,13 +442,10 @@ final class AppModel {
     soloGraphReference = name
     if let name {
       hiddenGraphReferences.remove(name)
-      UserDefaults.standard.set(name, forKey: Self.soloGraphReferenceKey)
-      UserDefaults.standard.set(
-        hiddenGraphReferences.sorted(),
-        forKey: Self.hiddenGraphReferencesKey
-      )
+      preferences.soloGraphReference = name
+      preferences.hiddenGraphReferences = hiddenGraphReferences
     } else {
-      UserDefaults.standard.removeObject(forKey: Self.soloGraphReferenceKey)
+      preferences.soloGraphReference = nil
     }
     rebuildGraphForCurrentGeneration()
   }
@@ -542,10 +456,7 @@ final class AppModel {
     } else {
       pinnedGraphReferences.insert(name)
     }
-    UserDefaults.standard.set(
-      pinnedGraphReferences.sorted(),
-      forKey: Self.pinnedGraphReferencesKey
-    )
+    preferences.pinnedGraphReferences = pinnedGraphReferences
   }
 
   func makeDiagnosticPreview(
@@ -610,8 +521,8 @@ final class AppModel {
     let previousRepositoryURL = repository?.location.worktreeURL
     self.useCustomGit = useCustom
     customGitPath = normalizedPath
-    UserDefaults.standard.set(useCustom, forKey: Self.useCustomGitKey)
-    UserDefaults.standard.set(normalizedPath, forKey: Self.customGitPathKey)
+    preferences.useCustomGit = useCustom
+    preferences.customGitPath = normalizedPath
 
     do {
       let executable = try resolveConfiguredGitExecutable()
@@ -955,14 +866,7 @@ final class AppModel {
   func setDiffOptions(_ options: DiffOptions) {
     guard options != diffOptions else { return }
     diffOptions = options
-    UserDefaults.standard.set(
-      options.ignoresWhitespaceChanges,
-      forKey: Self.ignoresWhitespaceChangesKey
-    )
-    UserDefaults.standard.set(
-      options.ignoresEndOfLineWhitespace,
-      forKey: Self.ignoresEndOfLineWhitespaceKey
-    )
+    preferences.diffOptions = options
     if let selectedDiffChange {
       loadDiff(selectedDiffChange)
     }
@@ -977,27 +881,17 @@ final class AppModel {
     Task {
       errorMessage = nil
       do {
-        let executable = try resolveExternalTool(
-          externalDiffTool,
-          customPath: customDiffToolPath,
-          role: "diff"
-        )
         let contents = try await repository.externalDiffContents(
           for: document.path,
           source: document.source
         )
-        let directory = try makeExternalToolDirectory()
-        let fileName = safeExternalFileName(document.path.displayString)
-        let beforeURL = directory.appendingPathComponent("Before-\(fileName)")
-        let afterURL = directory.appendingPathComponent("After-\(fileName)")
-        try Data(contents.before ?? []).write(to: beforeURL, options: .atomic)
-        try Data(contents.after ?? []).write(to: afterURL, options: .atomic)
-        let arguments = ExternalToolInvocationPlanner.diffArguments(
+        try externalTools.openDiff(
           tool: externalDiffTool,
-          before: beforeURL.path,
-          after: afterURL.path
+          customPath: customDiffToolPath,
+          path: document.path.displayString,
+          before: contents.before,
+          after: contents.after
         )
-        try launchExternalProcess(executable: executable, arguments: arguments)
         finishActivity(activityID, state: .succeeded)
       } catch {
         errorMessage = error.localizedDescription
@@ -1384,37 +1278,16 @@ final class AppModel {
     errorMessage = nil
     defer { isLoading = false }
     do {
-      let executable = try resolveExternalTool(
-        externalMergeTool,
-        customPath: customMergeToolPath,
-        role: "merge"
-      )
       let contents = try await repository.conflictFile(for: path)
-      let directory = try makeExternalToolDirectory()
-      let fileName = safeExternalFileName(path.displayString)
-      let baseURL = directory.appendingPathComponent("Base-\(fileName)")
-      let oursURL = directory.appendingPathComponent("Ours-\(fileName)")
-      let theirsURL = directory.appendingPathComponent("Theirs-\(fileName)")
-      let resultURL = directory.appendingPathComponent("Result-\(fileName)")
-      try Data(contents.base ?? []).write(to: baseURL, options: .atomic)
-      try Data(contents.ours ?? []).write(to: oursURL, options: .atomic)
-      try Data(contents.theirs ?? []).write(to: theirsURL, options: .atomic)
-      try Data(contents.workingTree).write(to: resultURL, options: .atomic)
-      let arguments = ExternalToolInvocationPlanner.mergeArguments(
+      let resolved = try await externalTools.merge(
         tool: externalMergeTool,
-        base: baseURL.path,
-        ours: oursURL.path,
-        theirs: theirsURL.path,
-        result: resultURL.path
+        customPath: customMergeToolPath,
+        path: path.displayString,
+        base: contents.base,
+        ours: contents.ours,
+        theirs: contents.theirs,
+        workingTree: contents.workingTree
       )
-      let status = try await runExternalProcess(
-        executable: executable,
-        arguments: arguments
-      )
-      guard status == 0 else {
-        throw ExternalToolError.failed(externalMergeTool.title, status)
-      }
-      let resolved = Array(try Data(contentsOf: resultURL))
       let result = try await repository.applyMergeMutation(
         .resolveContents(path: path, contents: resolved)
       )
@@ -1458,7 +1331,7 @@ final class AppModel {
 
   func setAutoStashEnabled(_ enabled: Bool) {
     autoStashEnabled = enabled
-    UserDefaults.standard.set(enabled, forKey: Self.autoStashEnabledKey)
+    preferences.autoStashEnabled = enabled
   }
 
   func undoLastRecoverableOperation() {
@@ -1563,120 +1436,6 @@ final class AppModel {
       gitLFSVersion = try? await engine.lfsVersion()
     } catch {
       errorMessage = error.localizedDescription
-    }
-  }
-
-  private func resolveExternalTool(
-    _ tool: ExternalTool,
-    customPath: String,
-    role: String
-  ) throws -> URL {
-    let candidates: [String]
-    switch tool {
-    case .none:
-      throw ExternalToolError.notConfigured(role)
-    case .fileMerge:
-      candidates = ["/usr/bin/opendiff"]
-    case .kaleidoscope:
-      candidates = [
-        "/opt/homebrew/bin/ksdiff",
-        "/usr/local/bin/ksdiff",
-        "/Applications/Kaleidoscope.app/Contents/MacOS/ksdiff",
-      ]
-    case .beyondCompare:
-      candidates = [
-        "/Applications/Beyond Compare.app/Contents/MacOS/bcomp",
-        "/opt/homebrew/bin/bcomp",
-        "/usr/local/bin/bcomp",
-      ]
-    case .custom:
-      candidates = [customPath]
-    }
-
-    for path in candidates where !path.isEmpty {
-      var isDirectory: ObjCBool = false
-      if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-        !isDirectory.boolValue,
-        FileManager.default.isExecutableFile(atPath: path)
-      {
-        return URL(fileURLWithPath: path).standardizedFileURL
-      }
-    }
-    if tool == .custom {
-      throw ExternalToolError.notFound(
-        "The custom executable is missing or not executable. Choose a valid file in Settings."
-      )
-    }
-    throw ExternalToolError.notFound(
-      "\(tool.title) could not be found. Install its command-line tool or choose another tool in Settings."
-    )
-  }
-
-  private func makeExternalToolDirectory() throws -> URL {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent("GitCurrentExternalTools", isDirectory: true)
-    try FileManager.default.createDirectory(
-      at: root,
-      withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700]
-    )
-    let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    try FileManager.default.createDirectory(
-      at: directory,
-      withIntermediateDirectories: false,
-      attributes: [.posixPermissions: 0o700]
-    )
-    return directory
-  }
-
-  private func safeExternalFileName(_ path: String) -> String {
-    let last = URL(fileURLWithPath: path).lastPathComponent
-    let cleaned = last.replacingOccurrences(
-      of: #"[^A-Za-z0-9._-]"#,
-      with: "_",
-      options: .regularExpression
-    )
-    return cleaned.isEmpty ? "File" : String(cleaned.prefix(120))
-  }
-
-  private func launchExternalProcess(
-    executable: URL,
-    arguments: [String]
-  ) throws {
-    let id = UUID()
-    let process = Process()
-    process.executableURL = executable
-    process.arguments = arguments
-    process.terminationHandler = { [weak self] _ in
-      Task { @MainActor [weak self] in
-        self?.externalDiffProcesses[id] = nil
-      }
-    }
-    externalDiffProcesses[id] = process
-    do {
-      try process.run()
-    } catch {
-      externalDiffProcesses[id] = nil
-      throw error
-    }
-  }
-
-  private func runExternalProcess(
-    executable: URL,
-    arguments: [String]
-  ) async throws -> Int32 {
-    try await withCheckedThrowingContinuation { continuation in
-      let process = Process()
-      process.executableURL = executable
-      process.arguments = arguments
-      process.terminationHandler = { completed in
-        continuation.resume(returning: completed.terminationStatus)
-      }
-      do {
-        try process.run()
-      } catch {
-        continuation.resume(throwing: error)
-      }
     }
   }
 
@@ -1866,8 +1625,7 @@ final class AppModel {
   }
 
   private func persistRecentRepositories() {
-    guard let data = try? JSONEncoder().encode(recentRepositories) else { return }
-    UserDefaults.standard.set(data, forKey: Self.recentRepositoriesKey)
+    preferences.recentRepositories = recentRepositories
   }
 
   private static var currentArchitecture: String {
@@ -1887,16 +1645,6 @@ final class AppModel {
         .filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
         .prefix(10)
     )
-  }
-
-  private static func loadRecentRepositories() -> [RecentRepository] {
-    guard
-      let data = UserDefaults.standard.data(forKey: recentRepositoriesKey),
-      let repositories = try? JSONDecoder().decode([RecentRepository].self, from: data)
-    else {
-      return []
-    }
-    return Array(repositories.prefix(100))
   }
 
   private func refreshRepository(showsLoadingIndicator: Bool = true) async {
