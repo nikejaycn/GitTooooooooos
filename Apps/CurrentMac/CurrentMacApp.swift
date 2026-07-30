@@ -205,6 +205,9 @@ private struct CurrentWorkspaceWindow: View {
       isRepositoryOperation: model.isRepositoryOperation,
       errorMessage: model.errorMessage,
       openRepository: model.chooseRepository,
+      newRepositoryWindow: {
+        openWindow(value: WorkspaceWindowState())
+      },
       initializeRepository: model.chooseInitializationDirectory,
       cloneRepository: model.chooseCloneDestination,
       openRecentRepository: model.openRecentRepository,

@@ -14,12 +14,16 @@
 ### 顶部
 
 - 仓库身份：仓库名称、当前分支、工作区变更数量、ahead/behind 状态。
-- 高频操作：Open、Undo、Fetch、Pull、Branch、Stash、Push、Search。
+- 高频操作：Open、New Repository Window、Undo、Fetch、Pull、Branch、Stash、
+  Push、Search。
+- 通知菜单直接汇总真实 Activity 记录；Profile 菜单展示本地 Git 身份并进入
+  Settings。外观主题继续由 Settings 的 System、Light、Dark 选项控制。
 - 低频及高风险操作保留在 Repository Actions 菜单中。
 
 ### 左侧仓库导航
 
-- Workspace：Working Copy、History、Pull Requests、Branch Review、Stashes。
+- Workspace：Working Copy、History、Gitflow、Pull Requests、Branch Review、
+  Stashes。
 - Local Branches：本地分支及 checkout、merge、rename、delete 等上下文操作。
 - Remote Branches：远端分支。
 - Tags：本地与远端标签管理。
@@ -34,6 +38,8 @@
 - Graph 表格继续使用原生 `NSTableView`，支持多选、搜索、分页、列配置、
   密度和缩放。
 - Branch Review 使用真实分支列表；比较能力沿用现有提交比较模型逐步扩展。
+- Gitflow 入口只展示当前仓库可验证的本地状态，并复用真实分支创建流程。
+- New Repository Window 使用原生 macOS 多窗口能力，窗口可由系统合并为标签页。
 
 ### 右侧上下文检查器
 
@@ -56,6 +62,8 @@
 - 侧栏按 Workspace、Local Branches、Remote Branches、Tags、GitHub 和 Tools
   重组。
 - 工具栏暴露高频仓库操作。
+- 新建仓库窗口、Activity 通知菜单、本地 Git Profile 和 Settings 入口已加入
+  原生工具栏。
 - 仓库顶部信息压缩为紧凑单行。
 - WIP 节点的右侧检查器已接入真实工作区数据，可 Stage、Unstage 和提交。
 - 冲突文件在 WIP 检查器中提供 Resolve 入口，继续复用三方冲突编辑器。
@@ -79,4 +87,5 @@ Pull Requests、Issues 和 GitHub Actions 需要新增托管服务账户、OAuth
   - 左、中、右三栏无重叠；
   - WIP 选择后显示真实文件变化和提交编辑器；
   - Pull Requests 显示 GitHub 连接状态；
+  - Gitflow、通知、本地 Profile 和新建仓库窗口入口可用；
   - 工具栏与侧栏在当前最小窗口约束下可用。

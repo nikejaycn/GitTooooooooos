@@ -206,6 +206,7 @@ public struct CurrentRootView: View {
   @Environment(\.openSettings) private var openSettings
 
   private enum Workspace: Hashable {
+    case gitflow
     case changes
     case history
     case pullRequests
@@ -273,6 +274,7 @@ public struct CurrentRootView: View {
   private let isRepositoryOperation: Bool
   private let errorMessage: String?
   private let openRepository: () -> Void
+  private let newRepositoryWindow: () -> Void
   private let initializeRepository: () -> Void
   private let cloneRepository: (String) -> Void
   private let openRecentRepository: (RecentRepository) -> Void
@@ -474,6 +476,7 @@ public struct CurrentRootView: View {
     isRepositoryOperation: Bool,
     errorMessage: String?,
     openRepository: @escaping () -> Void,
+    newRepositoryWindow: @escaping () -> Void,
     initializeRepository: @escaping () -> Void,
     cloneRepository: @escaping (String) -> Void,
     openRecentRepository: @escaping (RecentRepository) -> Void,
@@ -603,6 +606,7 @@ public struct CurrentRootView: View {
     self.isRepositoryOperation = isRepositoryOperation
     self.errorMessage = errorMessage
     self.openRepository = openRepository
+    self.newRepositoryWindow = newRepositoryWindow
     self.initializeRepository = initializeRepository
     self.cloneRepository = cloneRepository
     self.openRecentRepository = openRecentRepository
@@ -709,6 +713,8 @@ public struct CurrentRootView: View {
             }
           }
           Section("Workspace") {
+            Label("Gitflow", systemImage: "arrow.triangle.branch")
+              .tag(Workspace.gitflow)
             Label("Working Copy", systemImage: "square.stack.3d.up")
               .tag(Workspace.changes)
             Label("History", systemImage: "point.3.connected.trianglepath.dotted")
@@ -962,6 +968,10 @@ public struct CurrentRootView: View {
             Button(action: openRepository) {
               Label("Open Repository", systemImage: "folder")
             }
+            Button(action: newRepositoryWindow) {
+              Label("New Repository Window", systemImage: "plus.rectangle.on.rectangle")
+            }
+            .keyboardShortcut("n")
             Button("Undo", systemImage: "arrow.uturn.backward", action: undoLastOperation)
               .disabled(lastRecoveryReference == nil || isLoading)
             Button(action: fetch) {
@@ -1007,6 +1017,37 @@ public struct CurrentRootView: View {
               openSettings()
             } label: {
               Label("Settings", systemImage: "gearshape")
+            }
+            Menu {
+              if activities.isEmpty {
+                Text("No recent activity")
+              } else {
+                ForEach(activities.prefix(5)) { activity in
+                  Button {
+                    workspace = .operations
+                  } label: {
+                    Label(activity.title, systemImage: activityIcon(activity.state))
+                  }
+                }
+              }
+              Divider()
+              Button("Open Activity Log") {
+                workspace = .operations
+              }
+            } label: {
+              Label("Notifications", systemImage: "bell")
+            }
+            Menu {
+              Text("Local Git Profile")
+              if let repositoryName {
+                Text(repositoryName)
+              }
+              Divider()
+              Button("Profile & Preferences…") {
+                openSettings()
+              }
+            } label: {
+              Label("Profile", systemImage: "person.crop.circle")
             }
             Menu {
               Button("Fetch All", action: fetch)
@@ -1600,6 +1641,8 @@ public struct CurrentRootView: View {
   @ViewBuilder
   private func workspaceContent(_ status: RepositoryStatus) -> some View {
     switch workspace {
+    case .gitflow:
+      gitflowWorkspace
     case .changes:
       CurrentContentLayout(
         separatesTop: false
@@ -1638,6 +1681,23 @@ public struct CurrentRootView: View {
       stashList
     case .operations:
       operationConsole
+    }
+  }
+
+  private var gitflowWorkspace: some View {
+    ContentUnavailableView {
+      Label("Gitflow", systemImage: "arrow.triangle.branch")
+    } description: {
+      Text(
+        "Use the existing branch tools to start feature, release, and hotfix branches. "
+          + "Repository-specific Gitflow initialization is not configured."
+      )
+    } actions: {
+      Button("Create Branch…") {
+        newBranchName = ""
+        isCreatingBranch = true
+      }
+      .disabled(status == nil || isLoading)
     }
   }
 
