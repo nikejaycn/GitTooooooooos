@@ -35,6 +35,7 @@ public final class SyntaxDiffScrollView: NSScrollView {
   }
 
   private let diffTextView = SyntaxDiffScrollView.makeTextView()
+  private let documentGeometry = DiffTextViewGeometry()
   private let highlightSession = SyntaxHighlightSession()
   private var highlightDebounceTask: Task<Void, Never>?
   private var renderedDocument: DiffDocument?
@@ -64,11 +65,18 @@ public final class SyntaxDiffScrollView: NSScrollView {
     NotificationCenter.default.removeObserver(self)
   }
 
+  override public func layout() {
+    super.layout()
+    documentGeometry.synchronize(diffTextView, in: self)
+  }
+
   public func update(_ document: DiffDocument) {
     guard renderedDocument != document else { return }
     renderedDocument = document
     let rendered = render(document)
     diffTextView.textStorage?.setAttributedString(rendered.attributedText)
+    documentGeometry.contentDidChange()
+    documentGeometry.synchronize(diffTextView, in: self)
     highlightSession.update(
       path: document.path,
       targets: [
@@ -83,6 +91,10 @@ public final class SyntaxDiffScrollView: NSScrollView {
       ]
     )
     scheduleHighlight(after: .zero)
+  }
+
+  var documentSizeForTesting: NSSize {
+    diffTextView.frame.size
   }
 
   public func cancelHighlighting() {

@@ -47,6 +47,8 @@ public final class SyncedSplitDiffView: NSView {
   private let newScrollView = NSScrollView()
   private let oldTextView = SyncedSplitDiffView.makeTextView()
   private let newTextView = SyncedSplitDiffView.makeTextView()
+  private let oldDocumentGeometry = DiffTextViewGeometry()
+  private let newDocumentGeometry = DiffTextViewGeometry()
   private let highlightSession = SyntaxHighlightSession()
   private var highlightDebounceTask: Task<Void, Never>?
   private var isSynchronizingScroll = false
@@ -94,6 +96,7 @@ public final class SyncedSplitDiffView: NSView {
   override public func layout() {
     super.layout()
     splitView.frame = bounds
+    splitView.layoutSubtreeIfNeeded()
     if !didSetInitialDividerPosition,
       splitView.subviews.count == 2,
       bounds.width > 0
@@ -101,6 +104,8 @@ public final class SyncedSplitDiffView: NSView {
       splitView.setPosition(bounds.midX, ofDividerAt: 0)
       didSetInitialDividerPosition = true
     }
+    oldDocumentGeometry.synchronize(oldTextView, in: oldScrollView)
+    newDocumentGeometry.synchronize(newTextView, in: newScrollView)
   }
 
   public func update(_ document: DiffDocument) {
@@ -109,6 +114,11 @@ public final class SyncedSplitDiffView: NSView {
     let rendered = render(document)
     oldTextView.textStorage?.setAttributedString(rendered.old)
     newTextView.textStorage?.setAttributedString(rendered.new)
+    oldDocumentGeometry.contentDidChange()
+    newDocumentGeometry.contentDidChange()
+    layoutSubtreeIfNeeded()
+    oldDocumentGeometry.synchronize(oldTextView, in: oldScrollView)
+    newDocumentGeometry.synchronize(newTextView, in: newScrollView)
     highlightSession.update(
       path: document.path,
       targets: [
@@ -123,6 +133,14 @@ public final class SyncedSplitDiffView: NSView {
       ]
     )
     scheduleHighlight(after: .zero)
+  }
+
+  var documentSizesForTesting: (old: NSSize, new: NSSize) {
+    (oldTextView.frame.size, newTextView.frame.size)
+  }
+
+  var viewportSizesForTesting: (old: NSSize, new: NSSize) {
+    (oldScrollView.contentSize, newScrollView.contentSize)
   }
 
   public func cancelHighlighting() {
