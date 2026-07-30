@@ -56,12 +56,12 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             MACOSX_DEPLOYMENT_TARGET=14.0
 
-      - name: Verify Git toolchain embedded in Current.app
+      - name: Verify Git toolchain embedded in GitCurrent.app
         run: |
           Scripts/verify-git-bundle.sh \
-            .build/XcodeDerivedData/Build/Products/Release/Current.app/Contents/Resources/Git
+            .build/XcodeDerivedData/Build/Products/Release/GitCurrent.app/Contents/Resources/Git
           test -f \
-            .build/XcodeDerivedData/Build/Products/Release/Current.app/Contents/Resources/Git/share/current/GitBundle.sbom.cdx.json
+            .build/XcodeDerivedData/Build/Products/Release/GitCurrent.app/Contents/Resources/Git/share/current/GitBundle.sbom.cdx.json
 
   dependency-review:
     name: Dependency review
