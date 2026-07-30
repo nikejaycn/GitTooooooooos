@@ -76,6 +76,35 @@ public struct SidebarBranchFolder: Hashable, Identifiable, Sendable {
   }
 }
 
+public struct RemoteBranchCheckoutTarget: Equatable, Sendable {
+  public let remoteBranch: String
+  public let localName: String
+
+  public init?(
+    reference: GitReference,
+    remoteNames: [String]
+  ) {
+    guard reference.kind == .remoteBranch else { return nil }
+    let sortedRemoteNames = remoteNames.sorted {
+      if $0.count == $1.count {
+        return $0.localizedStandardCompare($1) == .orderedAscending
+      }
+      return $0.count > $1.count
+    }
+    guard
+      let remoteName = sortedRemoteNames.first(where: {
+        reference.shortName.hasPrefix("\($0)/")
+      })
+    else {
+      return nil
+    }
+    let localName = String(reference.shortName.dropFirst(remoteName.count + 1))
+    guard !localName.isEmpty, localName != "HEAD" else { return nil }
+    self.remoteBranch = reference.shortName
+    self.localName = localName
+  }
+}
+
 private final class MutableBranchFolder {
   let name: String
   let path: String

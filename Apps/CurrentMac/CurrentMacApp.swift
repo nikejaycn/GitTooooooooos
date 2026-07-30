@@ -247,6 +247,7 @@ private struct CurrentWorkspaceWindow: View {
       loadNextBlamePage: model.loadNextBlamePage,
       createBranch: model.createBranch,
       checkoutBranch: model.checkoutBranch,
+      checkoutRemoteBranch: model.checkoutRemoteBranch,
       renameBranch: model.renameBranch,
       deleteBranch: model.deleteBranch,
       mergeBranch: model.mergeBranch,

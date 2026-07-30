@@ -1017,6 +1017,16 @@ final class AppModel {
     applyBranch(.checkout(name: name, autoStash: autoStashEnabled))
   }
 
+  func checkoutRemoteBranch(remoteBranch: String, localName: String) {
+    applyBranch(
+      .checkoutRemote(
+        remoteBranch: remoteBranch,
+        localName: localName,
+        autoStash: autoStashEnabled
+      )
+    )
+  }
+
   func renameBranch(oldName: String, newName: String) {
     applyBranch(.rename(oldName: oldName, newName: newName))
   }
@@ -2481,6 +2491,8 @@ final class AppModel {
     switch mutation {
     case .create(let name, _, _): "Create branch \(name)"
     case .checkout(let name, _): "Check out \(name)"
+    case .checkoutRemote(let remoteBranch, let localName, _):
+      "Check out \(remoteBranch) as \(localName)"
     case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
     case .delete(let name, _): "Delete branch \(name)"
     }

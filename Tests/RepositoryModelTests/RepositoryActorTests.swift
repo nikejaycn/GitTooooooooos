@@ -608,6 +608,23 @@ struct RepositoryActorTests {
     #expect(previews[3].contains("stash drop"))
     #expect(!previews.joined(separator: " ").contains("--discard-changes"))
 
+    _ = try await repository.applyBranchMutation(
+      .checkoutRemote(
+        remoteBranch: "origin/feature/accounts/login",
+        localName: "feature/accounts/login",
+        autoStash: false
+      )
+    )
+    let remoteCheckoutPlan = try #require(await repository.lastOperationPlan())
+    #expect(remoteCheckoutPlan.kind == "branch.checkout-remote")
+    #expect(
+      remoteCheckoutPlan.commands.map(\.preview)
+        == [
+          "git switch --track -c feature/accounts/login origin/feature/accounts/login"
+        ]
+    )
+    #expect(remoteCheckoutPlan.affectedRefs.contains("refs/heads/feature/accounts/login"))
+
     await #expect(throws: OperationPlanningError.forceBranchDeleteRequiresRecovery) {
       try await repository.applyBranchMutation(
         .delete(name: "unmerged-topic", force: true)

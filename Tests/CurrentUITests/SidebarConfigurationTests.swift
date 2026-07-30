@@ -44,6 +44,51 @@ struct SidebarConfigurationTests {
     )
   }
 
+  @Test("Maps a remote branch to its local tracking branch name")
+  func mapsRemoteCheckoutTarget() throws {
+    let remote = GitReference(
+      fullName: "refs/remotes/origin/feature/accounts/login",
+      shortName: "origin/feature/accounts/login",
+      targetOID: String(repeating: "b", count: 40),
+      upstream: nil,
+      kind: .remoteBranch,
+      isHEAD: false
+    )
+
+    let target = try #require(
+      RemoteBranchCheckoutTarget(
+        reference: remote,
+        remoteNames: ["origin", "company/origin"]
+      )
+    )
+
+    #expect(target.remoteBranch == "origin/feature/accounts/login")
+    #expect(target.localName == "feature/accounts/login")
+  }
+
+  @Test("Rejects remote HEAD and references from unknown remotes")
+  func rejectsInvalidRemoteCheckoutTargets() {
+    let remoteHEAD = GitReference(
+      fullName: "refs/remotes/origin/HEAD",
+      shortName: "origin/HEAD",
+      targetOID: String(repeating: "c", count: 40),
+      upstream: nil,
+      kind: .remoteBranch,
+      isHEAD: false
+    )
+    let unknown = GitReference(
+      fullName: "refs/remotes/upstream/topic",
+      shortName: "upstream/topic",
+      targetOID: String(repeating: "d", count: 40),
+      upstream: nil,
+      kind: .remoteBranch,
+      isHEAD: false
+    )
+
+    #expect(RemoteBranchCheckoutTarget(reference: remoteHEAD, remoteNames: ["origin"]) == nil)
+    #expect(RemoteBranchCheckoutTarget(reference: unknown, remoteNames: ["origin"]) == nil)
+  }
+
   private func reference(_ name: String) -> GitReference {
     GitReference(
       fullName: "refs/heads/\(name)",

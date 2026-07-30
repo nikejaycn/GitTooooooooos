@@ -320,6 +320,7 @@ public struct CurrentRootView: View {
   private let loadNextBlamePage: () -> Void
   private let createBranch: (String) -> Void
   private let checkoutBranch: (String) -> Void
+  private let checkoutRemoteBranch: (String, String) -> Void
   private let renameBranch: (String, String) -> Void
   private let deleteBranch: (String) -> Void
   private let mergeBranch: (String) -> Void
@@ -524,6 +525,7 @@ public struct CurrentRootView: View {
     loadNextBlamePage: @escaping () -> Void,
     createBranch: @escaping (String) -> Void,
     checkoutBranch: @escaping (String) -> Void,
+    checkoutRemoteBranch: @escaping (String, String) -> Void,
     renameBranch: @escaping (String, String) -> Void,
     deleteBranch: @escaping (String) -> Void,
     mergeBranch: @escaping (String) -> Void,
@@ -655,6 +657,7 @@ public struct CurrentRootView: View {
     self.loadNextBlamePage = loadNextBlamePage
     self.createBranch = createBranch
     self.checkoutBranch = checkoutBranch
+    self.checkoutRemoteBranch = checkoutRemoteBranch
     self.renameBranch = renameBranch
     self.deleteBranch = deleteBranch
     self.mergeBranch = mergeBranch
@@ -3675,13 +3678,12 @@ public struct CurrentRootView: View {
       locateBranch(reference)
       guard
         NSApp.currentEvent?.clickCount ?? 1 >= 2,
-        reference.kind == .localBranch,
         !reference.isHEAD,
         !isLoading
       else {
         return
       }
-      checkoutBranch(reference.shortName)
+      checkoutReference(reference)
     } label: {
       HStack(spacing: 6) {
         Image(
@@ -3736,11 +3738,39 @@ public struct CurrentRootView: View {
     jumpToGraphReference(reference)
   }
 
+  private func checkoutReference(_ reference: GitReference) {
+    if reference.kind == .localBranch {
+      checkoutBranch(reference.shortName)
+      return
+    }
+    guard
+      let target = RemoteBranchCheckoutTarget(
+        reference: reference,
+        remoteNames: remotes.map(\.name)
+      )
+    else {
+      return
+    }
+    if references.contains(where: {
+      $0.kind == .localBranch && $0.shortName == target.localName
+    }) {
+      checkoutBranch(target.localName)
+    } else {
+      checkoutRemoteBranch(target.remoteBranch, target.localName)
+    }
+  }
+
   private func branchHelp(_ reference: GitReference) -> String {
     if reference.kind == .localBranch {
       return reference.isHEAD
         ? "Current branch. Click to locate its commit."
         : "Click to locate its commit. Double-click to switch branches."
+    }
+    if RemoteBranchCheckoutTarget(
+      reference: reference,
+      remoteNames: remotes.map(\.name)
+    ) != nil {
+      return "Click to locate its commit. Double-click to check out a local tracking branch."
     }
     return "Click to locate \(reference.fullName)."
   }

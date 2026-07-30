@@ -1135,6 +1135,43 @@ struct GitEngineTests {
     #expect(commands[1].redactedDescription == "switch -c topic main")
   }
 
+  @Test("Checking out a remote branch creates an explicit local tracking branch")
+  func checkoutRemoteBranch() async throws {
+    let oid = String(repeating: "a", count: 40)
+    let runner = StubRunner(
+      results: [
+        .success("feature/accounts/login\n"),
+        .success("\(oid)\n"),
+        .success(""),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .checkoutRemote(
+        remoteBranch: "origin/feature/accounts/login",
+        localName: "feature/accounts/login",
+        autoStash: false
+      )
+    )
+
+    let commands = await runner.commands().map(\.redactedDescription)
+    #expect(commands[0] == "check-ref-format --branch feature/accounts/login")
+    #expect(
+      commands[1]
+        == "rev-parse --verify --end-of-options origin/feature/accounts/login^{commit}"
+    )
+    #expect(
+      commands[2]
+        == "switch --track -c feature/accounts/login origin/feature/accounts/login"
+    )
+  }
+
   @Test("Annotated tag creation validates the ref and resolves the target")
   func createAnnotatedTag() async throws {
     let oid = String(repeating: "a", count: 40)
@@ -1214,10 +1251,11 @@ struct GitEngineTests {
       at: location,
       mutation: .deleteRemote(name: annotated.shortName, remote: "origin")
     )
-    let recovery = try #require(await engine.mutateTag(
-      at: location,
-      mutation: .deleteLocal(name: annotated.shortName)
-    ))
+    let recovery = try #require(
+      await engine.mutateTag(
+        at: location,
+        mutation: .deleteLocal(name: annotated.shortName)
+      ))
     #expect(
       try await engine.references(at: location)
         .contains { $0.fullName == "refs/tags/v2-annotated" } == false
@@ -1605,6 +1643,55 @@ struct GitEngineTests {
       encoding: .utf8
     )
     #expect(ignoreContents.contains("/\\[draft\\]\\ note.txt"))
+  }
+
+  @Test(
+    "Live remote checkout creates a local branch with the expected upstream",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func liveRemoteBranchCheckout() async throws {
+    let fixture = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-remote-checkout-\(UUID().uuidString)", isDirectory: true)
+    let root = fixture.appendingPathComponent("work", isDirectory: true)
+    let remote = fixture.appendingPathComponent("remote.git", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: fixture) }
+
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["init", "--bare", "--initial-branch=main", remote.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    try runGit(["-C", root.path, "commit", "--allow-empty", "-m", "base"])
+    try runGit(["-C", root.path, "remote", "add", "origin", remote.path])
+    try runGit([
+      "-C", root.path, "push", "origin",
+      "main:refs/heads/feature/accounts/login",
+    ])
+    try runGit(["-C", root.path, "fetch", "origin"])
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(
+        executableURL: URL(fileURLWithPath: "/usr/bin/git")
+      )
+    )
+    let location = try await engine.locateRepository(at: root)
+    try await engine.mutateBranch(
+      at: location,
+      mutation: .checkoutRemote(
+        remoteBranch: "origin/feature/accounts/login",
+        localName: "feature/accounts/login",
+        autoStash: false
+      )
+    )
+
+    let status = try await engine.status(
+      at: location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.head == .branch("feature/accounts/login"))
+    #expect(
+      try runGitOutput(["-C", root.path, "rev-parse", "--abbrev-ref", "@{upstream}"])
+        == "origin/feature/accounts/login"
+    )
   }
 
   @Test(
@@ -2162,7 +2249,8 @@ struct GitEngineTests {
     #expect(FileManager.default.fileExists(atPath: topic.path))
 
     try runGit(["-C", topic.path, "restore", "tracked.txt"])
-    let exclude = root
+    let exclude =
+      root
       .appendingPathComponent(".git", isDirectory: true)
       .appendingPathComponent("info", isDirectory: true)
       .appendingPathComponent("exclude")
@@ -2705,10 +2793,11 @@ struct GitEngineTests {
       mutation: .save(message: "drop recovery", includeUntracked: false, paths: [])
     )
     let stash = try #require(try await engine.stashes(at: location).first)
-    let recovery = try #require(await engine.mutateStash(
-      at: location,
-      mutation: .drop(selector: stash.selector)
-    ))
+    let recovery = try #require(
+      await engine.mutateStash(
+        at: location,
+        mutation: .drop(selector: stash.selector)
+      ))
     #expect(try await engine.stashes(at: location).isEmpty)
     #expect(recovery.kind == .stashEntry)
     #expect(recovery.targetOID == stash.oid)

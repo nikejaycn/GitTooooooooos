@@ -25,8 +25,7 @@ public enum OperationPlanner {
       commands = [
         .git(
           GitCommand(
-            arguments:
-              ["merge", "--no-edit"]
+            arguments: ["merge", "--no-edit"]
               + (squash ? ["--squash"] : [])
               + (noFastForward ? ["--no-ff"] : [])
               + (autoStash ? ["--autostash"] : [])
@@ -52,16 +51,14 @@ public enum OperationPlanner {
       commands = [
         .git(
           GitCommand(
-            rawArguments:
-              ["checkout", "--\(side.rawValue)", "--"].map { Array($0.utf8) }
+            rawArguments: ["checkout", "--\(side.rawValue)", "--"].map { Array($0.utf8) }
               + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         ),
         .git(
           GitCommand(
-            rawArguments:
-              ["add", "--"].map { Array($0.utf8) } + [path.rawBytes],
+            rawArguments: ["add", "--"].map { Array($0.utf8) } + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         ),
@@ -81,22 +78,19 @@ public enum OperationPlanner {
         .fileSystem(description: "Write resolved bytes to \(path.displayString)"),
         .git(
           GitCommand(
-            rawArguments:
-              ["diff", "--check", "--"].map { Array($0.utf8) } + [path.rawBytes],
+            rawArguments: ["diff", "--check", "--"].map { Array($0.utf8) } + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         ),
         .git(
           GitCommand(
-            rawArguments:
-              ["add", "--"].map { Array($0.utf8) } + [path.rawBytes],
+            rawArguments: ["add", "--"].map { Array($0.utf8) } + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         ),
         .git(
           GitCommand(
-            rawArguments:
-              ["ls-files", "-u", "-z", "--"].map { Array($0.utf8) }
+            rawArguments: ["ls-files", "-u", "-z", "--"].map { Array($0.utf8) }
               + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
@@ -436,10 +430,9 @@ public enum OperationPlanner {
       commands = [
         .git(
           GitCommand(
-            rawArguments:
-              ["submodule", "update", "--init", "--recursive", "--"].map {
-                Array($0.utf8)
-              } + [path.rawBytes],
+            rawArguments: ["submodule", "update", "--init", "--recursive", "--"].map {
+              Array($0.utf8)
+            } + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         )
@@ -454,11 +447,10 @@ public enum OperationPlanner {
       commands = [
         .git(
           GitCommand(
-            rawArguments:
-              [
-                "submodule", "update", "--init", "--recursive", "--checkout",
-                "--",
-              ].map { Array($0.utf8) } + [path.rawBytes],
+            rawArguments: [
+              "submodule", "update", "--init", "--recursive", "--checkout",
+              "--",
+            ].map { Array($0.utf8) } + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         )
@@ -476,11 +468,10 @@ public enum OperationPlanner {
       commands = [
         .git(
           GitCommand(
-            rawArguments:
-              [
-                "submodule", "update", "--init", "--recursive", "--remote",
-                "--checkout", "--",
-              ].map { Array($0.utf8) } + [path.rawBytes],
+            rawArguments: [
+              "submodule", "update", "--init", "--recursive", "--remote",
+              "--checkout", "--",
+            ].map { Array($0.utf8) } + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
         )
@@ -526,8 +517,7 @@ public enum OperationPlanner {
       plannedCommands.append(
         .git(
           GitCommand(
-            rawArguments:
-              [Array("rm".utf8)]
+            rawArguments: [Array("rm".utf8)]
               + (force ? [Array("--force".utf8)] : [])
               + [Array("--".utf8), path.rawBytes],
             workingDirectory: location.worktreeURL
@@ -995,8 +985,7 @@ public enum OperationPlanner {
       commands: [
         .git(
           GitCommand(
-            rawArguments:
-              ["hash-object", "--no-filters", "-w", "--"].map { Array($0.utf8) }
+            rawArguments: ["hash-object", "--no-filters", "-w", "--"].map { Array($0.utf8) }
               + [path.rawBytes],
             workingDirectory: location.worktreeURL
           )
@@ -1104,6 +1093,51 @@ public enum OperationPlanner {
           ? "When changes exist, a unique stash OID is verified before switching and restored by OID"
           : "The working copy permits checkout without auto-stash",
       ]
+    case .checkoutRemote(let remoteBranch, let localName, let autoStash):
+      kind = "branch.checkout-remote"
+      title = "Check out remote branch"
+      let switchCommand = GitCommand(
+        arguments: ["switch", "--track", "-c", localName, remoteBranch],
+        workingDirectory: location.worktreeURL
+      )
+      if autoStash {
+        commands = [
+          .git(
+            GitCommand(
+              arguments: [
+                "stash", "push", "--include-untracked", "-m",
+                "<checkout-auto-stash-id>",
+              ],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+          .git(switchCommand),
+          .git(
+            GitCommand(
+              arguments: ["stash", "apply", "--index", "<auto-stash-oid>"],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+          .git(
+            GitCommand(
+              arguments: ["stash", "drop", "<auto-stash-selector>"],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+        ]
+      } else {
+        commands = [.git(switchCommand)]
+      }
+      impact = .indexAndWorktree
+      affectedRefs = ["HEAD", "refs/heads/\(localName)"]
+      preconditions = [
+        "The local branch name passes git check-ref-format validation",
+        "The remote-tracking branch resolves to a commit",
+        "The local branch does not already exist",
+        autoStash
+          ? "When changes exist, a unique stash OID is verified before switching and restored by OID"
+          : "The working copy permits checkout without auto-stash",
+      ]
     case .rename(let oldName, let newName):
       kind = "branch.rename"
       title = "Rename branch"
@@ -1165,28 +1199,38 @@ public enum OperationPlanner {
     switch mutation {
     case .cherryPick(let commit):
       (kind, title, arguments, risk, recovery, impact) =
-        ("history.cherry-pick", "Cherry-pick commit", ["cherry-pick", commit],
-         .localSafe, .none, .indexAndWorktree)
+        (
+          "history.cherry-pick", "Cherry-pick commit", ["cherry-pick", commit],
+          .localSafe, .none, .indexAndWorktree
+        )
     case .revert(let commit):
       (kind, title, arguments, risk, recovery, impact) =
-        ("history.revert", "Revert commit", ["revert", "--no-edit", commit],
-         .localSafe, .none, .indexAndWorktree)
+        (
+          "history.revert", "Revert commit", ["revert", "--no-edit", commit],
+          .localSafe, .none, .indexAndWorktree
+        )
     case .reset(let target, let mode):
       (kind, title, arguments, risk, recovery, impact) =
-        ("history.reset.\(mode.rawValue)", "\(mode.rawValue.capitalized) reset",
-         ["reset", "--\(mode.rawValue)", target], .localDestructive, .gitReference,
-         mode == .soft ? .indexOnly : .indexAndWorktree)
+        (
+          "history.reset.\(mode.rawValue)", "\(mode.rawValue.capitalized) reset",
+          ["reset", "--\(mode.rawValue)", target], .localDestructive, .gitReference,
+          mode == .soft ? .indexOnly : .indexAndWorktree
+        )
     case .rebase(let onto, let autoStash):
       (kind, title, arguments, risk, recovery, impact) =
-        ("history.rebase", "Rebase branch",
-         ["rebase"] + (autoStash ? ["--autostash"] : []) + [onto],
-         .localDestructive, .gitReference, .indexAndWorktree)
+        (
+          "history.rebase", "Rebase branch",
+          ["rebase"] + (autoStash ? ["--autostash"] : []) + [onto],
+          .localDestructive, .gitReference, .indexAndWorktree
+        )
     case .interactiveRebase(let plan, let autoStash):
       (kind, title, arguments, risk, recovery, impact) =
-        ("history.rebase.interactive", "Interactive rebase",
-         ["rebase", "--interactive"] + (autoStash ? ["--autostash"] : [])
-           + [plan.upstreamOID],
-         .localDestructive, .gitReference, .indexAndWorktree)
+        (
+          "history.rebase.interactive", "Interactive rebase",
+          ["rebase", "--interactive"] + (autoStash ? ["--autostash"] : [])
+            + [plan.upstreamOID],
+          .localDestructive, .gitReference, .indexAndWorktree
+        )
     case .undo(let reference):
       let command: [String]
       let undoImpact: WorkingTreeImpact
@@ -1219,8 +1263,10 @@ public enum OperationPlanner {
         affectedRefs = reference.restoreRef.map { [$0] } ?? []
       }
       (kind, title, arguments, risk, recovery, impact) =
-        ("history.undo", "Undo last recoverable operation", command,
-         .localSafe, .none, undoImpact)
+        (
+          "history.undo", "Undo last recoverable operation", command,
+          .localSafe, .none, undoImpact
+        )
     }
 
     return try OperationPlan(
@@ -1259,7 +1305,8 @@ public enum OperationPlanner {
       repositoryGeneration: generation,
       preconditions: [
         "Commit message and co-author trailers pass validation",
-        request.amend ? "HEAD resolves before creating a recovery reference" : "Index is committable",
+        request.amend
+          ? "HEAD resolves before creating a recovery reference" : "Index is committable",
       ],
       commands: [
         .git(

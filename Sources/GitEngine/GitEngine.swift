@@ -1279,7 +1279,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
   ) async throws {
     if location.kind == .bare {
       switch mutation {
-      case .checkout, .create(_, _, checkout: true):
+      case .checkout, .checkoutRemote, .create(_, _, checkout: true):
         throw GitEngineError.invalidRepository("A bare repository cannot check out a branch.")
       default:
         break
@@ -1306,6 +1306,26 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
         }
       }
       arguments = ["switch", name]
+    case .checkoutRemote(let remoteBranch, let localName, let autoStash):
+      try await validateBranchName(localName, at: location)
+      _ = try await resolveCommit(remoteBranch, at: location)
+      let switchArguments = [
+        "switch", "--track", "-c", localName, remoteBranch,
+      ]
+      if autoStash {
+        let currentStatus = try await status(
+          at: location,
+          generation: RepositoryGeneration(0)
+        )
+        if !currentStatus.changes.isEmpty {
+          try await checkoutWithAutoStash(
+            arguments: switchArguments,
+            at: location
+          )
+          return
+        }
+      }
+      arguments = switchArguments
     case .rename(let oldName, let newName):
       try await validateBranchName(newName, at: location)
       arguments = ["branch", "-m", oldName, newName]
@@ -1393,6 +1413,16 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     _ branch: String,
     at location: RepositoryLocation
   ) async throws {
+    try await checkoutWithAutoStash(
+      arguments: ["switch", branch],
+      at: location
+    )
+  }
+
+  private func checkoutWithAutoStash(
+    arguments: [String],
+    at location: RepositoryLocation
+  ) async throws {
     guard operationKind(at: location) == .none else {
       throw GitEngineError.invalidRepository(
         "Finish the current Git operation before checking out another branch."
@@ -1418,7 +1448,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     do {
       _ = try await execute(
         GitCommand(
-          arguments: ["switch", branch],
+          arguments: arguments,
           workingDirectory: location.worktreeURL,
           timeout: .seconds(120)
         )
@@ -2841,7 +2871,7 @@ public struct BundledGitCLIEngine<Runner: GitProcessRunning>: GitEngineProtocol 
     _ = try await execute(
       GitCommand(
         arguments: [
-          "apply", "--reverse", "--recount", "--whitespace=nowarn", "-"
+          "apply", "--reverse", "--recount", "--whitespace=nowarn", "-",
         ],
         workingDirectory: location.worktreeURL,
         standardInput: patch,
