@@ -1,3 +1,4 @@
+import AppKit
 import CurrentDomain
 import DiffKit
 import GraphKit
@@ -235,6 +236,17 @@ public struct CurrentRootView: View {
     let pushAfter: Bool
   }
 
+  private struct VisibleBranchRow: Identifiable {
+    enum Content {
+      case folder(SidebarBranchFolder)
+      case branch(GitReference, displayName: String)
+    }
+
+    let id: String
+    let depth: Int
+    let content: Content
+  }
+
   private let repositoryName: String?
   private let gitVersion: String?
   private let commitTemplate: String?
@@ -242,6 +254,7 @@ public struct CurrentRootView: View {
   private let commits: [CommitSummary]
   private let graphRows: [GraphRow]
   private let graphDisplayConfiguration: GraphDisplayConfiguration
+  private let visibleSidebarSections: Set<SidebarSection>
   private let hiddenGraphReferences: Set<String>
   private let soloGraphReference: String?
   private let pinnedGraphReferences: Set<String>
@@ -366,6 +379,7 @@ public struct CurrentRootView: View {
   private let forcePushWithLease: () -> Void
   @State private var workspace: Workspace = .history
   @State private var isSidebarVisible = true
+  @State private var expandedBranchFolders = Set<String>()
   @State private var pendingDiscard: GitPath?
   @State private var pendingPartialDiscard: PartialDiscardRequest?
   @State private var workingCopyFilter = ""
@@ -444,6 +458,7 @@ public struct CurrentRootView: View {
     commits: [CommitSummary],
     graphRows: [GraphRow],
     graphDisplayConfiguration: GraphDisplayConfiguration,
+    visibleSidebarSections: Set<SidebarSection>,
     hiddenGraphReferences: Set<String>,
     soloGraphReference: String?,
     pinnedGraphReferences: Set<String>,
@@ -574,6 +589,7 @@ public struct CurrentRootView: View {
     self.commits = commits
     self.graphRows = graphRows
     self.graphDisplayConfiguration = graphDisplayConfiguration
+    self.visibleSidebarSections = visibleSidebarSections
     self.hiddenGraphReferences = hiddenGraphReferences
     self.soloGraphReference = soloGraphReference
     self.pinnedGraphReferences = pinnedGraphReferences
@@ -712,50 +728,51 @@ public struct CurrentRootView: View {
               Image(systemName: "externaldrive")
             }
           }
-          Section("Workspace") {
-            Label("Gitflow", systemImage: "arrow.triangle.branch")
-              .tag(Workspace.gitflow)
-            Label("Working Copy", systemImage: "square.stack.3d.up")
-              .tag(Workspace.changes)
-            Label("History", systemImage: "point.3.connected.trianglepath.dotted")
-              .tag(Workspace.history)
-            Label("Pull Requests", systemImage: "arrow.triangle.pull")
-              .tag(Workspace.pullRequests)
-            Label("Branch Review", systemImage: "arrow.triangle.branch")
-              .tag(Workspace.branchReview)
-            Label("Stashes", systemImage: "archivebox")
-              .tag(Workspace.stashes)
-          }
-          if references.contains(where: { $0.kind == .localBranch }) {
-            Section("Local Branches") {
-              ForEach(references.filter { $0.kind == .localBranch }.prefix(20)) { reference in
-                referenceSidebarRow(reference)
-              }
+          if visibleSidebarSections.contains(.workspace) {
+            Section("Workspace") {
+              Label("Gitflow", systemImage: "arrow.triangle.branch")
+                .tag(Workspace.gitflow)
+              Label("Working Copy", systemImage: "square.stack.3d.up")
+                .tag(Workspace.changes)
+              Label("History", systemImage: "point.3.connected.trianglepath.dotted")
+                .tag(Workspace.history)
+              Label("Pull Requests", systemImage: "arrow.triangle.pull")
+                .tag(Workspace.pullRequests)
+              Label("Branch Review", systemImage: "arrow.triangle.branch")
+                .tag(Workspace.branchReview)
+              Label("Stashes", systemImage: "archivebox")
+                .tag(Workspace.stashes)
             }
           }
-          if references.contains(where: { $0.kind == .remoteBranch }) {
-            Section("Remote Branches") {
-              ForEach(references.filter { $0.kind == .remoteBranch }.prefix(20)) { reference in
-                referenceSidebarRow(reference)
-              }
+          if visibleSidebarSections.contains(.localBranches) {
+            branchSidebarSection(title: "Local Branches", kind: .localBranch)
+          }
+          if visibleSidebarSections.contains(.remoteBranches) {
+            branchSidebarSection(title: "Remote Branches", kind: .remoteBranch)
+          }
+          if visibleSidebarSections.contains(.tags) {
+            tagSidebarSection
+          }
+          if visibleSidebarSections.contains(.github) {
+            Section("GitHub") {
+              Label("Issues", systemImage: "record.circle")
+                .tag(Workspace.issues)
+              Label("Actions", systemImage: "play.square.stack")
+                .tag(Workspace.actions)
             }
           }
-          tagSidebarSection
-          Section("GitHub") {
-            Label("Issues", systemImage: "record.circle")
-              .tag(Workspace.issues)
-            Label("Actions", systemImage: "play.square.stack")
-              .tag(Workspace.actions)
+          if visibleSidebarSections.contains(.tools) {
+            Section("Tools") {
+              Label(
+                "File History",
+                systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+              )
+              .tag(Workspace.fileHistory)
+              Label("Activity Log", systemImage: "list.bullet.rectangle")
+                .tag(Workspace.operations)
+            }
           }
-          Section("Tools") {
-            Label(
-              "File History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
-            )
-            .tag(Workspace.fileHistory)
-            Label("Activity Log", systemImage: "list.bullet.rectangle")
-              .tag(Workspace.operations)
-          }
-          if status != nil {
+          if status != nil, visibleSidebarSections.contains(.remotes) {
             Section {
               ForEach(remotes) { remote in
                 HStack(spacing: 6) {
@@ -798,7 +815,7 @@ public struct CurrentRootView: View {
               }
             }
           }
-          if status != nil {
+          if status != nil, visibleSidebarSections.contains(.worktrees) {
             Section {
               ForEach(worktrees) { worktree in
                 Button {
@@ -868,7 +885,7 @@ public struct CurrentRootView: View {
               }
             }
           }
-          if status != nil {
+          if status != nil, visibleSidebarSections.contains(.submodules) {
             Section {
               ForEach(submodules) { submodule in
                 Button {
@@ -939,8 +956,12 @@ public struct CurrentRootView: View {
               }
             }
           }
-          lfsSidebarSection
-          hooksSidebarSection
+          if visibleSidebarSections.contains(.gitLFS) {
+            lfsSidebarSection
+          }
+          if visibleSidebarSections.contains(.gitHooks) {
+            hooksSidebarSection
+          }
         }
         .listStyle(.sidebar)
         .frame(width: CurrentUILayout.sidebarIdealWidth)
@@ -1722,12 +1743,12 @@ public struct CurrentRootView: View {
       List {
         Section("Local Branches") {
           ForEach(references.filter { $0.kind == .localBranch }) { reference in
-            referenceSidebarRow(reference)
+            referenceSidebarRow(reference, displayName: reference.shortName)
           }
         }
         Section("Remote Branches") {
           ForEach(references.filter { $0.kind == .remoteBranch }) { reference in
-            referenceSidebarRow(reference)
+            referenceSidebarRow(reference, displayName: reference.shortName)
           }
         }
       }
@@ -3542,23 +3563,145 @@ public struct CurrentRootView: View {
   }
 
   @ViewBuilder
-  private func referenceSidebarRow(_ reference: GitReference) -> some View {
-    if reference.kind == .localBranch {
-      Button {
-        checkoutBranch(reference.shortName)
-      } label: {
-        Label {
-          Text(reference.shortName)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        } icon: {
-          Image(systemName: referenceIcon(reference.kind))
+  private func branchSidebarSection(
+    title: String,
+    kind: GitReferenceKind
+  ) -> some View {
+    let branchReferences = references.filter { $0.kind == kind }
+    if !branchReferences.isEmpty {
+      let tree = SidebarBranchTree(
+        references: branchReferences,
+        namespace: kind.rawValue
+      )
+      Section(title) {
+        ForEach(visibleBranchRows(in: tree)) { row in
+          visibleBranchRow(row)
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private func visibleBranchRow(_ row: VisibleBranchRow) -> some View {
+    switch row.content {
+    case .folder(let folder):
+      Button {
+        if expandedBranchFolders.contains(folder.id) {
+          expandedBranchFolders.remove(folder.id)
+        } else {
+          expandedBranchFolders.insert(folder.id)
+        }
+      } label: {
+        HStack(spacing: 6) {
+          Image(
+            systemName:
+              expandedBranchFolders.contains(folder.id)
+              ? "chevron.down"
+              : "chevron.right"
+          )
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+          Image(
+            systemName:
+              expandedBranchFolders.contains(folder.id)
+              ? "folder.fill"
+              : "folder"
+          )
+          Text(folder.name)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        .contentShape(Rectangle())
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
       .buttonStyle(.plain)
-      .disabled(reference.isHEAD || isLoading)
-      .help(reference.isHEAD ? "Current branch" : "Check out \(reference.shortName)")
-      .contextMenu {
+      .padding(.leading, CGFloat(row.depth * 12))
+      .help("Click to expand or collapse \(folder.name)")
+    case .branch(let reference, let displayName):
+      referenceSidebarRow(reference, displayName: displayName)
+        .padding(.leading, CGFloat(row.depth * 12))
+    }
+  }
+
+  private func visibleBranchRows(in tree: SidebarBranchTree) -> [VisibleBranchRow] {
+    var rows: [VisibleBranchRow] = []
+    for folder in tree.folders {
+      appendVisibleBranchRows(folder: folder, depth: 0, to: &rows)
+    }
+    rows += tree.branches.map {
+      VisibleBranchRow(
+        id: "branch:\($0.fullName)",
+        depth: 0,
+        content: .branch($0, displayName: $0.shortName)
+      )
+    }
+    return rows
+  }
+
+  private func appendVisibleBranchRows(
+    folder: SidebarBranchFolder,
+    depth: Int,
+    to rows: inout [VisibleBranchRow]
+  ) {
+    rows.append(
+      VisibleBranchRow(
+        id: "folder:\(folder.id)",
+        depth: depth,
+        content: .folder(folder)
+      )
+    )
+    guard expandedBranchFolders.contains(folder.id) else { return }
+    for child in folder.folders {
+      appendVisibleBranchRows(folder: child, depth: depth + 1, to: &rows)
+    }
+    rows += folder.branches.map {
+      VisibleBranchRow(
+        id: "branch:\($0.fullName)",
+        depth: depth + 1,
+        content: .branch(
+          $0,
+          displayName: $0.shortName.split(separator: "/").last.map(String.init)
+            ?? $0.shortName
+        )
+      )
+    }
+  }
+
+  private func referenceSidebarRow(
+    _ reference: GitReference,
+    displayName: String
+  ) -> some View {
+    Button {
+      locateBranch(reference)
+      guard
+        NSApp.currentEvent?.clickCount ?? 1 >= 2,
+        reference.kind == .localBranch,
+        !reference.isHEAD,
+        !isLoading
+      else {
+        return
+      }
+      checkoutBranch(reference.shortName)
+    } label: {
+      HStack(spacing: 6) {
+        Image(
+          systemName:
+            reference.isHEAD
+            ? "location.fill"
+            : referenceIcon(reference.kind)
+        )
+        Text(displayName)
+          .lineLimit(1)
+          .truncationMode(.middle)
+        Spacer(minLength: 0)
+      }
+      .contentShape(Rectangle())
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .buttonStyle(.plain)
+    .help(branchHelp(reference))
+    .contextMenu {
+      if reference.kind == .localBranch {
         Button("Merge into Current Branch") {
           pendingMergeRequest = PendingMergeRequest(
             branch: reference.shortName,
@@ -3584,16 +3727,22 @@ public struct CurrentRootView: View {
         }
         .disabled(reference.isHEAD || isLoading)
       }
-    } else {
-      Label {
-        Text(reference.shortName)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      } icon: {
-        Image(systemName: referenceIcon(reference.kind))
-      }
-      .help(reference.fullName)
     }
+  }
+
+  private func locateBranch(_ reference: GitReference) {
+    workspace = .history
+    graphSearchScope = .loaded
+    jumpToGraphReference(reference)
+  }
+
+  private func branchHelp(_ reference: GitReference) -> String {
+    if reference.kind == .localBranch {
+      return reference.isHEAD
+        ? "Current branch. Click to locate its commit."
+        : "Click to locate its commit. Double-click to switch branches."
+    }
+    return "Click to locate \(reference.fullName)."
   }
 
   @ViewBuilder

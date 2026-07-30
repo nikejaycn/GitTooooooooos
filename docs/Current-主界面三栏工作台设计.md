@@ -24,8 +24,11 @@
 
 - Workspace：Working Copy、History、Gitflow、Pull Requests、Branch Review、
   Stashes。
-- Local Branches：本地分支及 checkout、merge、rename、delete 等上下文操作。
-- Remote Branches：远端分支。
+- Local Branches：按 `/` 自动形成可展开的目录树；单击分支定位 Commit Graph
+  中的目标提交，双击本地分支执行 checkout，并保留 merge、rename、delete
+  等上下文操作。
+- Remote Branches：按远端和 `/` 自动形成可展开的目录树；单击远端分支定位
+  目标提交。
 - Tags：本地与远端标签管理。
 - GitHub：Issues、Actions。
 - Tools：File History、Activity Log。
@@ -40,6 +43,9 @@
 - Branch Review 使用真实分支列表；比较能力沿用现有提交比较模型逐步扩展。
 - Gitflow 入口只展示当前仓库可验证的本地状态，并复用真实分支创建流程。
 - New Repository Window 使用原生 macOS 多窗口能力，窗口可由系统合并为标签页。
+- Settings 的 Views 区域可配置 Sidebar 显示 Workspace、Local Branches、
+  Remote Branches、Tags、GitHub、Tools、Remotes、Worktrees、Submodules、
+  Git LFS 和 Git Hooks 中的哪些栏目；配置持久化并实时作用于所有仓库窗口。
 
 ### 右侧上下文检查器
 
@@ -70,6 +76,8 @@
 - 底部状态栏提供 Activity、图缩放比例、反馈入口、generation 和版本号。
 - Pull Requests、Issues、GitHub Actions 提供诚实的连接状态。
 - Branch Review 提供本地与远端分支入口。
+- Local/Remote Branches 支持多级目录、点击定位和本地分支双击切换。
+- Settings 增加 Views 配置，可持久化控制 Sidebar 栏目可见性。
 - 独立交互原型保留沙盒 iframe 与 CSP，并继续由 `.gitignore` 排除。
 
 ## 后续服务接入边界
@@ -80,7 +88,7 @@ Pull Requests、Issues 和 GitHub Actions 需要新增托管服务账户、OAuth
 
 ## 验收
 
-- `swift test`：155 项测试通过，3 项环境相关测试按预期跳过。
+- `swift test`：158 项测试通过，3 项环境相关测试按预期跳过。
 - Xcode Debug arm64、macOS 14 deployment target 构建成功。
 - 实际打开本仓库验证：
   - 默认 Commit Graph 正常加载；
@@ -88,4 +96,6 @@ Pull Requests、Issues 和 GitHub Actions 需要新增托管服务账户、OAuth
   - WIP 选择后显示真实文件变化和提交编辑器；
   - Pull Requests 显示 GitHub 连接状态；
   - Gitflow、通知、本地 Profile 和新建仓库窗口入口可用；
+  - 多级分支目录可逐级展开，单击分支选中对应提交，双击本地分支完成切换；
+  - Settings / Views 隐藏或恢复栏目后，已打开仓库窗口即时更新；
   - 工具栏与侧栏在当前最小窗口约束下可用。

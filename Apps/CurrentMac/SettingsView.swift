@@ -1,5 +1,6 @@
 import AppKit
 import CurrentDomain
+import CurrentUI
 import GraphKit
 import SwiftUI
 import UpdateKit
@@ -53,6 +54,22 @@ struct CurrentSettingsView: View {
           }
         }
         .pickerStyle(.segmented)
+      }
+
+      Section("Views") {
+        ForEach(SidebarSection.allCases) { section in
+          Toggle(
+            section.title,
+            isOn: Binding(
+              get: { model.visibleSidebarSections.contains(section) },
+              set: { _ in model.toggleSidebarSection(section) }
+            )
+          )
+          .toggleStyle(.checkbox)
+        }
+        Text("Choose which sections appear in every repository sidebar.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       Section("Git Toolchain") {

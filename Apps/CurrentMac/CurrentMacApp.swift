@@ -117,7 +117,8 @@ struct CurrentMacApp: App {
     WindowGroup("Current", for: WorkspaceWindowState.self) { $workspace in
       CurrentWorkspaceWindow(
         workspace: $workspace,
-        historyStore: workspaceHistory
+        historyStore: workspaceHistory,
+        settingsModel: settingsModel
       )
     }
     .commands {
@@ -149,14 +150,17 @@ private struct CurrentWorkspaceWindow: View {
   @Binding private var workspace: WorkspaceWindowState?
   @State private var model: AppModel
   private let historyStore: WorkspaceHistoryStore
+  private let settingsModel: AppModel
   @Environment(\.openWindow) private var openWindow
 
   init(
     workspace: Binding<WorkspaceWindowState?>,
-    historyStore: WorkspaceHistoryStore
+    historyStore: WorkspaceHistoryStore,
+    settingsModel: AppModel
   ) {
     _workspace = workspace
     self.historyStore = historyStore
+    self.settingsModel = settingsModel
     _model = State(
       initialValue: AppModel(
         initialRepositoryPath: workspace.wrappedValue?.repositoryPath
@@ -173,6 +177,7 @@ private struct CurrentWorkspaceWindow: View {
       commits: model.commits,
       graphRows: model.graphRows,
       graphDisplayConfiguration: model.graphDisplayConfiguration,
+      visibleSidebarSections: settingsModel.visibleSidebarSections,
       hiddenGraphReferences: model.hiddenGraphReferences,
       soloGraphReference: model.soloGraphReference,
       pinnedGraphReferences: model.pinnedGraphReferences,

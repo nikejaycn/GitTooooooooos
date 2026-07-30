@@ -1,5 +1,6 @@
 import AppKit
 import CurrentDomain
+import CurrentUI
 import DiffKit
 import Foundation
 import GitEngine
@@ -47,6 +48,7 @@ final class AppModel {
   private static let hiddenGraphReferencesKey = "Current.hiddenGraphReferences.v1"
   private static let soloGraphReferenceKey = "Current.soloGraphReference.v1"
   private static let pinnedGraphReferencesKey = "Current.pinnedGraphReferences.v1"
+  private static let visibleSidebarSectionsKey = "Current.visibleSidebarSections.v1"
   private static let historyPageSize = 200
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
 
@@ -77,6 +79,7 @@ final class AppModel {
   private(set) var hiddenGraphReferences = Set<String>()
   private(set) var soloGraphReference: String?
   private(set) var pinnedGraphReferences = Set<String>()
+  private(set) var visibleSidebarSections = Set(SidebarSection.allCases)
   private(set) var commitComparison: CommitComparison?
   private(set) var isCommitComparisonLoading = false
   private(set) var references: [GitReference] = []
@@ -160,6 +163,9 @@ final class AppModel {
     )
     pinnedGraphReferences = Set(
       UserDefaults.standard.stringArray(forKey: Self.pinnedGraphReferencesKey) ?? []
+    )
+    visibleSidebarSections = SidebarSection.visibleSections(
+      from: UserDefaults.standard.stringArray(forKey: Self.visibleSidebarSectionsKey)
     )
     diffOptions = DiffOptions(
       ignoresWhitespaceChanges: UserDefaults.standard.bool(
@@ -415,6 +421,20 @@ final class AppModel {
     guard newAppearance != appearance else { return }
     appearance = newAppearance
     UserDefaults.standard.set(newAppearance.rawValue, forKey: Self.appearanceKey)
+  }
+
+  func toggleSidebarSection(_ section: SidebarSection) {
+    if visibleSidebarSections.contains(section) {
+      visibleSidebarSections.remove(section)
+    } else {
+      visibleSidebarSections.insert(section)
+    }
+    UserDefaults.standard.set(
+      SidebarSection.allCases
+        .filter(visibleSidebarSections.contains)
+        .map(\.rawValue),
+      forKey: Self.visibleSidebarSectionsKey
+    )
   }
 
   func setExternalDiffTool(_ tool: ExternalTool) {
@@ -1982,7 +2002,8 @@ final class AppModel {
 
   private var pushRemote: String? {
     if let upstream = repositoryStatus?.upstream {
-      return remotes
+      return
+        remotes
         .sorted { $0.name.count > $1.name.count }
         .first { upstream.hasPrefix("\($0.name)/") }?
         .name
