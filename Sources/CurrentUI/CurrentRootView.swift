@@ -3130,6 +3130,11 @@ public struct CurrentRootView: View {
               idealHeight: CurrentUILayout.historyGraphIdealHeight,
               maxHeight: .infinity
             )
+            .overlay(alignment: .bottom) {
+              SplitViewResizeCursor(.horizontalDivider)
+                .frame(maxWidth: .infinity)
+                .frame(height: 6)
+            }
             historyDetailWorkspace
               .frame(
                 maxWidth: .infinity,
@@ -3169,6 +3174,11 @@ public struct CurrentRootView: View {
             idealHeight: CurrentUILayout.historyChangedFilesIdealHeight,
             maxHeight: .infinity
           )
+          .overlay(alignment: .bottom) {
+            SplitViewResizeCursor(.horizontalDivider)
+              .frame(maxWidth: .infinity)
+              .frame(height: 6)
+          }
         historySelectionDetailsPane
           .frame(
             maxWidth: .infinity,
@@ -3183,6 +3193,11 @@ public struct CurrentRootView: View {
         maxWidth: .infinity,
         maxHeight: .infinity
       )
+      .overlay(alignment: .trailing) {
+        SplitViewResizeCursor(.verticalDivider)
+          .frame(maxHeight: .infinity)
+          .frame(width: 6)
+      }
 
       embeddedCommitDiffPane
         .frame(
