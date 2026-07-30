@@ -3063,6 +3063,7 @@ public struct CurrentRootView: View {
               searchQuery: graphSearchScope == .loaded ? graphSearchText : "",
               displayConfiguration: graphDisplayConfiguration,
               scrollToCommitOID: graphJumpOID,
+              selectsFirstRowByDefault: true,
               onSelection: { rows in
                 let commitOIDs = rows.compactMap(\.commitOID)
                 selectedGraphRows = rows

@@ -64,12 +64,14 @@ public struct CommitGraphView: NSViewRepresentable {
   private let onApproachingEnd: () -> Void
   private let displayConfiguration: GraphDisplayConfiguration
   private let scrollToCommitOID: String?
+  private let selectsFirstRowByDefault: Bool
 
   public init(
     rows: [GraphRow],
     searchQuery: String = "",
     displayConfiguration: GraphDisplayConfiguration = GraphDisplayConfiguration(),
     scrollToCommitOID: String? = nil,
+    selectsFirstRowByDefault: Bool = false,
     onSelection: @escaping ([GraphRow]) -> Void = { _ in },
     onApproachingEnd: @escaping () -> Void = {}
   ) {
@@ -77,6 +79,7 @@ public struct CommitGraphView: NSViewRepresentable {
     self.searchQuery = searchQuery
     self.displayConfiguration = displayConfiguration
     self.scrollToCommitOID = scrollToCommitOID
+    self.selectsFirstRowByDefault = selectsFirstRowByDefault
     self.onSelection = onSelection
     self.onApproachingEnd = onApproachingEnd
   }
@@ -84,6 +87,7 @@ public struct CommitGraphView: NSViewRepresentable {
   public func makeCoordinator() -> Coordinator {
     Coordinator(
       rows: rows,
+      selectsFirstRowByDefault: selectsFirstRowByDefault,
       onSelection: onSelection,
       onApproachingEnd: onApproachingEnd
     )
@@ -130,6 +134,10 @@ public struct CommitGraphView: NSViewRepresentable {
     scrollView.autohidesScrollers = true
     scrollView.documentView = table
     context.coordinator.observeScrolling(in: scrollView)
+    DispatchQueue.main.async { [weak table, weak coordinator = context.coordinator] in
+      guard let table, let coordinator else { return }
+      coordinator.selectFirstRowIfNeeded(in: table)
+    }
     return scrollView
   }
 
@@ -137,6 +145,7 @@ public struct CommitGraphView: NSViewRepresentable {
     guard let table = scrollView.documentView as? NSTableView else { return }
     context.coordinator.onSelection = onSelection
     context.coordinator.onApproachingEnd = onApproachingEnd
+    context.coordinator.selectsFirstRowByDefault = selectsFirstRowByDefault
     context.coordinator.apply(rows: rows, to: table)
     context.coordinator.apply(searchQuery: searchQuery, to: table)
     context.coordinator.displayConfiguration = displayConfiguration
@@ -149,6 +158,7 @@ public struct CommitGraphView: NSViewRepresentable {
     table.tableColumn(withIdentifier: .graph)?.width =
       Self.graphColumnWidth(for: rows, configuration: displayConfiguration)
     context.coordinator.scroll(to: scrollToCommitOID, in: table)
+    context.coordinator.selectFirstRowIfNeeded(in: table)
     Self.restoreLeadingColumns(in: scrollView)
     DispatchQueue.main.async { [weak scrollView] in
       guard let scrollView else { return }
@@ -211,6 +221,7 @@ public struct CommitGraphView: NSViewRepresentable {
   @MainActor
   public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var rows: [GraphRow]
+    var selectsFirstRowByDefault: Bool
     var onSelection: ([GraphRow]) -> Void
     var onApproachingEnd: () -> Void
     var displayConfiguration = GraphDisplayConfiguration()
@@ -218,14 +229,17 @@ public struct CommitGraphView: NSViewRepresentable {
     private var searchQuery = ""
     private var searchedRowCount = 0
     private var lastScrollOID: String?
+    private var hasAppliedDefaultSelection = false
     private let dateFormatter: DateFormatter
 
     init(
       rows: [GraphRow],
+      selectsFirstRowByDefault: Bool,
       onSelection: @escaping ([GraphRow]) -> Void,
       onApproachingEnd: @escaping () -> Void
     ) {
       self.rows = rows
+      self.selectsFirstRowByDefault = selectsFirstRowByDefault
       self.onSelection = onSelection
       self.onApproachingEnd = onApproachingEnd
       dateFormatter = DateFormatter()
@@ -235,6 +249,7 @@ public struct CommitGraphView: NSViewRepresentable {
 
     func apply(rows newRows: [GraphRow], to tableView: NSTableView) {
       guard newRows != rows else { return }
+      let hadRows = !rows.isEmpty
       let selectedIDs = tableView.selectedRowIndexes.compactMap { index in
         rows.indices.contains(index) ? rows[index].id : nil
       }
@@ -247,6 +262,29 @@ public struct CommitGraphView: NSViewRepresentable {
         newRows.indices.filter { selectedIDs.contains(newRows[$0].id) }
       )
       tableView.selectRowIndexes(indexes, byExtendingSelection: false)
+      if newRows.isEmpty {
+        hasAppliedDefaultSelection = false
+      } else if !hadRows || (!selectedIDs.isEmpty && indexes.isEmpty) {
+        hasAppliedDefaultSelection = false
+      }
+      selectFirstRowIfNeeded(in: tableView)
+    }
+
+    func selectFirstRowIfNeeded(in tableView: NSTableView) {
+      guard
+        selectsFirstRowByDefault,
+        !hasAppliedDefaultSelection,
+        !rows.isEmpty,
+        tableView.selectedRowIndexes.isEmpty
+      else {
+        return
+      }
+      hasAppliedDefaultSelection = true
+      tableView.selectRowIndexes(
+        IndexSet(integer: rows.startIndex),
+        byExtendingSelection: false
+      )
+      tableView.scrollRowToVisible(rows.startIndex)
     }
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
