@@ -101,14 +101,18 @@ struct HistoryWorkspace: View {
   let diffState: CurrentRootState.DiffState
   let requestedJumpOID: String?
   @Binding var selectedCommitOID: String?
+  @Binding var selectedWorkingCopyPath: GitPath?
   @Binding var diffPresentation: DiffPresentation
   let actions: CurrentRootActions.HistoryActions
+  let workingCopyActions: CurrentRootActions.WorkingCopyActions
   let diffActions: CurrentRootActions.DiffActions
-  let openWorkingCopyChange: (FileChange) -> Void
+  let createStash: ([GitPath]) -> Void
+  let openFileInsights: (GitPath) -> Void
   let requestInteractiveRebase: (String) -> Void
 
   @State private var selectedRows: [GraphRow] = []
   @State private var searchText = ""
+  @State private var changedFileFilterText = ""
   @State private var searchScope: HistorySearchScope = .loaded
   @State private var hasSubmittedRepositorySearch = false
   @State private var localJumpOID: String?
@@ -283,46 +287,38 @@ struct HistoryWorkspace: View {
   }
 
   private var detailWorkspace: some View {
-    HSplitView {
-      VSplitView {
-        changedFilesPane
-          .frame(
-            maxWidth: .infinity,
-            minHeight: CurrentUILayout.historyChangedFilesMinimumHeight,
-            idealHeight: CurrentUILayout.historyChangedFilesIdealHeight,
-            maxHeight: .infinity
-          )
-          .overlay(alignment: .bottom) {
-            SplitViewResizeCursor(.horizontalDivider)
-              .frame(maxWidth: .infinity)
-              .frame(height: 6)
-          }
-        selectionDetailsPane
-          .frame(
-            maxWidth: .infinity,
-            minHeight: CurrentUILayout.historyCommitDetailsMinimumHeight,
-            idealHeight: CurrentUILayout.historyCommitDetailsIdealHeight,
-            maxHeight: .infinity
-          )
-      }
-      .frame(
-        minWidth: CurrentUILayout.historyMetadataMinimumWidth,
-        idealWidth: CurrentUILayout.historyMetadataIdealWidth,
-        maxWidth: .infinity,
-        maxHeight: .infinity
-      )
-      .overlay(alignment: .trailing) {
-        SplitViewResizeCursor(.verticalDivider)
-          .frame(maxHeight: .infinity)
-          .frame(width: 6)
-      }
-
-      embeddedDiffPane
-        .frame(
-          minWidth: CurrentUILayout.diffMinimumWidth,
-          maxWidth: .infinity,
-          maxHeight: .infinity
+    Group {
+      if selectedRows.count == 1, selectionSummary.includesWorkingCopy {
+        WorkingCopyChangesBrowser(
+          status: status,
+          diffState: diffState,
+          isLoading: isLoading,
+          selectedPath: $selectedWorkingCopyPath,
+          diffPresentation: $diffPresentation,
+          actions: workingCopyActions,
+          diffActions: diffActions,
+          createStash: createStash,
+          openFileInsights: openFileInsights
         )
+      } else {
+        HSplitView {
+          changedFilesPane
+            .frame(
+              minWidth: CurrentUILayout.historyMetadataMinimumWidth,
+              idealWidth: CurrentUILayout.historyMetadataIdealWidth,
+              maxWidth: .infinity,
+              maxHeight: .infinity
+            )
+
+          embeddedDiffPane
+            .frame(
+              minWidth: CurrentUILayout.diffMinimumWidth,
+              maxWidth: .infinity,
+              maxHeight: .infinity
+            )
+            .layoutPriority(1)
+        }
+      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -330,17 +326,47 @@ struct HistoryWorkspace: View {
   private var changedFilesPane: some View {
     VStack(spacing: 0) {
       HStack(spacing: 8) {
-        Label("Changed Files", systemImage: "doc.on.doc")
-          .font(.callout.weight(.semibold))
-        Spacer()
+        Image(systemName: "minus.square")
+          .foregroundStyle(.secondary)
+        Text("Changed Files, Sorted by File Status")
+          .font(.callout)
+          .lineLimit(1)
+        Image(systemName: "list.bullet")
+          .foregroundStyle(.secondary)
+        Spacer(minLength: 8)
+        HStack(spacing: 5) {
+          Image(systemName: "magnifyingglass")
+            .foregroundStyle(.secondary)
+          TextField("Search", text: $changedFileFilterText)
+            .textFieldStyle(.plain)
+          if !changedFileFilterText.isEmpty {
+            Button {
+              changedFileFilterText = ""
+            } label: {
+              Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+          }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.background, in: RoundedRectangle(cornerRadius: 7))
+        .overlay {
+          RoundedRectangle(cornerRadius: 7)
+            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+        }
+        .frame(minWidth: 120, idealWidth: 180, maxWidth: 230)
         if let comparison = state.comparison {
           Text(comparison.files.count.formatted())
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
+        Image(systemName: "ellipsis.circle")
+          .foregroundStyle(.secondary)
       }
       .padding(.horizontal, 10)
-      .frame(height: 34)
+      .frame(height: 38)
       .background(.bar)
       Divider()
 
@@ -355,18 +381,18 @@ struct HistoryWorkspace: View {
             systemImage: "doc.badge.ellipsis",
             description: Text("The compared trees are identical.")
           )
+        } else if filteredComparisonFiles(comparison).isEmpty {
+          ContentUnavailableView.search(text: changedFileFilterText)
         } else {
           ScrollView {
             LazyVStack(spacing: 2) {
-              ForEach(comparison.files) { file in
+              ForEach(filteredComparisonFiles(comparison)) { file in
                 historyFileRow(file, comparison: comparison)
               }
             }
             .padding(6)
           }
         }
-      } else if selectionSummary.includesWorkingCopy {
-        workingCopyChangedFiles
       } else {
         ContentUnavailableView(
           "Select a Commit",
@@ -376,43 +402,6 @@ struct HistoryWorkspace: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-
-  @ViewBuilder
-  private var workingCopyChangedFiles: some View {
-    if status.changes.isEmpty {
-      ContentUnavailableView(
-        "Working Copy Clean",
-        systemImage: "checkmark.circle"
-      )
-    } else {
-      ScrollView {
-        LazyVStack(spacing: 2) {
-          ForEach(status.changes) { change in
-            Button {
-              openWorkingCopyChange(change)
-            } label: {
-              HStack(spacing: 8) {
-                Image(systemName: "ellipsis.rectangle.fill")
-                  .foregroundStyle(.orange)
-                Text(change.path.displayString)
-                  .lineLimit(1)
-                  .truncationMode(.middle)
-                Spacer(minLength: 4)
-                Text(change.kind.rawValue)
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
-              }
-              .padding(.horizontal, 7)
-              .frame(height: 26)
-              .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-          }
-        }
-        .padding(6)
-      }
-    }
   }
 
   private func historyFileRow(
@@ -426,10 +415,8 @@ struct HistoryWorkspace: View {
       diffActions.loadCommit(file, comparison)
     } label: {
       HStack(spacing: 8) {
-        Text(file.status)
-          .font(.system(.caption2, design: .monospaced, weight: .bold))
+        Image(systemName: "ellipsis.rectangle.fill")
           .foregroundStyle(HistoryPresentation.comparisonColor(file.kind))
-          .frame(width: 26, alignment: .leading)
         VStack(alignment: .leading, spacing: 1) {
           Text(file.path.displayString)
             .lineLimit(1)
@@ -443,9 +430,20 @@ struct HistoryWorkspace: View {
           }
         }
         Spacer(minLength: 2)
+        Menu {
+          Button("View Diff") {
+            diffActions.loadCommit(file, comparison)
+          }
+        } label: {
+          Image(systemName: "ellipsis")
+            .frame(width: 24, height: 24)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
       }
       .padding(.horizontal, 7)
-      .frame(minHeight: 27)
+      .frame(minHeight: 32)
       .background(
         isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
         in: RoundedRectangle(cornerRadius: 6)
@@ -457,109 +455,14 @@ struct HistoryWorkspace: View {
     .accessibilityLabel("View diff for \(file.path.displayString)")
   }
 
-  private var selectionDetailsPane: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 10) {
-        if selectedRows.isEmpty {
-          VStack(spacing: 7) {
-            Image(systemName: "info.circle")
-              .font(.title2)
-              .foregroundStyle(.secondary)
-            Text("No Commit Selected")
-              .font(.callout.weight(.semibold))
-            Text("Select a row in the graph for commit details.")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .multilineTextAlignment(.center)
-          }
-          .frame(maxWidth: .infinity, minHeight: 82)
-        } else if selectedRows.count == 1, let row = selectedRows.first {
-          commitSummary(row)
-        } else {
-          comparisonSummary
-        }
-      }
-      .padding(12)
-      .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(.background)
-  }
-
-  @ViewBuilder
-  private func commitSummary(_ row: GraphRow) -> some View {
-    HStack(alignment: .top, spacing: 10) {
-      Image(systemName: row.isWorkingCopy ? "pencil.circle.fill" : "person.crop.circle.fill")
-        .font(.title)
-        .foregroundStyle(row.isWorkingCopy ? .orange : .secondary)
-      VStack(alignment: .leading, spacing: 3) {
-        Text(row.isWorkingCopy ? "Working Copy" : row.subject)
-          .font(.headline)
-          .lineLimit(3)
-          .textSelection(.enabled)
-        if row.isWorkingCopy {
-          Text(row.subject)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-      }
-    }
-    if !row.decorations.isEmpty {
-      HStack(spacing: 5) {
-        ForEach(row.decorations, id: \.self) { decoration in
-          Label(
-            decoration.label,
-            systemImage: HistoryPresentation.decorationIcon(decoration.kind)
-          )
-          .font(.caption)
-          .padding(.horizontal, 6)
-          .padding(.vertical, 3)
-          .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-        }
-      }
-    }
-    if let oid = row.commitOID, !row.isWorkingCopy {
-      inspectorField("Commit", value: oid)
-    }
-    if !row.isWorkingCopy {
-      inspectorField(
-        "Author",
-        value: row.authorEmail.isEmpty
-          ? row.author : "\(row.author) <\(row.authorEmail)>"
-      )
-      if let authoredAt = row.authoredAt {
-        inspectorField(
-          "Date",
-          value: authoredAt.formatted(date: .abbreviated, time: .standard)
-        )
-      }
-      inspectorField(
-        "Parents",
-        value:
-          row.parentOIDs.isEmpty
-          ? "Root commit"
-          : row.parentOIDs.map { String($0.prefix(12)) }.joined(separator: ", ")
-      )
-    }
-  }
-
-  @ViewBuilder
-  private var comparisonSummary: some View {
-    Text("\(selectedRows.count) commits selected")
-      .font(.headline)
-    if state.isComparisonLoading {
-      ProgressView("Comparing commits…")
-        .controlSize(.small)
-    } else if let comparison = state.comparison {
-      inspectorField("Base", value: comparison.baseOID)
-      inspectorField("Target", value: comparison.targetOID)
-      Text("\(comparison.files.count) changed files")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    } else {
-      Text("Select at least two commits to compare their trees.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
+  private func filteredComparisonFiles(
+    _ comparison: CommitComparison
+  ) -> [CommitFileChange] {
+    let query = changedFileFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else { return comparison.files }
+    return comparison.files.filter {
+      $0.path.displayString.localizedCaseInsensitiveContains(query)
+        || ($0.oldPath?.displayString.localizedCaseInsensitiveContains(query) ?? false)
     }
   }
 
@@ -817,20 +720,6 @@ struct HistoryWorkspace: View {
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(150))
       localJumpOID = nil
-    }
-  }
-
-  private func inspectorField(_ title: String, value: String) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(title)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      Text(value)
-        .font(.system(.caption, design: title == "Author" ? .default : .monospaced))
-        .textSelection(.enabled)
-        .lineLimit(4)
-        .truncationMode(.middle)
-        .help(value)
     }
   }
 }

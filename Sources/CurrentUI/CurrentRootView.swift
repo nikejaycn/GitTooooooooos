@@ -1,4 +1,3 @@
-import AppKit
 import CurrentDomain
 import DiffKit
 import GraphKit
@@ -7,19 +6,6 @@ import SwiftUI
 public struct CurrentRootView: View {
   @Environment(\.openSettings) private var openSettings
 
-  private enum Workspace: Hashable {
-    case gitflow
-    case changes
-    case history
-    case pullRequests
-    case branchReview
-    case issues
-    case actions
-    case fileHistory
-    case stashes
-    case operations
-  }
-
   private struct StashRequest: Identifiable {
     let id = UUID()
     let paths: [GitPath]
@@ -27,9 +13,8 @@ public struct CurrentRootView: View {
 
   private let state: CurrentRootState
   private let actions: CurrentRootActions
-  @State private var workspace: Workspace = .history
+  @State private var workspace: CurrentWorkspace = .history
   @State private var isSidebarVisible = true
-  @State private var expandedBranchFolders = Set<String>()
   @State private var isConfiguringHooks = false
   @State private var hooksPathDraft = ""
   @State private var graphJumpOID: String?
@@ -66,8 +51,6 @@ public struct CurrentRootView: View {
   @State private var fileInsightPathText = ""
   @State private var pendingInteractiveRebaseOID: String?
   @State private var conflictEditorPath: GitPath?
-  @State private var isCloningRepository = false
-  @State private var cloneURL = ""
   @State private var isShowingCommandPalette = false
   @State private var isEditingRemote = false
   @State private var editingRemote: GitRemote?
@@ -77,7 +60,7 @@ public struct CurrentRootView: View {
   @State private var pendingRemoteRemoval: GitRemote?
   @State private var isConfirmingPush = false
   @State private var isConfirmingForcePush = false
-  @State private var selectedStashPaths: Set<GitPath> = []
+  @State private var selectedWorkingCopyPath: GitPath?
   @State private var stashRequest: StashRequest?
 
   public init(state: CurrentRootState, actions: CurrentRootActions) {
@@ -127,23 +110,41 @@ public struct CurrentRootView: View {
   private var isCommitDiffLoading: Bool { state.diff.isCommitLoading }
 
   private var visibleSidebarSections: Set<SidebarSection> { state.sidebar.visibleSections }
+  private var repositorySidebarModel: RepositorySidebarModel {
+    RepositorySidebarModel(
+      repositoryName: repositoryName,
+      hasRepository: status != nil,
+      isLoading: isLoading,
+      visibleSections: visibleSidebarSections,
+      references: references,
+      remotes: remotes,
+      worktrees: worktrees,
+      submodules: submodules,
+      gitLFS: gitLFS,
+      gitHooks: gitHooks
+    )
+  }
+  private var toolbarModel: CurrentToolbarModel {
+    CurrentToolbarModel(
+      isSidebarVisible: isSidebarVisible,
+      hasRepository: status != nil,
+      isLoading: isLoading,
+      hasRemotes: !remotes.isEmpty,
+      hasRecoveryReference: lastRecoveryReference != nil,
+      hasWorkingCopyChanges: status?.changes.isEmpty == false,
+      hasPushTarget: pushTargetDescription != nil,
+      hasUpstream: status?.upstream != nil,
+      repositoryName: repositoryName,
+      selectedCommitOID: selectedCommitOID,
+      activities: activities
+    )
+  }
 
   // MARK: - Feature action forwarding
 
   private var openRepository: () -> Void { actions.repository.open }
   private var newRepositoryWindow: () -> Void { actions.repository.openNewWindow }
-  private var initializeRepository: () -> Void { actions.repository.initialize }
-  private var cloneRepository: (String) -> Void { actions.repository.clone }
   private var openRecentRepository: (RecentRepository) -> Void { actions.repository.openRecent }
-  private var openRecentRepositoryInNewWindow: (RecentRepository) -> Void {
-    actions.repository.openRecentInNewWindow
-  }
-  private var toggleFavoriteRepository: (RecentRepository) -> Void {
-    actions.repository.toggleFavorite
-  }
-  private var removeRecentRepository: (RecentRepository) -> Void {
-    actions.repository.removeRecent
-  }
   private var revealRepositoryInFinder: () -> Void { actions.repository.revealInFinder }
   private var chooseExternalApplication: () -> Void {
     actions.repository.chooseExternalApplication
@@ -252,418 +253,21 @@ public struct CurrentRootView: View {
   public var body: some View {
     HSplitView {
       if isSidebarVisible {
-        List(selection: $workspace) {
-          Section("Repository") {
-            Label {
-              Text(repositoryName ?? "No repository open")
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(repositoryName ?? "No repository open")
-            } icon: {
-              Image(systemName: "externaldrive")
-            }
-          }
-          if visibleSidebarSections.contains(.workspace) {
-            Section("Workspace") {
-              Label("Gitflow", systemImage: "arrow.triangle.branch")
-                .tag(Workspace.gitflow)
-              Label("Working Copy", systemImage: "square.stack.3d.up")
-                .tag(Workspace.changes)
-              Label("History", systemImage: "point.3.connected.trianglepath.dotted")
-                .tag(Workspace.history)
-              Label("Pull Requests", systemImage: "arrow.triangle.pull")
-                .tag(Workspace.pullRequests)
-              Label("Branch Review", systemImage: "arrow.triangle.branch")
-                .tag(Workspace.branchReview)
-              Label("Stashes", systemImage: "archivebox")
-                .tag(Workspace.stashes)
-            }
-          }
-          if visibleSidebarSections.contains(.localBranches) {
-            branchSidebarSection(title: "Local Branches", kind: .localBranch)
-          }
-          if visibleSidebarSections.contains(.remoteBranches) {
-            branchSidebarSection(title: "Remote Branches", kind: .remoteBranch)
-          }
-          if visibleSidebarSections.contains(.tags) {
-            tagSidebarSection
-          }
-          if visibleSidebarSections.contains(.github) {
-            Section("GitHub") {
-              Label("Issues", systemImage: "record.circle")
-                .tag(Workspace.issues)
-              Label("Actions", systemImage: "play.square.stack")
-                .tag(Workspace.actions)
-            }
-          }
-          if visibleSidebarSections.contains(.tools) {
-            Section("Tools") {
-              Label(
-                "File History",
-                systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
-              )
-              .tag(Workspace.fileHistory)
-              Label("Activity Log", systemImage: "list.bullet.rectangle")
-                .tag(Workspace.operations)
-            }
-          }
-          if status != nil, visibleSidebarSections.contains(.remotes) {
-            Section {
-              ForEach(remotes) { remote in
-                HStack(spacing: 6) {
-                  Image(systemName: "cloud")
-                  VStack(alignment: .leading, spacing: 1) {
-                    Text(remote.name)
-                      .lineLimit(1)
-                      .truncationMode(.middle)
-                    Text(remote.fetchURL)
-                      .font(.caption2)
-                      .foregroundStyle(.secondary)
-                      .lineLimit(1)
-                  }
-                }
-                .help("Fetch: \(remote.fetchURL)\nPush: \(remote.pushURL)")
-                .contextMenu {
-                  Button("Edit…") {
-                    beginEditingRemote(remote)
-                  }
-                  Button("Fetch with Prune") {
-                    fetchRemote(remote)
-                  }
-                  Divider()
-                  Button("Remove…", role: .destructive) {
-                    pendingRemoteRemoval = remote
-                  }
-                }
-              }
-            } header: {
-              HStack {
-                Text("Remotes")
-                Spacer()
-                Button {
-                  beginEditingRemote(nil)
-                } label: {
-                  Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("Add Remote")
-              }
-            }
-          }
-          if status != nil, visibleSidebarSections.contains(.worktrees) {
-            Section {
-              ForEach(worktrees) { worktree in
-                Button {
-                  openWorktree(worktree)
-                } label: {
-                  HStack(spacing: 6) {
-                    Image(
-                      systemName:
-                        worktree.isLocked
-                        ? "lock.fill"
-                        : worktree.isCurrent ? "location.fill" : "folder"
-                    )
-                    VStack(alignment: .leading, spacing: 1) {
-                      Text(worktree.branch ?? (worktree.isDetached ? "Detached HEAD" : "Bare"))
-                        .lineLimit(1)
-                      Text(worktree.path.displayString)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    }
-                  }
-                }
-                .buttonStyle(.plain)
-                .disabled(worktree.isCurrent || isLoading)
-                .help(RepositorySidebarPresentation.worktreeHelp(worktree))
-                .contextMenu {
-                  Button("Open") {
-                    openWorktree(worktree)
-                  }
-                  .disabled(worktree.isCurrent)
-                  Divider()
-                  if worktree.isLocked {
-                    Button("Unlock") {
-                      unlockWorktree(worktree)
-                    }
-                  } else {
-                    Button("Lock") {
-                      lockWorktree(worktree)
-                    }
-                  }
-                  Divider()
-                  Button("Remove…", role: .destructive) {
-                    forceWorktreeRemoval = false
-                    pendingWorktreeRemoval = worktree
-                  }
-                  .disabled(worktree.isCurrent || worktree.isLocked)
-                  Button("Force Remove…", role: .destructive) {
-                    forceWorktreeRemoval = true
-                    pendingWorktreeRemoval = worktree
-                  }
-                  .disabled(worktree.isCurrent || worktree.isLocked)
-                }
-              }
-            } header: {
-              HStack {
-                Text("Worktrees")
-                Spacer()
-                Button {
-                  newWorktreeBranch = ""
-                  newWorktreeStartPoint = ""
-                  isCreatingWorktree = true
-                } label: {
-                  Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("Create Worktree")
-              }
-            }
-          }
-          if status != nil, visibleSidebarSections.contains(.submodules) {
-            Section {
-              ForEach(submodules) { submodule in
-                Button {
-                  openSubmodule(submodule)
-                } label: {
-                  HStack(spacing: 6) {
-                    Image(systemName: RepositorySidebarPresentation.submoduleIcon(submodule))
-                    VStack(alignment: .leading, spacing: 1) {
-                      Text(submodule.path.displayString)
-                        .lineLimit(1)
-                      Text(RepositorySidebarPresentation.submoduleSummary(submodule))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    }
-                  }
-                }
-                .buttonStyle(.plain)
-                .disabled(!submodule.isInitialized || isLoading)
-                .help(RepositorySidebarPresentation.submoduleHelp(submodule))
-                .contextMenu {
-                  Button("Open") {
-                    openSubmodule(submodule)
-                  }
-                  .disabled(!submodule.isInitialized)
-                  Divider()
-                  if !submodule.isInitialized {
-                    Button("Initialize") {
-                      initializeSubmodule(submodule)
-                    }
-                  } else {
-                    Button("Checkout Recorded Commit") {
-                      checkoutRecordedSubmodule(submodule)
-                    }
-                    Button("Update from Remote") {
-                      updateSubmoduleFromRemote(submodule)
-                    }
-                    Button("Stage Pointer") {
-                      stageSubmodulePointer(submodule)
-                    }
-                    .disabled(!submodule.hasPointerChange)
-                  }
-                  Divider()
-                  Button("Remove…", role: .destructive) {
-                    forceSubmoduleRemoval = false
-                    pendingSubmoduleRemoval = submodule
-                  }
-                  Button("Force Remove…", role: .destructive) {
-                    forceSubmoduleRemoval = true
-                    pendingSubmoduleRemoval = submodule
-                  }
-                }
-              }
-            } header: {
-              HStack {
-                Text("Submodules")
-                Spacer()
-                Button {
-                  newSubmoduleURL = ""
-                  newSubmodulePath = ""
-                  newSubmoduleBranch = ""
-                  isAddingSubmodule = true
-                } label: {
-                  Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("Add Submodule")
-              }
-            }
-          }
-          if visibleSidebarSections.contains(.gitLFS) {
-            lfsSidebarSection
-          }
-          if visibleSidebarSections.contains(.gitHooks) {
-            hooksSidebarSection
-          }
-        }
-        .listStyle(.sidebar)
-        .frame(
-          minWidth: CurrentUILayout.sidebarMinimumWidth,
-          idealWidth: CurrentUILayout.sidebarIdealWidth,
-          maxWidth: CurrentUILayout.sidebarMaximumWidth
+        RepositorySidebarView(
+          selection: $workspace,
+          model: repositorySidebarModel,
+          send: handleRepositorySidebarEvent
         )
       }
-
       content
         .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .layoutPriority(1)
         .toolbar {
-          ToolbarItem(placement: .navigation) {
-            Button {
-              isSidebarVisible.toggle()
-            } label: {
-              Label(
-                isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
-                systemImage: "sidebar.left"
-              )
-            }
-            .help(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
-            .keyboardShortcut("s", modifiers: [.control, .command])
-          }
-          ToolbarItemGroup {
-            Button(action: openRepository) {
-              Label("Open Repository", systemImage: "folder")
-            }
-            Button(action: newRepositoryWindow) {
-              Label("New Repository Window", systemImage: "plus.rectangle.on.rectangle")
-            }
-            .keyboardShortcut("n")
-            Button("Undo", systemImage: "arrow.uturn.backward", action: undoLastOperation)
-              .disabled(lastRecoveryReference == nil || isLoading)
-            Button(action: fetch) {
-              Label("Fetch", systemImage: "arrow.down.circle")
-            }
-            .disabled(status == nil || isLoading || remotes.isEmpty)
-            Menu {
-              ForEach(PullStrategy.allCases) { strategy in
-                Button(strategy.title) {
-                  pull(strategy)
-                }
-              }
-            } label: {
-              Label("Pull", systemImage: "arrow.down")
-            }
-            .disabled(status == nil || isLoading || remotes.isEmpty)
-            Button {
-              newBranchName = ""
-              isCreatingBranch = true
-            } label: {
-              Label("Branch", systemImage: "arrow.triangle.branch")
-            }
-            .disabled(status == nil || isLoading)
-            Button {
-              beginCreatingStash(paths: [])
-            } label: {
-              Label("Stash", systemImage: "archivebox")
-            }
-            .disabled(status?.changes.isEmpty != false || isLoading)
-            Button {
-              isConfirmingPush = true
-            } label: {
-              Label("Push", systemImage: "arrow.up")
-            }
-            .disabled(pushTargetDescription == nil || isLoading)
-            Button {
-              isShowingCommandPalette = true
-            } label: {
-              Label("Search", systemImage: "magnifyingglass")
-            }
-            .keyboardShortcut("k", modifiers: [.command])
-            Button {
-              openSettings()
-            } label: {
-              Label("Settings", systemImage: "gearshape")
-            }
-            Menu {
-              if activities.isEmpty {
-                Text("No recent activity")
-              } else {
-                ForEach(activities.prefix(5)) { activity in
-                  Button {
-                    workspace = .operations
-                  } label: {
-                    Label(
-                      activity.title,
-                      systemImage: OperationActivityPresentation.icon(for: activity.state)
-                    )
-                  }
-                }
-              }
-              Divider()
-              Button("Open Activity Log") {
-                workspace = .operations
-              }
-            } label: {
-              Label("Notifications", systemImage: "bell")
-            }
-            Menu {
-              Text("Local Git Profile")
-              if let repositoryName {
-                Text(repositoryName)
-              }
-              Divider()
-              Button("Profile & Preferences…") {
-                openSettings()
-              }
-            } label: {
-              Label("Profile", systemImage: "person.crop.circle")
-            }
-            Menu {
-              Button("Fetch All", action: fetch)
-              Menu("Pull") {
-                ForEach(PullStrategy.allCases) { strategy in
-                  Button(strategy.title) {
-                    pull(strategy)
-                  }
-                }
-              }
-              Button("Push…") {
-                isConfirmingPush = true
-              }
-              .disabled(pushTargetDescription == nil)
-              Button("Force Push with Lease…") {
-                isConfirmingForcePush = true
-              }
-              .disabled(status?.upstream == nil)
-              Divider()
-              Button("Stash All Changes") {
-                beginCreatingStash(paths: [])
-              }
-              .disabled(status?.changes.isEmpty != false)
-              Button("Export Selected Commit as Patch…") {
-                if let selectedCommitOID {
-                  exportPatch(selectedCommitOID)
-                }
-              }
-              .disabled(selectedCommitOID == nil)
-              Button("Apply Patch to Index…", action: applyPatch)
-              Divider()
-              Button("Show Repository in Finder", action: revealRepositoryInFinder)
-              Button("Open Repository With…", action: chooseExternalApplication)
-              Divider()
-              Button("Prune Stale Worktrees", action: pruneWorktrees)
-              Menu("Repository Maintenance") {
-                Button("Run Recommended Maintenance") {
-                  performMaintenance(.automatic)
-                }
-                Button("Optimize Repository") {
-                  performMaintenance(.optimize)
-                }
-                Button("Verify Object Database") {
-                  performMaintenance(.verify)
-                }
-              }
-              Divider()
-              Button("Undo Last Recoverable Operation", action: undoLastOperation)
-                .disabled(lastRecoveryReference == nil)
-            } label: {
-              Label("Repository Actions", systemImage: "ellipsis.circle")
-            }
-            .disabled(status == nil || isLoading)
-          }
+          CurrentToolbarContent(
+            model: toolbarModel,
+            send: handleToolbarEvent
+          )
         }
         .alert("Create Branch", isPresented: $isCreatingBranch) {
           TextField("Branch name", text: $newBranchName)
@@ -736,16 +340,6 @@ public struct CurrentRootView: View {
           Text(
             "The path must stay inside this repository. GitCurrent stages the new gitlink and .gitmodules."
           )
-        }
-        .alert("Clone Repository", isPresented: $isCloningRepository) {
-          TextField("HTTPS, SSH, or local repository URL", text: $cloneURL)
-          Button("Choose Destination…") {
-            cloneRepository(cloneURL)
-          }
-          .disabled(cloneURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-          Button("Cancel", role: .cancel) {}
-        } message: {
-          Text("Credentials are provided by Keychain, ssh-agent, or configured Git helpers.")
         }
         .confirmationDialog(
           "\(forceWorktreeRemoval ? "Force remove" : "Remove") worktree?",
@@ -883,7 +477,15 @@ public struct CurrentRootView: View {
         set: { if !$0 { clearCommitDiff() } }
       )
     ) {
-      commitDiffViewer
+      CommitDiffSheet(
+        document: selectedCommitDiff,
+        comparison: selectedCommitDiffComparison,
+        isLoading: isCommitDiffLoading,
+        presentation: $diffPresentation,
+        options: diffOptions,
+        setOptions: setDiffOptions,
+        dismiss: clearCommitDiff
+      )
     }
     .sheet(item: $stashRequest) { request in
       StashCreationView(
@@ -909,217 +511,6 @@ public struct CurrentRootView: View {
     }
   }
 
-  private var commitDiffViewer: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 10) {
-        VStack(alignment: .leading, spacing: 3) {
-          Text(selectedCommitDiff?.path.displayString ?? "Loading file diff…")
-            .font(.headline)
-            .lineLimit(1)
-            .truncationMode(.middle)
-          if let comparison = selectedCommitDiffComparison {
-            Text("\(comparison.baseOID.prefix(12)) → \(comparison.targetOID.prefix(12))")
-              .font(.system(.caption, design: .monospaced))
-              .foregroundStyle(.secondary)
-          }
-        }
-        .layoutPriority(1)
-        Spacer(minLength: 8)
-        Picker("Diff presentation", selection: $diffPresentation) {
-          Text("Unified").tag(DiffPresentation.unified)
-          Text("Side-by-Side").tag(DiffPresentation.split)
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .frame(width: 170)
-        DiffWhitespaceMenu(
-          options: diffOptions,
-          setOptions: setDiffOptions
-        )
-        Button("Done") {
-          clearCommitDiff()
-        }
-        .keyboardShortcut(.cancelAction)
-      }
-      .padding(12)
-      Divider()
-      if isCommitDiffLoading {
-        ProgressView("Loading commit diff…")
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else if let selectedCommitDiff {
-        DiffDocumentView(
-          document: selectedCommitDiff,
-          presentation: diffPresentation
-        )
-      } else {
-        ContentUnavailableView(
-          "Diff Unavailable",
-          systemImage: "doc.text.magnifyingglass",
-          description: Text("The selected commit comparison has no readable diff.")
-        )
-      }
-    }
-    .frame(minWidth: 760, minHeight: 520)
-  }
-
-  @ViewBuilder
-  private var lfsSidebarSection: some View {
-    if status != nil {
-      Section {
-        if !gitLFS.isAvailable {
-          Label("Unavailable", systemImage: "externaldrive.badge.xmark")
-            .foregroundStyle(.secondary)
-            .help("The selected Git toolchain cannot run Git LFS.")
-        } else {
-          Label {
-            VStack(alignment: .leading, spacing: 1) {
-              Text(gitLFS.isConfigured ? "Ready" : "Needs initialization")
-              if let version = gitLFS.version {
-                Text(version)
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
-              }
-            }
-          } icon: {
-            Image(
-              systemName: gitLFS.isConfigured ? "checkmark.circle" : "wrench.and.screwdriver"
-            )
-          }
-          .contextMenu {
-            lfsActionButtons
-          }
-
-          ForEach(gitLFS.patterns) { pattern in
-            Label {
-              VStack(alignment: .leading, spacing: 1) {
-                Text(pattern.pattern)
-                  .lineLimit(1)
-                Text(pattern.source)
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
-              }
-            } icon: {
-              Image(systemName: RepositorySidebarPresentation.lfsPatternIcon(pattern))
-            }
-            .foregroundStyle(pattern.isTracked ? .primary : .secondary)
-            .help(RepositorySidebarPresentation.lfsPatternHelp(pattern))
-            .contextMenu {
-              Button("Stop Tracking…", role: .destructive) {
-                pendingLFSUntrack = pattern
-              }
-              .disabled(!pattern.canUntrack)
-            }
-          }
-
-          if let inspectionError = gitLFS.patternInspectionError {
-            Label(inspectionError, systemImage: "exclamationmark.triangle")
-              .font(.caption)
-              .foregroundStyle(.orange)
-              .lineLimit(2)
-              .truncationMode(.tail)
-              .help(inspectionError)
-          }
-        }
-      } header: {
-        HStack {
-          Text("Git LFS")
-          Spacer()
-          if gitLFS.isAvailable {
-            Menu {
-              Button("Track Pattern…") {
-                beginTrackingLFS(lockable: false)
-              }
-              Button("Track Lockable Pattern…") {
-                beginTrackingLFS(lockable: true)
-              }
-              Divider()
-              lfsActionButtons
-            } label: {
-              Image(systemName: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .help("Git LFS Actions")
-          }
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var hooksSidebarSection: some View {
-    if status != nil {
-      Section {
-        Label {
-          VStack(alignment: .leading, spacing: 1) {
-            Text(gitHooks.configuredPath ?? "Default .git/hooks")
-              .lineLimit(1)
-            Text(gitHooks.effectivePath.isEmpty ? "Unavailable" : gitHooks.effectivePath)
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-          }
-        } icon: {
-          Image(systemName: "terminal")
-        }
-        ForEach(gitHooks.hooks) { hook in
-          Label {
-            Text(hook.name)
-              .lineLimit(1)
-              .truncationMode(.middle)
-          } icon: {
-            Image(
-              systemName: hook.isExecutable ? "checkmark.circle.fill" : "pause.circle"
-            )
-          }
-          .foregroundStyle(hook.isExecutable ? .primary : .secondary)
-          .help(
-            hook.isExecutable
-              ? "Executable: Git will run this hook when its event occurs."
-              : "Not executable: Git will skip this hook."
-          )
-        }
-        if gitHooks.hooks.isEmpty {
-          Text("No active hook files")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-      } header: {
-        HStack {
-          Text("Git Hooks")
-          Spacer()
-          Button {
-            hooksPathDraft = gitHooks.configuredPath ?? ""
-            isConfiguringHooks = true
-          } label: {
-            Image(systemName: "gearshape")
-          }
-          .buttonStyle(.borderless)
-          .help("Configure Repository Hooks")
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var lfsActionButtons: some View {
-    if !gitLFS.isConfigured {
-      Button("Initialize for This Repository", action: installLFS)
-    }
-    Button("Fetch Current Refs", action: { fetchLFS(false) })
-      .disabled(remotes.isEmpty)
-    Button("Fetch Recent Refs", action: { fetchLFS(true) })
-      .disabled(remotes.isEmpty)
-    Button("Pull Objects", action: pullLFS)
-      .disabled(remotes.isEmpty)
-    Divider()
-    Button("Prune Verified Objects…") {
-      isConfirmingLFSPrune = true
-    }
-    .disabled(remotes.isEmpty)
-  }
-
   private func beginTrackingLFS(lockable: Bool) {
     newLFSPattern = ""
     newLFSPatternLockable = lockable
@@ -1141,69 +532,31 @@ public struct CurrentRootView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if let status {
       CurrentContentLayout {
-        repositoryChrome(status)
+        RepositoryHeaderView(
+          repositoryName: repositoryName,
+          errorMessage: errorMessage,
+          status: status,
+          isLoading: isLoading,
+          continueOperation: continueOperation,
+          abortOperation: abortOperation,
+          resolveConflict: resolveConflict,
+          openConflictEditor: { conflictEditorPath = $0 }
+        )
       } middle: {
         workspaceContent(status)
       } bottom: {
-        repositoryStatusBar(status)
+        RepositoryStatusBarView(
+          gitVersion: gitVersion,
+          graphScale: graphDisplayConfiguration.scale,
+          generation: status.generation,
+          openActivityLog: { workspace = .operations }
+        )
       }
     } else {
-      welcomeView
-    }
-  }
-
-  private func repositoryChrome(_ status: RepositoryStatus) -> some View {
-    VStack(spacing: 0) {
-      if let errorMessage {
-        HStack(spacing: 8) {
-          Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-          Text(errorMessage)
-            .font(.callout)
-            .lineLimit(2)
-            .truncationMode(.tail)
-            .help(errorMessage)
-            .layoutPriority(1)
-          Spacer()
-        }
-        .padding(10)
-        .background(Color.orange.opacity(0.08))
-        Divider()
-      }
-
-      HStack(spacing: 10) {
-        Image(systemName: "externaldrive.fill")
-          .foregroundStyle(.tint)
-        Text(repositoryName ?? "Repository")
-          .font(.headline)
-          .lineLimit(1)
-          .truncationMode(.middle)
-          .help(repositoryName ?? "Repository")
-        Divider()
-          .frame(height: 18)
-        Label(headTitle(status.head), systemImage: "arrow.triangle.branch")
-          .lineLimit(1)
-          .truncationMode(.middle)
-          .help(headTitle(status.head))
-        if !status.changes.isEmpty {
-          Text("\(status.changes.count) changes")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer(minLength: 8)
-        if status.ahead > 0 || status.behind > 0 {
-          Text("↑ \(status.ahead)  ↓ \(status.behind)")
-            .font(.system(.body, design: .monospaced))
-        }
-      }
-      .padding(.horizontal, 12)
-      .frame(height: 42)
-      .padding(.trailing, 12)
-
-      if status.operation.isInProgress {
-        Divider()
-        operationBanner(status.operation)
-      }
+      RepositoryWelcomeView(
+        state: state.repository,
+        actions: actions.repository
+      )
     }
   }
 
@@ -1219,7 +572,7 @@ public struct CurrentRootView: View {
         commitTemplate: commitTemplate,
         hasRemotes: !remotes.isEmpty,
         isLoading: isLoading,
-        selectedStashPaths: $selectedStashPaths,
+        selectedPath: $selectedWorkingCopyPath,
         diffPresentation: $diffPresentation,
         actions: actions.workingCopy,
         diffActions: actions.diff,
@@ -1236,13 +589,13 @@ public struct CurrentRootView: View {
         diffState: state.diff,
         requestedJumpOID: graphJumpOID,
         selectedCommitOID: $selectedCommitOID,
+        selectedWorkingCopyPath: $selectedWorkingCopyPath,
         diffPresentation: $diffPresentation,
         actions: actions.history,
+        workingCopyActions: actions.workingCopy,
         diffActions: actions.diff,
-        openWorkingCopyChange: { change in
-          workspace = .changes
-          loadDiff(change)
-        },
+        createStash: beginCreatingStash,
+        openFileInsights: openFileInsights,
         requestInteractiveRebase: { oid in
           pendingInteractiveRebaseOID = oid
         }
@@ -1325,12 +678,24 @@ public struct CurrentRootView: View {
       List {
         Section("Local Branches") {
           ForEach(references.filter { $0.kind == .localBranch }) { reference in
-            referenceSidebarRow(reference, displayName: reference.shortName)
+            RepositoryBranchRow(
+              reference: reference,
+              displayName: reference.shortName,
+              remoteNames: remotes.map(\.name),
+              isLoading: isLoading,
+              send: handleRepositorySidebarEvent
+            )
           }
         }
         Section("Remote Branches") {
           ForEach(references.filter { $0.kind == .remoteBranch }) { reference in
-            referenceSidebarRow(reference, displayName: reference.shortName)
+            RepositoryBranchRow(
+              reference: reference,
+              displayName: reference.shortName,
+              remoteNames: remotes.map(\.name),
+              isLoading: isLoading,
+              send: handleRepositorySidebarEvent
+            )
           }
         }
       }
@@ -1347,243 +712,6 @@ public struct CurrentRootView: View {
     }
   }
 
-  private func repositoryStatusBar(_ status: RepositoryStatus) -> some View {
-    HStack(spacing: 12) {
-      Button {
-        workspace = .operations
-      } label: {
-        Label("Activity", systemImage: "clock.arrow.circlepath")
-      }
-      .buttonStyle(.plain)
-      .help("Open Activity Log")
-      Divider()
-        .frame(height: 12)
-      Text(gitVersion ?? "Git version unavailable")
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .help(gitVersion ?? "Git version unavailable")
-      Spacer()
-      Text(
-        graphDisplayConfiguration.scale,
-        format: .percent.precision(.fractionLength(0))
-      )
-      .help("Commit graph scale")
-      Link(
-        "Feedback & Support",
-        destination: URL(string: "https://github.com/nikejaycn/GitTooooooooos/issues")!
-      )
-      Text("Generation \(status.generation.rawValue)")
-        .fixedSize(horizontal: true, vertical: false)
-      Text("GitCurrent \(appVersion)")
-        .fixedSize(horizontal: true, vertical: false)
-    }
-    .font(.caption)
-    .foregroundStyle(.secondary)
-    .padding(8)
-    .padding(.trailing, 12)
-  }
-
-  private var appVersion: String {
-    let version =
-      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    return version.flatMap { $0.isEmpty ? nil : $0 } ?? "Development"
-  }
-
-  private var welcomeView: some View {
-    GeometryReader { geometry in
-      ScrollView(.vertical) {
-        VStack(spacing: 20) {
-          VStack(spacing: 8) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-              .resizable()
-              .interpolation(.high)
-              .frame(width: 64, height: 64)
-              .accessibilityHidden(true)
-            Text("GitCurrent")
-              .font(.largeTitle.weight(.semibold))
-            Text("A fast, native Git workspace for macOS")
-              .foregroundStyle(.secondary)
-          }
-
-          HStack(spacing: 12) {
-            Button("Open Repository…", action: openRepository)
-              .keyboardShortcut("o")
-            Button("Clone Repository…") {
-              cloneURL = ""
-              isCloningRepository = true
-            }
-            Button("Initialize Repository…", action: initializeRepository)
-          }
-          .controlSize(.large)
-
-          if let errorMessage {
-            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-              .font(.callout)
-              .foregroundStyle(.red)
-              .lineLimit(3)
-              .truncationMode(.tail)
-              .help(errorMessage)
-              .padding(10)
-              .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-              .frame(maxWidth: 620)
-          }
-
-          if !recentRepositories.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-              Text("Repositories")
-                .font(.headline)
-              List {
-                if !favoriteRepositories.isEmpty {
-                  Section("Favorites") {
-                    ForEach(favoriteRepositories) { recent in
-                      recentRepositoryRow(recent)
-                    }
-                  }
-                }
-                if !nonFavoriteRecentRepositories.isEmpty {
-                  Section("Recent") {
-                    ForEach(nonFavoriteRecentRepositories) { recent in
-                      recentRepositoryRow(recent)
-                    }
-                  }
-                }
-              }
-              .frame(height: min(CGFloat(recentRepositories.count) * 48 + 8, 300))
-            }
-            .frame(maxWidth: 680)
-          }
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
-      }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-
-  private var sortedRecentRepositories: [RecentRepository] {
-    recentRepositories.sorted {
-      if $0.isFavorite != $1.isFavorite {
-        return $0.isFavorite && !$1.isFavorite
-      }
-      return $0.lastOpenedAt > $1.lastOpenedAt
-    }
-  }
-
-  private var favoriteRepositories: [RecentRepository] {
-    sortedRecentRepositories.filter(\.isFavorite)
-  }
-
-  private var nonFavoriteRecentRepositories: [RecentRepository] {
-    sortedRecentRepositories.filter { !$0.isFavorite }
-  }
-
-  private func recentRepositoryRow(_ recent: RecentRepository) -> some View {
-    HStack(spacing: 10) {
-      Button {
-        openRecentRepository(recent)
-      } label: {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(recent.displayName)
-            .fontWeight(.medium)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(recent.displayName)
-          Text(recent.path)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(recent.path)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-      }
-      .buttonStyle(.plain)
-      Button {
-        toggleFavoriteRepository(recent)
-      } label: {
-        Image(systemName: recent.isFavorite ? "star.fill" : "star")
-      }
-      .buttonStyle(.borderless)
-      .help(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites")
-    }
-    .contextMenu {
-      Button("Open in New Window") {
-        openRecentRepositoryInNewWindow(recent)
-      }
-      Button(recent.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-        toggleFavoriteRepository(recent)
-      }
-      Button("Remove from Recents", role: .destructive) {
-        removeRecentRepository(recent)
-      }
-    }
-  }
-
-  private func operationBanner(_ operation: RepositoryOperationState) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 12) {
-        Image(systemName: "exclamationmark.triangle.fill")
-          .foregroundStyle(.orange)
-        VStack(alignment: .leading, spacing: 2) {
-          Text("\(operation.kind.rawValue.capitalized) in Progress")
-            .fontWeight(.semibold)
-            .lineLimit(1)
-          if operation.conflictedPaths.isEmpty {
-            Text("All conflicts are resolved. Continue or abort the operation.")
-              .foregroundStyle(.secondary)
-          } else {
-            Text("\(operation.conflictedPaths.count) conflicted files must be resolved and staged.")
-              .foregroundStyle(.secondary)
-          }
-        }
-        Spacer()
-        Button("Continue", action: continueOperation)
-          .disabled(!operation.canContinue || isLoading)
-        Button("Abort", role: .destructive, action: abortOperation)
-          .disabled(!operation.canAbort || isLoading)
-      }
-      if !operation.conflictedPaths.isEmpty {
-        ScrollView(.vertical) {
-          LazyVStack(spacing: 6) {
-            ForEach(operation.conflictedPaths, id: \.self) { path in
-              HStack {
-                Image(systemName: "doc.badge.ellipsis")
-                Text(path.displayString)
-                  .lineLimit(1)
-                  .truncationMode(.middle)
-                  .help(path.displayString)
-                Spacer()
-                Button("Resolve…") {
-                  conflictEditorPath = path
-                }
-                Menu {
-                  Button("Use Ours") {
-                    resolveConflict(path, .ours)
-                  }
-                  Button("Use Theirs") {
-                    resolveConflict(path, .theirs)
-                  }
-                } label: {
-                  Label("Choose Version", systemImage: "arrow.triangle.branch")
-                }
-                .menuStyle(.borderlessButton)
-              }
-              .padding(.leading, 30)
-            }
-          }
-        }
-        .frame(
-          height: min(
-            CGFloat(operation.conflictedPaths.count) * 30,
-            CurrentUILayout.operationConflictListMaximumHeight
-          )
-        )
-      }
-    }
-    .padding(10)
-    .background(Color.orange.opacity(0.08))
-  }
-
   private func beginCreatingStash(paths: [GitPath]) {
     let available = Set(status?.changes.map(\.path) ?? [])
     stashRequest = StashRequest(
@@ -1591,33 +719,151 @@ public struct CurrentRootView: View {
     )
   }
 
-  private var activeSelectedStashPaths: Set<GitPath> {
-    selectedStashPaths.intersection(status?.changes.map(\.path) ?? [])
+  private func handleToolbarEvent(_ event: CurrentToolbarEvent) {
+    switch event {
+    case .toggleSidebar:
+      isSidebarVisible.toggle()
+    case .openRepository:
+      openRepository()
+    case .openNewWindow:
+      newRepositoryWindow()
+    case .undo:
+      undoLastOperation()
+    case .fetch:
+      fetch()
+    case .pull(let strategy):
+      pull(strategy)
+    case .createBranch:
+      newBranchName = ""
+      isCreatingBranch = true
+    case .stash:
+      beginCreatingStash(paths: [])
+    case .push:
+      isConfirmingPush = true
+    case .forcePush:
+      isConfirmingForcePush = true
+    case .search:
+      isShowingCommandPalette = true
+    case .settings:
+      openSettings()
+    case .openActivityLog:
+      workspace = .operations
+    case .exportSelectedCommit:
+      if let selectedCommitOID {
+        exportPatch(selectedCommitOID)
+      }
+    case .applyPatch:
+      applyPatch()
+    case .revealRepository:
+      revealRepositoryInFinder()
+    case .chooseExternalApplication:
+      chooseExternalApplication()
+    case .pruneWorktrees:
+      pruneWorktrees()
+    case .maintenance(let task):
+      performMaintenance(task)
+    }
+  }
+
+  private func handleRepositorySidebarEvent(_ event: RepositorySidebarEvent) {
+    switch event {
+    case .locateBranch(let reference):
+      workspace = .history
+      graphJumpOID = reference.targetOID
+    case .checkoutBranch(let reference):
+      checkoutReference(reference)
+    case .mergeBranch(let reference, let squash):
+      pendingMergeRequest = PendingMergeRequest(
+        branch: reference.shortName,
+        squash: squash
+      )
+    case .renameBranch(let reference):
+      renamedBranchName = reference.shortName
+      branchToRename = reference
+    case .deleteBranch(let reference):
+      pendingBranchDeletion = reference
+    case .createTag:
+      prepareNewTag()
+    case .pushTag(let reference, let remote):
+      pushTag(reference, remote)
+    case .deleteRemoteTag(let reference, let remote):
+      pendingRemoteTagDeletion = PendingRemoteTagDeletion(
+        reference: reference,
+        remote: remote
+      )
+    case .deleteLocalTag(let reference):
+      pendingTagDeletion = reference
+    case .editRemote(let remote):
+      beginEditingRemote(remote)
+    case .fetchRemote(let remote):
+      fetchRemote(remote)
+    case .removeRemote(let remote):
+      pendingRemoteRemoval = remote
+    case .createWorktree:
+      newWorktreeBranch = ""
+      newWorktreeStartPoint = ""
+      isCreatingWorktree = true
+    case .openWorktree(let worktree):
+      openWorktree(worktree)
+    case .setWorktreeLocked(let worktree, let locked):
+      if locked {
+        lockWorktree(worktree)
+      } else {
+        unlockWorktree(worktree)
+      }
+    case .removeWorktree(let worktree, let force):
+      forceWorktreeRemoval = force
+      pendingWorktreeRemoval = worktree
+    case .addSubmodule:
+      newSubmoduleURL = ""
+      newSubmodulePath = ""
+      newSubmoduleBranch = ""
+      isAddingSubmodule = true
+    case .openSubmodule(let submodule):
+      openSubmodule(submodule)
+    case .initializeSubmodule(let submodule):
+      initializeSubmodule(submodule)
+    case .checkoutRecordedSubmodule(let submodule):
+      checkoutRecordedSubmodule(submodule)
+    case .updateSubmoduleFromRemote(let submodule):
+      updateSubmoduleFromRemote(submodule)
+    case .stageSubmodulePointer(let submodule):
+      stageSubmodulePointer(submodule)
+    case .removeSubmodule(let submodule, let force):
+      forceSubmoduleRemoval = force
+      pendingSubmoduleRemoval = submodule
+    case .initializeLFS:
+      installLFS()
+    case .trackLFS(let lockable):
+      beginTrackingLFS(lockable: lockable)
+    case .untrackLFS(let pattern):
+      pendingLFSUntrack = pattern
+    case .fetchLFS(let recent):
+      fetchLFS(recent)
+    case .pullLFS:
+      pullLFS()
+    case .pruneLFS:
+      isConfirmingLFSPrune = true
+    case .configureHooks:
+      hooksPathDraft = gitHooks.configuredPath ?? ""
+      isConfiguringHooks = true
+    }
+  }
+
+  private var selectedWorkingCopyPathForStash: GitPath? {
+    guard
+      let selectedWorkingCopyPath,
+      status?.changes.contains(where: { $0.path == selectedWorkingCopyPath }) == true
+    else {
+      return nil
+    }
+    return selectedWorkingCopyPath
   }
 
   private func openFileInsights(_ path: GitPath) {
     fileInsightPathText = path.displayString
     workspace = .fileHistory
     loadFileInsights(path)
-  }
-
-  private func headTitle(_ head: HeadState) -> String {
-    switch head {
-    case .branch(let name): name
-    case .detached(let oid): "Detached at \(oid.prefix(12))"
-    case .unborn(let branch): "\(branch) (unborn)"
-    case .unknown: "Unknown HEAD"
-    }
-  }
-
-  private func referenceIcon(_ kind: GitReferenceKind) -> String {
-    switch kind {
-    case .localBranch: "arrow.triangle.branch"
-    case .remoteBranch: "cloud"
-    case .tag: "tag"
-    case .note: "note.text"
-    case .other: "bookmark"
-    }
   }
 
   private func prepareNewTag() {
@@ -1633,144 +879,6 @@ public struct CurrentRootView: View {
     remoteFetchURL = remote?.fetchURL ?? ""
     remotePushURL = remote?.pushURL ?? ""
     isEditingRemote = true
-  }
-
-  @ViewBuilder
-  private func branchSidebarSection(
-    title: String,
-    kind: GitReferenceKind
-  ) -> some View {
-    let branchReferences = references.filter { $0.kind == kind }
-    if !branchReferences.isEmpty {
-      let tree = SidebarBranchTree(
-        references: branchReferences,
-        namespace: kind.rawValue
-      )
-      Section(title) {
-        ForEach(
-          RepositorySidebarPresentation.visibleBranchRows(
-            in: tree,
-            expandedFolderIDs: expandedBranchFolders
-          )
-        ) { row in
-          visibleBranchRow(row)
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func visibleBranchRow(_ row: SidebarBranchRow) -> some View {
-    switch row.content {
-    case .folder(let folder):
-      Button {
-        if expandedBranchFolders.contains(folder.id) {
-          expandedBranchFolders.remove(folder.id)
-        } else {
-          expandedBranchFolders.insert(folder.id)
-        }
-      } label: {
-        HStack(spacing: 6) {
-          Image(
-            systemName:
-              expandedBranchFolders.contains(folder.id)
-              ? "chevron.down"
-              : "chevron.right"
-          )
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
-          Image(
-            systemName:
-              expandedBranchFolders.contains(folder.id)
-              ? "folder.fill"
-              : "folder"
-          )
-          Text(folder.name)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
-        .contentShape(Rectangle())
-        .frame(maxWidth: .infinity, alignment: .leading)
-      }
-      .buttonStyle(.plain)
-      .padding(.leading, CGFloat(row.depth * 12))
-      .help("Click to expand or collapse \(folder.name)")
-    case .branch(let reference, let displayName):
-      referenceSidebarRow(reference, displayName: displayName)
-        .padding(.leading, CGFloat(row.depth * 12))
-    }
-  }
-
-  private func referenceSidebarRow(
-    _ reference: GitReference,
-    displayName: String
-  ) -> some View {
-    Button {
-      locateBranch(reference)
-      guard
-        NSApp.currentEvent?.clickCount ?? 1 >= 2,
-        !reference.isHEAD,
-        !isLoading
-      else {
-        return
-      }
-      checkoutReference(reference)
-    } label: {
-      HStack(spacing: 6) {
-        Image(
-          systemName:
-            reference.isHEAD
-            ? "location.fill"
-            : referenceIcon(reference.kind)
-        )
-        Text(displayName)
-          .lineLimit(1)
-          .truncationMode(.middle)
-        Spacer(minLength: 0)
-      }
-      .contentShape(Rectangle())
-      .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .buttonStyle(.plain)
-    .help(
-      RepositorySidebarPresentation.branchHelp(
-        reference,
-        remoteNames: remotes.map(\.name)
-      )
-    )
-    .contextMenu {
-      if reference.kind == .localBranch {
-        Button("Merge into Current Branch") {
-          pendingMergeRequest = PendingMergeRequest(
-            branch: reference.shortName,
-            squash: false
-          )
-        }
-        .disabled(reference.isHEAD || isLoading)
-        Button("Squash into Current Working Copy") {
-          pendingMergeRequest = PendingMergeRequest(
-            branch: reference.shortName,
-            squash: true
-          )
-        }
-        .disabled(reference.isHEAD || isLoading)
-        Divider()
-        Button("Rename…") {
-          renamedBranchName = reference.shortName
-          branchToRename = reference
-        }
-        .disabled(isLoading)
-        Button("Delete…", role: .destructive) {
-          pendingBranchDeletion = reference
-        }
-        .disabled(reference.isHEAD || isLoading)
-      }
-    }
-  }
-
-  private func locateBranch(_ reference: GitReference) {
-    workspace = .history
-    graphJumpOID = reference.targetOID
   }
 
   private func checkoutReference(_ reference: GitReference) {
@@ -1792,70 +900,6 @@ public struct CurrentRootView: View {
       checkoutBranch(target.localName)
     } else {
       checkoutRemoteBranch(target.remoteBranch, target.localName)
-    }
-  }
-
-  @ViewBuilder
-  private var tagSidebarSection: some View {
-    if status != nil {
-      Section {
-        ForEach(references.filter { $0.kind == .tag }) { reference in
-          HStack(spacing: 6) {
-            Image(systemName: "tag")
-            VStack(alignment: .leading, spacing: 1) {
-              Text(reference.shortName)
-                .lineLimit(1)
-              Text(RepositorySidebarPresentation.tagSummary(reference))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-          }
-          .help(RepositorySidebarPresentation.tagHelp(reference))
-          .contextMenu {
-            tagContextMenu(reference)
-          }
-        }
-      } header: {
-        HStack {
-          Text("Tags")
-          Spacer()
-          Button {
-            prepareNewTag()
-          } label: {
-            Image(systemName: "plus")
-          }
-          .buttonStyle(.borderless)
-          .help("Create Tag")
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func tagContextMenu(_ reference: GitReference) -> some View {
-    if !remotes.isEmpty {
-      Menu("Push to Remote") {
-        ForEach(remotes) { remote in
-          Button(remote.name) {
-            pushTag(reference, remote)
-          }
-        }
-      }
-      Menu("Delete from Remote") {
-        ForEach(remotes) { remote in
-          Button(remote.name, role: .destructive) {
-            pendingRemoteTagDeletion = PendingRemoteTagDeletion(
-              reference: reference,
-              remote: remote
-            )
-          }
-        }
-      }
-      Divider()
-    }
-    Button("Delete Local Tag…", role: .destructive) {
-      pendingTagDeletion = reference
     }
   }
 
@@ -1963,15 +1007,17 @@ public struct CurrentRootView: View {
       },
       CommandPaletteAction(
         id: "repository.stash",
-        title: activeSelectedStashPaths.isEmpty
+        title: selectedWorkingCopyPathForStash == nil
           ? "Stash Working Copy…"
-          : "Stash \(activeSelectedStashPaths.count) Selected Paths…",
-        detail: activeSelectedStashPaths.isEmpty ? nil : "Partial stash",
+          : "Stash Selected File…",
+        detail: selectedWorkingCopyPathForStash?.displayString,
         systemImage: "archivebox",
         keywords: "save changes partial selected files",
         isEnabled: status?.changes.isEmpty == false && !isLoading
       ) {
-        beginCreatingStash(paths: Array(activeSelectedStashPaths))
+        beginCreatingStash(
+          paths: selectedWorkingCopyPathForStash.map { [$0] } ?? []
+        )
       },
       CommandPaletteAction(
         id: "repository.maintenance",

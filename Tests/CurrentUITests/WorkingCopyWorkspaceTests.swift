@@ -6,6 +6,34 @@ import Testing
 
 @Suite("Working copy workspace")
 struct WorkingCopyWorkspaceTests {
+  @Test("Changed files are grouped by status and then sorted by path")
+  func changedFileOrdering() {
+    let changes = [
+      change("Sources/Z.swift", index: " ", worktree: "M", kind: .modified),
+      change("Sources/New.swift", index: "?", worktree: "?", kind: .untracked),
+      change("Sources/B.swift", index: "M", worktree: " ", kind: .modified),
+      change("Sources/A.swift", index: "M", worktree: " ", kind: .modified),
+    ]
+
+    let sorted = ChangedFilesPresentation.sortedWorkingCopyChanges(changes)
+
+    #expect(
+      sorted.map(\.path.displayString) == [
+        "Sources/A.swift",
+        "Sources/B.swift",
+        "Sources/Z.swift",
+        "Sources/New.swift",
+      ])
+    #expect(
+      ChangedFilesPresentation.fileIcon(for: .modified)
+        == "ellipsis.rectangle.fill"
+    )
+    #expect(
+      ChangedFilesPresentation.fileIcon(for: .untracked)
+        == "questionmark.square.fill"
+    )
+  }
+
   @Test("Commit drafts validate paired co-author fields and build requests")
   func commitDraftRequest() throws {
     var draft = CommitDraftState()
@@ -71,12 +99,26 @@ struct WorkingCopyWorkspaceTests {
     )
 
     #expect(
-      WorkingCopyWorkspace.lineActionTitle(addition, source: .unstaged)
+      WorkingCopyDiffPresentation.lineActionTitle(addition, source: .unstaged)
         == "Stage +12: let value = true"
     )
     #expect(
-      WorkingCopyWorkspace.lineActionTitle(deletion, source: .staged)
+      WorkingCopyDiffPresentation.lineActionTitle(deletion, source: .staged)
         == "Unstage -7: let value = false"
+    )
+  }
+
+  private func change(
+    _ path: String,
+    index: Character,
+    worktree: Character,
+    kind: FileChangeKind
+  ) -> FileChange {
+    FileChange(
+      path: GitPath(path),
+      indexStatus: index.asciiValue!,
+      worktreeStatus: worktree.asciiValue!,
+      kind: kind
     )
   }
 }

@@ -101,7 +101,8 @@ public struct OperationPlan: Hashable, Sendable {
     guard !kind.isEmpty, !title.isEmpty, !commands.isEmpty else {
       throw OperationPlanError.incompletePlan
     }
-    let defaultConfirmationPolicy: ConfirmationPolicy = switch risk {
+    let defaultConfirmationPolicy: ConfirmationPolicy =
+      switch risk {
       case .readOnly, .localSafe: .none
       case .localDestructive: .single
       case .remoteDestructive: .double
