@@ -3056,79 +3056,88 @@ public struct CurrentRootView: View {
         .padding(.horizontal, 10)
         .frame(height: 40)
       } middle: {
-        VSplitView {
-          ZStack(alignment: .bottomTrailing) {
-            CommitGraphView(
-              rows: activeGraphRows,
-              searchQuery: graphSearchScope == .loaded ? graphSearchText : "",
-              displayConfiguration: graphDisplayConfiguration,
-              scrollToCommitOID: graphJumpOID,
-              selectsFirstRowByDefault: true,
-              onSelection: { rows in
-                let commitOIDs = rows.compactMap(\.commitOID)
-                selectedGraphRows = rows
-                selectedCommitCount = commitOIDs.count
-                isWorkingCopySelected = rows.contains(where: \.isWorkingCopy)
-                selectedCommitOID =
-                  rows.count == 1 && commitOIDs.count == 1
-                  ? commitOIDs[0]
-                  : nil
-                if rows.count == 1,
-                  let row = rows.first,
-                  let commitOID = row.commitOID,
-                  let parentOID = row.parentOIDs.first
-                {
-                  compareSelectedCommits([commitOID, parentOID])
-                } else {
-                  compareSelectedCommits(commitOIDs)
-                }
-              },
-              onApproachingEnd: graphSearchScope == .loaded ? loadNextHistoryPage : {}
-            )
-            if graphSearchScope == .repository, isRepositorySearchLoading {
-              ProgressView("Searching repository…")
-                .controlSize(.small)
-                .padding(10)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .padding(10)
-                .allowsHitTesting(false)
-            } else if graphSearchScope == .repository,
-              hasSubmittedRepositorySearch,
-              repositorySearchRows.isEmpty
-            {
-              ContentUnavailableView.search(text: graphSearchText)
-                .allowsHitTesting(false)
-            } else if graphSearchScope == .repository,
-              !hasSubmittedRepositorySearch
-            {
-              ContentUnavailableView(
-                "Search Entire Repository",
-                systemImage: "text.magnifyingglass",
-                description: Text("Enter a query and press Return.")
+        GeometryReader { geometry in
+          VSplitView {
+            ZStack(alignment: .bottomTrailing) {
+              CommitGraphView(
+                rows: activeGraphRows,
+                searchQuery: graphSearchScope == .loaded ? graphSearchText : "",
+                displayConfiguration: graphDisplayConfiguration,
+                scrollToCommitOID: graphJumpOID,
+                selectsFirstRowByDefault: true,
+                onSelection: { rows in
+                  let commitOIDs = rows.compactMap(\.commitOID)
+                  selectedGraphRows = rows
+                  selectedCommitCount = commitOIDs.count
+                  isWorkingCopySelected = rows.contains(where: \.isWorkingCopy)
+                  selectedCommitOID =
+                    rows.count == 1 && commitOIDs.count == 1
+                    ? commitOIDs[0]
+                    : nil
+                  if rows.count == 1,
+                    let row = rows.first,
+                    let commitOID = row.commitOID,
+                    let parentOID = row.parentOIDs.first
+                  {
+                    compareSelectedCommits([commitOID, parentOID])
+                  } else {
+                    compareSelectedCommits(commitOIDs)
+                  }
+                },
+                onApproachingEnd: graphSearchScope == .loaded ? loadNextHistoryPage : {}
               )
-              .allowsHitTesting(false)
-            } else if isHistoryPageLoading {
-              ProgressView()
-                .controlSize(.small)
-                .padding(8)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .padding(10)
+              if graphSearchScope == .repository, isRepositorySearchLoading {
+                ProgressView("Searching repository…")
+                  .controlSize(.small)
+                  .padding(10)
+                  .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                  .padding(10)
+                  .allowsHitTesting(false)
+              } else if graphSearchScope == .repository,
+                hasSubmittedRepositorySearch,
+                repositorySearchRows.isEmpty
+              {
+                ContentUnavailableView.search(text: graphSearchText)
+                  .allowsHitTesting(false)
+              } else if graphSearchScope == .repository,
+                !hasSubmittedRepositorySearch
+              {
+                ContentUnavailableView(
+                  "Search Entire Repository",
+                  systemImage: "text.magnifyingglass",
+                  description: Text("Enter a query and press Return.")
+                )
                 .allowsHitTesting(false)
-            } else if !hasMoreHistory, commits.count >= 200 {
-              Text("\(commits.count) commits loaded")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(8)
-              .allowsHitTesting(false)
+              } else if isHistoryPageLoading {
+                ProgressView()
+                  .controlSize(.small)
+                  .padding(8)
+                  .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                  .padding(10)
+                  .allowsHitTesting(false)
+              } else if !hasMoreHistory, commits.count >= 200 {
+                Text("\(commits.count) commits loaded")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                  .padding(8)
+                .allowsHitTesting(false)
+              }
             }
+            .frame(
+              minWidth: CurrentUILayout.graphMinimumWidth,
+              maxWidth: .infinity,
+              minHeight: CurrentUILayout.historyGraphMinimumHeight,
+              idealHeight: CurrentUILayout.historyGraphIdealHeight,
+              maxHeight: .infinity
+            )
+            historyDetailWorkspace
+              .frame(
+                maxWidth: .infinity,
+                minHeight: CurrentUILayout.historyDetailMinimumHeight,
+                maxHeight: .infinity
+              )
           }
-          .frame(
-            minWidth: CurrentUILayout.graphMinimumWidth,
-            minHeight: CurrentUILayout.historyGraphMinimumHeight,
-            idealHeight: CurrentUILayout.historyGraphIdealHeight
-          )
-          historyDetailWorkspace
-            .frame(minHeight: CurrentUILayout.historyDetailMinimumHeight)
+          .frame(width: geometry.size.width, height: geometry.size.height)
         }
       } bottom: {
         EmptyView()
@@ -3155,23 +3164,34 @@ public struct CurrentRootView: View {
       VSplitView {
         historyChangedFilesPane
           .frame(
+            maxWidth: .infinity,
             minHeight: CurrentUILayout.historyChangedFilesMinimumHeight,
-            idealHeight: CurrentUILayout.historyChangedFilesIdealHeight
+            idealHeight: CurrentUILayout.historyChangedFilesIdealHeight,
+            maxHeight: .infinity
           )
         historySelectionDetailsPane
           .frame(
+            maxWidth: .infinity,
             minHeight: CurrentUILayout.historyCommitDetailsMinimumHeight,
-            idealHeight: CurrentUILayout.historyCommitDetailsIdealHeight
+            idealHeight: CurrentUILayout.historyCommitDetailsIdealHeight,
+            maxHeight: .infinity
           )
       }
       .frame(
         minWidth: CurrentUILayout.historyMetadataMinimumWidth,
-        idealWidth: CurrentUILayout.historyMetadataIdealWidth
+        idealWidth: CurrentUILayout.historyMetadataIdealWidth,
+        maxWidth: .infinity,
+        maxHeight: .infinity
       )
 
       embeddedCommitDiffPane
-        .frame(minWidth: CurrentUILayout.diffMinimumWidth)
+        .frame(
+          minWidth: CurrentUILayout.diffMinimumWidth,
+          maxWidth: .infinity,
+          maxHeight: .infinity
+        )
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var historyChangedFilesPane: some View {
@@ -3255,6 +3275,7 @@ public struct CurrentRootView: View {
         )
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private func historyFileRow(
@@ -3324,6 +3345,7 @@ public struct CurrentRootView: View {
       .padding(12)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(.background)
   }
 
@@ -3431,6 +3453,7 @@ public struct CurrentRootView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if let selectedCommitDiff {
         readOnlyDiff(selectedCommitDiff)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         ContentUnavailableView(
           "Choose a Changed File",
@@ -3439,6 +3462,7 @@ public struct CurrentRootView: View {
         )
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var historySearchField: some View {
