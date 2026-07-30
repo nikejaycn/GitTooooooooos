@@ -1,4 +1,5 @@
 import AppKit
+import CurrentAppSupport
 import CurrentDomain
 import CurrentUI
 import Observation
@@ -62,48 +63,6 @@ private final class WindowCloseObservationView: NSView {
 
   deinit {
     NotificationCenter.default.removeObserver(self)
-  }
-}
-
-@MainActor
-@Observable
-private final class WorkspaceHistoryStore {
-  private static let defaultsKey = "Current.workspaceSessionHistory.v1"
-  private(set) var history: WorkspaceSessionHistory
-
-  init(defaults: UserDefaults = .standard) {
-    if let data = defaults.data(forKey: Self.defaultsKey),
-      let saved = try? JSONDecoder().decode(WorkspaceSessionHistory.self, from: data)
-    {
-      history = saved
-    } else {
-      history = WorkspaceSessionHistory()
-    }
-  }
-
-  var canReopenClosedRepository: Bool {
-    !history.recentlyClosedRepositoryPaths.isEmpty
-  }
-
-  func recordClosed(_ path: String) {
-    history.recordClosed(path)
-    persist()
-  }
-
-  func markOpened(_ path: String) {
-    history.markOpened(path)
-    persist()
-  }
-
-  func takeMostRecentlyClosed() -> String? {
-    let path = history.takeMostRecentlyClosed()
-    persist()
-    return path
-  }
-
-  private func persist() {
-    guard let data = try? JSONEncoder().encode(history) else { return }
-    UserDefaults.standard.set(data, forKey: Self.defaultsKey)
   }
 }
 

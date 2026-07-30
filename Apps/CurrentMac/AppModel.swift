@@ -53,7 +53,9 @@ final class AppModel {
   private(set) var submodules: [GitSubmodule] = []
   private(set) var gitLFS: GitLFSRepositoryState = .unavailable
   private(set) var gitHooks: GitHooksState = .unavailable
-  private(set) var activities: [OperationActivity] = []
+  var activities: [OperationActivity] {
+    activityLog.activities
+  }
   private(set) var recentRepositories: [RecentRepository] = []
   private(set) var lastRecoveryReference: RecoveryReference?
   private(set) var selectedDiff: DiffDocument?
@@ -72,6 +74,7 @@ final class AppModel {
 
   private let preferences: AppPreferencesStore
   private let externalTools: ExternalToolService
+  private var activityLog = OperationActivityLog()
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
   private var repositoryWatchSession: RepositoryWatchSession?
@@ -1675,7 +1678,7 @@ final class AppModel {
 
   private func apply(_ mutation: WorkingCopyMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(workingCopyTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1696,7 +1699,7 @@ final class AppModel {
 
   private func applyBranch(_ mutation: BranchMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(branchTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1719,7 +1722,7 @@ final class AppModel {
 
   private func applyTag(_ mutation: TagMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(tagTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1849,7 +1852,7 @@ final class AppModel {
 
   private func applyStash(_ mutation: StashMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(stashTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1873,7 +1876,7 @@ final class AppModel {
 
   private func applyWorktree(_ mutation: WorktreeMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(worktreeTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1890,7 +1893,7 @@ final class AppModel {
 
   private func applySubmodule(_ mutation: SubmoduleMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(submoduleTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1907,7 +1910,7 @@ final class AppModel {
 
   private func applyLFS(_ mutation: GitLFSMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(lfsTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1924,7 +1927,7 @@ final class AppModel {
 
   private func applyRemote(_ mutation: RemoteMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(remoteTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1967,7 +1970,7 @@ final class AppModel {
 
   private func applyMerge(_ mutation: MergeMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(mergeTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -1991,7 +1994,7 @@ final class AppModel {
 
   private func applyHistory(_ mutation: HistoryMutation) {
     guard let repository else { return }
-    let activityID = beginActivity(historyTitle(mutation))
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
     Task {
       isLoading = true
       errorMessage = nil
@@ -2280,12 +2283,7 @@ final class AppModel {
   }
 
   private func beginActivity(_ title: String) -> UUID {
-    let activity = OperationActivity(title: title)
-    activities.insert(activity, at: 0)
-    if activities.count > 100 {
-      activities.removeLast(activities.count - 100)
-    }
-    return activity.id
+    activityLog.begin(title)
   }
 
   private func finishActivity(
@@ -2293,8 +2291,7 @@ final class AppModel {
     state: OperationActivityState,
     detail: String? = nil
   ) {
-    guard let index = activities.firstIndex(where: { $0.id == id }) else { return }
-    activities[index] = activities[index].finishing(as: state, detail: detail)
+    activityLog.finish(id, state: state, detail: detail)
   }
 
   private func finishActivity(_ id: UUID, error: Error) {
@@ -2305,112 +2302,4 @@ final class AppModel {
     )
   }
 
-  private func workingCopyTitle(_ mutation: WorkingCopyMutation) -> String {
-    switch mutation {
-    case .stage: "Stage files"
-    case .unstage: "Unstage files"
-    case .discardTracked: "Discard working-copy changes"
-    case .ignore: "Update .gitignore"
-    }
-  }
-
-  private func branchTitle(_ mutation: BranchMutation) -> String {
-    switch mutation {
-    case .create(let name, _, _): "Create branch \(name)"
-    case .checkout(let name, _): "Check out \(name)"
-    case .checkoutRemote(let remoteBranch, let localName, _):
-      "Check out \(remoteBranch) as \(localName)"
-    case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
-    case .delete(let name, _): "Delete branch \(name)"
-    }
-  }
-
-  private func tagTitle(_ mutation: TagMutation) -> String {
-    switch mutation {
-    case .create(let name, _, let message):
-      "Create \(message == nil ? "lightweight" : "annotated") tag \(name)"
-    case .deleteLocal(let name): "Delete local tag \(name)"
-    case .push(let name, let remote): "Push tag \(name) to \(remote)"
-    case .deleteRemote(let name, let remote): "Delete tag \(name) from \(remote)"
-    }
-  }
-
-  private func stashTitle(_ mutation: StashMutation) -> String {
-    switch mutation {
-    case .save(_, _, let paths):
-      paths.isEmpty
-        ? "Stash working-copy changes"
-        : "Stash \(paths.count) selected path\(paths.count == 1 ? "" : "s")"
-    case .apply(let selector, _): "Apply \(selector)"
-    case .pop(let selector, _): "Pop \(selector)"
-    case .drop(let selector): "Drop \(selector)"
-    }
-  }
-
-  private func worktreeTitle(_ mutation: WorktreeMutation) -> String {
-    switch mutation {
-    case .create(_, let branch, _): "Create worktree for \(branch)"
-    case .lock(let path, _): "Lock \(path.displayString)"
-    case .unlock(let path): "Unlock \(path.displayString)"
-    case .remove(let path, let force):
-      "\(force ? "Force remove" : "Remove") \(path.displayString)"
-    case .prune: "Prune stale worktrees"
-    }
-  }
-
-  private func submoduleTitle(_ mutation: SubmoduleMutation) -> String {
-    switch mutation {
-    case .add(_, let path, _): "Add submodule \(path.displayString)"
-    case .initialize(let path): "Initialize submodule \(path.displayString)"
-    case .checkoutRecorded(let path): "Checkout recorded submodule \(path.displayString)"
-    case .updateFromRemote(let path): "Update submodule \(path.displayString)"
-    case .remove(let path, let force):
-      "\(force ? "Force remove" : "Remove") submodule \(path.displayString)"
-    }
-  }
-
-  private func lfsTitle(_ mutation: GitLFSMutation) -> String {
-    switch mutation {
-    case .installLocal: "Initialize Git LFS"
-    case .track(let pattern, _): "Track \(pattern) with Git LFS"
-    case .untrack(let pattern): "Stop tracking \(pattern) with Git LFS"
-    case .fetch(let recent): recent ? "Fetch recent Git LFS objects" : "Fetch Git LFS objects"
-    case .pull: "Pull Git LFS objects"
-    case .pruneVerified: "Prune verified Git LFS objects"
-    }
-  }
-
-  private func remoteTitle(_ mutation: RemoteMutation) -> String {
-    switch mutation {
-    case .add(let name, _, _): "Add remote \(name)"
-    case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
-    case .update(let name, _, _): "Update remote \(name)"
-    case .remove(let name): "Remove remote \(name)"
-    case .fetch(let remote, _): "Fetch \(remote ?? "all remotes")"
-    case .pull(let remote, _, _): "Pull \(remote ?? "upstream")"
-    case .push(let remote, let branch, _, let forceWithLease):
-      "\(forceWithLease ? "Force-with-lease push" : "Push") \(branch) to \(remote)"
-    }
-  }
-
-  private func mergeTitle(_ mutation: MergeMutation) -> String {
-    switch mutation {
-    case .start(let branch, _, _, _): "Merge \(branch)"
-    case .resolve(let path, let side): "Resolve \(path.displayString) using \(side.rawValue)"
-    case .resolveContents(let path, _): "Resolve \(path.displayString)"
-    case .continueOperation: "Continue Git operation"
-    case .abortOperation: "Abort Git operation"
-    }
-  }
-
-  private func historyTitle(_ mutation: HistoryMutation) -> String {
-    switch mutation {
-    case .cherryPick(let oid): "Cherry-pick \(oid.prefix(12))"
-    case .revert(let oid): "Revert \(oid.prefix(12))"
-    case .reset(let target, let mode): "\(mode.rawValue.capitalized) reset to \(target.prefix(12))"
-    case .rebase(let onto, _): "Rebase onto \(onto.prefix(12))"
-    case .interactiveRebase: "Run interactive rebase"
-    case .undo: "Undo last recoverable operation"
-    }
-  }
 }

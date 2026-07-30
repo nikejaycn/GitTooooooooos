@@ -89,6 +89,59 @@ struct SidebarConfigurationTests {
     #expect(RemoteBranchCheckoutTarget(reference: unknown, remoteNames: ["origin"]) == nil)
   }
 
+  @Test("Flattens only expanded branch folders for sidebar rendering")
+  func flattensExpandedBranchFolders() throws {
+    let tree = SidebarBranchTree(
+      references: [
+        reference("main"),
+        reference("feature/accounts/login"),
+        reference("feature/payments"),
+      ],
+      namespace: "local"
+    )
+    let collapsed = RepositorySidebarPresentation.visibleBranchRows(
+      in: tree,
+      expandedFolderIDs: []
+    )
+    #expect(collapsed.map(\.id) == ["folder:local/feature", "branch:refs/heads/main"])
+
+    let expanded = RepositorySidebarPresentation.visibleBranchRows(
+      in: tree,
+      expandedFolderIDs: ["local/feature", "local/feature/accounts"]
+    )
+    #expect(
+      expanded.map(\.id) == [
+        "folder:local/feature",
+        "folder:local/feature/accounts",
+        "branch:refs/heads/feature/accounts/login",
+        "branch:refs/heads/feature/payments",
+        "branch:refs/heads/main",
+      ]
+    )
+  }
+
+  @Test("Branch help describes local and remote checkout behavior")
+  func branchHelp() {
+    let local = reference("topic")
+    let remote = GitReference(
+      fullName: "refs/remotes/origin/topic",
+      shortName: "origin/topic",
+      targetOID: String(repeating: "b", count: 40),
+      upstream: nil,
+      kind: .remoteBranch,
+      isHEAD: false
+    )
+
+    #expect(
+      RepositorySidebarPresentation.branchHelp(local, remoteNames: ["origin"])
+        == "Click to locate its commit. Double-click to switch branches."
+    )
+    #expect(
+      RepositorySidebarPresentation.branchHelp(remote, remoteNames: ["origin"])
+        == "Click to locate its commit. Double-click to check out a local tracking branch."
+    )
+  }
+
   private func reference(_ name: String) -> GitReference {
     GitReference(
       fullName: "refs/heads/\(name)",
