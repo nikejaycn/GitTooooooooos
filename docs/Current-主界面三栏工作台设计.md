@@ -37,7 +37,8 @@
 
 ### 右侧上下文检查器
 
-- 选择普通提交：展示提交说明、SHA、作者、日期、父提交和引用。
+- 选择普通提交：展示提交说明、SHA、作者、日期、父提交、引用及相对父提交的
+  真实文件变化。
 - 多选提交：比较最旧与最新提交的文件树。
 - 选择 WIP：展示未暂存/已暂存文件、Stage/Unstage 操作和提交编辑器。
 - Pull Requests、Issues、Actions 在尚未接入托管服务时显示明确的
@@ -57,6 +58,8 @@
 - 工具栏暴露高频仓库操作。
 - 仓库顶部信息压缩为紧凑单行。
 - WIP 节点的右侧检查器已接入真实工作区数据，可 Stage、Unstage 和提交。
+- 冲突文件在 WIP 检查器中提供 Resolve 入口，继续复用三方冲突编辑器。
+- 底部状态栏提供 Activity、图缩放比例、反馈入口、generation 和版本号。
 - Pull Requests、Issues、GitHub Actions 提供诚实的连接状态。
 - Branch Review 提供本地与远端分支入口。
 - 独立交互原型保留沙盒 iframe 与 CSP，并继续由 `.gitignore` 排除。
@@ -77,4 +80,3 @@ Pull Requests、Issues 和 GitHub Actions 需要新增托管服务账户、OAuth
   - WIP 选择后显示真实文件变化和提交编辑器；
   - Pull Requests 显示 GitHub 连接状态；
   - 工具栏与侧栏在当前最小窗口约束下可用。
-

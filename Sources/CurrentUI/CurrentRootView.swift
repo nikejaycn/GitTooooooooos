@@ -1003,6 +1003,11 @@ public struct CurrentRootView: View {
               Label("Search", systemImage: "magnifyingglass")
             }
             .keyboardShortcut("k", modifiers: [.command])
+            Button {
+              openSettings()
+            } label: {
+              Label("Settings", systemImage: "gearshape")
+            }
             Menu {
               Button("Fetch All", action: fetch)
               Menu("Pull") {
@@ -1680,19 +1685,45 @@ public struct CurrentRootView: View {
   }
 
   private func repositoryStatusBar(_ status: RepositoryStatus) -> some View {
-    HStack {
+    HStack(spacing: 12) {
+      Button {
+        workspace = .operations
+      } label: {
+        Label("Activity", systemImage: "clock.arrow.circlepath")
+      }
+      .buttonStyle(.plain)
+      .help("Open Activity Log")
+      Divider()
+        .frame(height: 12)
       Text(gitVersion ?? "Git version unavailable")
         .lineLimit(1)
         .truncationMode(.middle)
         .help(gitVersion ?? "Git version unavailable")
       Spacer()
+      Text(
+        graphDisplayConfiguration.scale,
+        format: .percent.precision(.fractionLength(0))
+      )
+      .help("Commit graph scale")
+      Link(
+        "Feedback & Support",
+        destination: URL(string: "https://github.com/nikejaycn/GitTooooooooos/issues")!
+      )
       Text("Generation \(status.generation.rawValue)")
+        .fixedSize(horizontal: true, vertical: false)
+      Text("Current \(appVersion)")
         .fixedSize(horizontal: true, vertical: false)
     }
     .font(.caption)
     .foregroundStyle(.secondary)
     .padding(8)
     .padding(.trailing, 12)
+  }
+
+  private var appVersion: String {
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    return version.flatMap { $0.isEmpty ? nil : $0 } ?? "Development"
   }
 
   private var welcomeView: some View {
@@ -2816,7 +2847,15 @@ public struct CurrentRootView: View {
                   rows.count == 1 && commitOIDs.count == 1
                   ? commitOIDs[0]
                   : nil
-                compareSelectedCommits(commitOIDs)
+                if rows.count == 1,
+                  let row = rows.first,
+                  let commitOID = row.commitOID,
+                  let parentOID = row.parentOIDs.first
+                {
+                  compareSelectedCommits([parentOID, commitOID])
+                } else {
+                  compareSelectedCommits(commitOIDs)
+                }
               },
               onApproachingEnd: graphSearchScope == .loaded ? loadNextHistoryPage : {}
             )
@@ -3122,6 +3161,50 @@ public struct CurrentRootView: View {
           }
         }
       }
+      singleCommitChangedFiles
+    }
+  }
+
+  @ViewBuilder
+  private var singleCommitChangedFiles: some View {
+    Divider()
+    Text("Changed Files")
+      .font(.caption.weight(.semibold))
+      .foregroundStyle(.secondary)
+    if isCommitComparisonLoading {
+      HStack(spacing: 8) {
+        ProgressView()
+          .controlSize(.small)
+        Text("Loading changed files…")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    } else if let commitComparison {
+      if commitComparison.files.isEmpty {
+        Text("This commit does not change the parent tree.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        LazyVStack(alignment: .leading, spacing: 7) {
+          ForEach(commitComparison.files.prefix(40)) { file in
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+              Text(file.status)
+                .font(.system(.caption2, design: .monospaced, weight: .bold))
+                .foregroundStyle(comparisonColor(file.kind))
+                .frame(width: 28, alignment: .leading)
+              Text(file.path.displayString)
+                .font(.caption)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .help(file.path.displayString)
+            }
+          }
+        }
+      }
+    } else {
+      Text("Changed files are unavailable for this root commit.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
   }
 
@@ -3186,11 +3269,19 @@ public struct CurrentRootView: View {
             }
             .buttonStyle(.plain)
             Spacer(minLength: 2)
-            Button(isStaged ? "Unstage" : "Stage") {
-              if isStaged {
-                unstage(change.path)
+            Group {
+              if change.kind == .unmerged {
+                Button("Resolve") {
+                  conflictEditorPath = change.path
+                }
               } else {
-                stage(change.path)
+                Button(isStaged ? "Unstage" : "Stage") {
+                  if isStaged {
+                    unstage(change.path)
+                  } else {
+                    stage(change.path)
+                  }
+                }
               }
             }
             .buttonStyle(.borderless)
