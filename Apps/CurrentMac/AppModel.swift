@@ -24,12 +24,12 @@ final class AppModel {
   private(set) var gitFallbackReason: String?
   private(set) var repositoryStatus: RepositoryStatus?
   private(set) var commitTemplate: String?
-  private(set) var commits: [CommitSummary] = []
-  private(set) var graphRows: [GraphRow] = []
-  private(set) var repositorySearchRows: [GraphRow] = []
-  private(set) var isRepositorySearchLoading = false
-  private(set) var isHistoryPageLoading = false
-  private(set) var hasMoreHistory = false
+  var commits: [CommitSummary] { historySession.commits }
+  var graphRows: [GraphRow] { historySession.graphRows }
+  var repositorySearchRows: [GraphRow] { historySession.searchRows }
+  var isRepositorySearchLoading: Bool { historySession.isSearchLoading }
+  var isHistoryPageLoading: Bool { historySession.isPageLoading }
+  var hasMoreHistory: Bool { historySession.hasMore }
   private(set) var maximumLoadedCommitCount = 10_000
   private(set) var useCustomGit = false
   private(set) var customGitPath = ""
@@ -44,8 +44,8 @@ final class AppModel {
   private(set) var soloGraphReference: String?
   private(set) var pinnedGraphReferences = Set<String>()
   private(set) var visibleSidebarSections = Set(SidebarSection.allCases)
-  private(set) var commitComparison: CommitComparison?
-  private(set) var isCommitComparisonLoading = false
+  var commitComparison: CommitComparison? { historySession.comparison }
+  var isCommitComparisonLoading: Bool { historySession.isComparisonLoading }
   private(set) var references: [GitReference] = []
   private(set) var stashes: [StashEntry] = []
   private(set) var remotes: [GitRemote] = []
@@ -56,18 +56,22 @@ final class AppModel {
   var activities: [OperationActivity] {
     activityLog.activities
   }
-  private(set) var recentRepositories: [RecentRepository] = []
+  var recentRepositories: [RecentRepository] {
+    recentRepositoryCatalog.repositories
+  }
   private(set) var lastRecoveryReference: RecoveryReference?
-  private(set) var selectedDiff: DiffDocument?
-  private(set) var selectedCommitDiff: DiffDocument?
-  private(set) var selectedCommitDiffComparison: CommitComparison?
+  var selectedDiff: DiffDocument? { inspectionSession.selectedDiff }
+  var selectedCommitDiff: DiffDocument? { inspectionSession.selectedCommitDiff }
+  var selectedCommitDiffComparison: CommitComparison? {
+    inspectionSession.selectedCommitDiffComparison
+  }
   private(set) var diffOptions = DiffOptions()
-  private(set) var isDiffLoading = false
-  private(set) var isCommitDiffLoading = false
-  private(set) var fileHistory: FileHistoryResult?
-  private(set) var blameDocument: BlameDocument?
-  private(set) var isFileHistoryLoading = false
-  private(set) var isBlameLoading = false
+  var isDiffLoading: Bool { inspectionSession.isDiffLoading }
+  var isCommitDiffLoading: Bool { inspectionSession.isCommitDiffLoading }
+  var fileHistory: FileHistoryResult? { inspectionSession.fileHistory }
+  var blameDocument: BlameDocument? { inspectionSession.blameDocument }
+  var isFileHistoryLoading: Bool { inspectionSession.isFileHistoryLoading }
+  var isBlameLoading: Bool { inspectionSession.isBlameLoading }
   private(set) var isLoading = false
   private(set) var isRepositoryOperation = false
   private(set) var errorMessage: String?
@@ -75,29 +79,22 @@ final class AppModel {
   private let preferences: AppPreferencesStore
   private let externalTools: ExternalToolService
   private var activityLog = OperationActivityLog()
+  private var recentRepositoryCatalog: RecentRepositoryCatalog
+  private var historySession = RepositoryHistorySessionState()
+  private var inspectionSession = RepositoryInspectionSessionState()
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
-  private var repositoryWatchSession: RepositoryWatchSession?
-  private var repositoryWatchStartTask: Task<Void, Never>?
-  private var repositoryRefreshTask: Task<Void, Never>?
+  private let repositoryWatchLifecycle = RepositoryWatchLifecycle()
+  private let repositoryRefreshRequest = LatestTaskCoordinator()
   private var repositorySessionID = UUID()
-  private var graphLayoutTask: Task<Void, Never>?
-  private var graphLayoutRequestID: UUID?
-  private var repositorySearchTask: Task<Void, Never>?
-  private var repositorySearchRequestID: UUID?
+  private let graphLayoutRequest = LatestTaskCoordinator()
+  private let repositorySearchRequest = LatestTaskCoordinator()
   private var historyPageTask: Task<Void, Never>?
-  private var nextHistoryCursor: HistoryCursor?
-  private var commitComparisonTask: Task<Void, Never>?
-  private var commitComparisonRequestID: UUID?
-  private var diffRequestID: UUID?
-  private var selectedDiffChange: FileChange?
-  private var commitDiffTask: Task<Void, Never>?
-  private var commitDiffRequestID: UUID?
-  private var selectedCommitDiffFile: CommitFileChange?
-  private var fileHistoryTask: Task<Void, Never>?
-  private var fileHistoryRequestID: UUID?
-  private var blameTask: Task<Void, Never>?
-  private var blameRequestID: UUID?
+  private let commitComparisonRequest = LatestTaskCoordinator()
+  private let diffRequest = LatestTaskCoordinator()
+  private let commitDiffRequest = LatestTaskCoordinator()
+  private let fileHistoryRequest = LatestTaskCoordinator()
+  private let blameRequest = LatestTaskCoordinator()
   private var repositoryOperationTask: Task<Void, Never>?
 
   init(
@@ -107,7 +104,9 @@ final class AppModel {
   ) {
     self.preferences = preferences
     self.externalTools = externalTools
-    recentRepositories = preferences.recentRepositories
+    recentRepositoryCatalog = RecentRepositoryCatalog(
+      repositories: preferences.recentRepositories
+    )
     useCustomGit = preferences.useCustomGit
     customGitPath = preferences.customGitPath
     autoStashEnabled = preferences.autoStashEnabled
@@ -198,7 +197,9 @@ final class AppModel {
     panel.message = "Choose the new local repository folder."
     panel.prompt = "Clone"
     panel.canCreateDirectories = true
-    panel.nameFieldStringValue = suggestedCloneName(from: trimmed)
+    panel.nameFieldStringValue = RepositoryNameSuggestion.cloneDestinationName(
+      from: trimmed
+    )
 
     guard panel.runModal() == .OK, let destination = panel.url else { return }
     cloneRepository(remoteURL: trimmed, destinationURL: destination)
@@ -244,18 +245,13 @@ final class AppModel {
   }
 
   func toggleFavoriteRepository(_ recent: RecentRepository) {
-    guard let index = recentRepositories.firstIndex(where: { $0.id == recent.id }) else {
-      return
-    }
-    recentRepositories[index] = recent.updating(
-      isFavorite: !recent.isFavorite
-    )
-    persistRecentRepositories()
+    guard recentRepositoryCatalog.toggleFavorite(id: recent.id) else { return }
+    preferences.recentRepositories = recentRepositoryCatalog.repositories
   }
 
   func removeRecentRepository(_ recent: RecentRepository) {
-    recentRepositories.removeAll { $0.id == recent.id }
-    persistRecentRepositories()
+    guard recentRepositoryCatalog.remove(id: recent.id) else { return }
+    preferences.recentRepositories = recentRepositoryCatalog.repositories
   }
 
   func cancelRepositoryOperation() {
@@ -271,21 +267,20 @@ final class AppModel {
 
   func loadNextHistoryPage() {
     guard
-      !isHistoryPageLoading,
       let repository,
       let generation = repositoryStatus?.generation,
-      let cursor = nextHistoryCursor,
-      commits.count < maximumLoadedCommitCount
+      let cursor = historySession.beginNextPage(
+        maximumCount: maximumLoadedCommitCount
+      )
     else {
       return
     }
 
     let sessionID = repositorySessionID
-    isHistoryPageLoading = true
     historyPageTask = Task {
       defer {
         if repositorySessionID == sessionID {
-          isHistoryPageLoading = false
+          historySession.finishPageLoading()
           historyPageTask = nil
         }
       }
@@ -303,18 +298,12 @@ final class AppModel {
           return
         }
 
-        let existingOIDs = Set(commits.map(\.oid))
-        let remainingCapacity = maximumLoadedCommitCount - commits.count
-        let newCommits = page.commits
-          .filter { !existingOIDs.contains($0.oid) }
-          .prefix(remainingCapacity)
-        commits.append(contentsOf: newCommits)
-        nextHistoryCursor =
-          commits.count < maximumLoadedCommitCount
-          ? page.nextCursor
-          : nil
-        hasMoreHistory = nextHistoryCursor != nil
-        rebuildGraphRows(generation: generation)
+        if historySession.append(
+          page: page,
+          maximumCount: maximumLoadedCommitCount
+        ) {
+          rebuildGraphRows(generation: generation)
+        }
       } catch is CancellationError {
         return
       } catch {
@@ -340,19 +329,13 @@ final class AppModel {
     maximumLoadedCommitCount = newLimit
     preferences.maximumLoadedCommitCount = newLimit
 
-    if commits.count > newLimit {
-      commits = Array(commits.prefix(newLimit))
-      nextHistoryCursor = nil
-      hasMoreHistory = false
+    if historySession.updateMaximumCount(
+      from: previousLimit,
+      to: newLimit
+    ) {
       if let generation = repositoryStatus?.generation {
         rebuildGraphRows(generation: generation)
       }
-    } else if newLimit > previousLimit,
-      commits.count == previousLimit,
-      nextHistoryCursor == nil
-    {
-      nextHistoryCursor = HistoryCursor(offset: commits.count)
-      hasMoreHistory = true
     }
   }
 
@@ -552,9 +535,7 @@ final class AppModel {
   }
 
   func searchRepositoryHistory(_ rawQuery: String) {
-    repositorySearchTask?.cancel()
-    repositorySearchTask = nil
-    repositorySearchRequestID = nil
+    repositorySearchRequest.cancel()
 
     guard
       let repository,
@@ -567,22 +548,19 @@ final class AppModel {
     do {
       query = try HistorySearchQuery.parse(rawQuery)
     } catch {
-      repositorySearchRows = []
-      isRepositorySearchLoading = false
+      historySession.clearSearch()
       errorMessage = error.localizedDescription
       return
     }
 
-    let requestID = UUID()
     let sessionID = repositorySessionID
-    repositorySearchRequestID = requestID
-    isRepositorySearchLoading = true
+    historySession.beginSearch()
     errorMessage = nil
-    repositorySearchTask = Task {
+    repositorySearchRequest.start { [weak self] requestID in
+      guard let self else { return }
       defer {
-        if repositorySearchRequestID == requestID {
-          isRepositorySearchLoading = false
-          repositorySearchTask = nil
+        if repositorySearchRequest.isCurrent(requestID) {
+          historySession.finishSearch()
         }
       }
       do {
@@ -592,49 +570,45 @@ final class AppModel {
             limit: min(maximumLoadedCommitCount, 1_000),
             generation: generation
           ),
-          repositorySearchRequestID == requestID,
+          repositorySearchRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
           repositoryStatus?.generation == generation
         else {
           return
         }
-        repositorySearchRows = GraphRowBuilder().build(
-          commits: result.commits,
-          references: references,
-          workingCopyChangeCount: 0,
-          generation: result.generation
+        historySession.finishSearch(
+          with: GraphRowBuilder().build(
+            commits: result.commits,
+            references: references,
+            workingCopyChangeCount: 0,
+            generation: result.generation
+          )
         )
       } catch is CancellationError {
         return
       } catch {
         guard
-          repositorySearchRequestID == requestID,
+          repositorySearchRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
           repositoryStatus?.generation == generation
         else {
           return
         }
-        repositorySearchRows = []
+        historySession.clearSearch()
         errorMessage = error.localizedDescription
       }
     }
   }
 
   func clearRepositoryHistorySearch() {
-    repositorySearchTask?.cancel()
-    repositorySearchTask = nil
-    repositorySearchRequestID = nil
-    repositorySearchRows = []
-    isRepositorySearchLoading = false
+    repositorySearchRequest.cancel()
+    historySession.clearSearch()
   }
 
   func compareSelectedCommits(_ commitOIDs: [String]) {
     clearCommitDiff()
-    commitComparisonTask?.cancel()
-    commitComparisonTask = nil
-    commitComparisonRequestID = nil
-    commitComparison = nil
-    isCommitComparisonLoading = false
+    commitComparisonRequest.cancel()
+    historySession.clearComparison()
 
     guard
       commitOIDs.count >= 2,
@@ -646,15 +620,13 @@ final class AppModel {
 
     let baseOID = commitOIDs[commitOIDs.count - 1]
     let targetOID = commitOIDs[0]
-    let requestID = UUID()
     let sessionID = repositorySessionID
-    commitComparisonRequestID = requestID
-    isCommitComparisonLoading = true
-    commitComparisonTask = Task {
+    historySession.beginComparison()
+    commitComparisonRequest.start { [weak self] requestID in
+      guard let self else { return }
       defer {
-        if commitComparisonRequestID == requestID {
-          isCommitComparisonLoading = false
-          commitComparisonTask = nil
+        if commitComparisonRequest.isCurrent(requestID) {
+          historySession.finishComparison()
         }
       }
       do {
@@ -665,18 +637,18 @@ final class AppModel {
         )
         guard
           !Task.isCancelled,
-          commitComparisonRequestID == requestID,
+          commitComparisonRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
           repositoryStatus?.generation == generation
         else {
           return
         }
-        commitComparison = comparison
+        historySession.finishComparison(with: comparison)
       } catch is CancellationError {
         return
       } catch {
         guard
-          commitComparisonRequestID == requestID,
+          commitComparisonRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
           repositoryStatus?.generation == generation
         else {
@@ -769,34 +741,36 @@ final class AppModel {
 
   func loadDiff(_ change: FileChange) {
     guard let repository else {
-      selectedDiff = nil
-      selectedDiffChange = nil
+      diffRequest.cancel()
+      inspectionSession.clearDiff()
       return
     }
-    selectedDiffChange = change
+    inspectionSession.beginDiff(for: change)
     let source: DiffSource =
       change.kind == .untracked
       ? .untracked
       : change.isUnstaged ? .unstaged : .staged
-    let requestID = UUID()
-    diffRequestID = requestID
-    isDiffLoading = true
-    Task {
+    diffRequest.start { [weak self] requestID in
+      guard let self else { return }
+      defer {
+        if diffRequest.isCurrent(requestID) {
+          inspectionSession.finishDiff()
+        }
+      }
       do {
         let document = try await repository.diff(
           for: change.path,
           source: source,
           options: diffOptions
         )
-        guard diffRequestID == requestID else { return }
-        selectedDiff = document
+        guard diffRequest.isCurrent(requestID) else { return }
+        inspectionSession.finishDiff(with: document)
+      } catch is CancellationError {
+        return
       } catch {
-        guard diffRequestID == requestID else { return }
-        selectedDiff = nil
+        guard diffRequest.isCurrent(requestID) else { return }
+        inspectionSession.failDiff()
         errorMessage = error.localizedDescription
-      }
-      if diffRequestID == requestID {
-        isDiffLoading = false
       }
     }
   }
@@ -809,19 +783,16 @@ final class AppModel {
       clearCommitDiff()
       return
     }
-    selectedCommitDiff = nil
-    selectedCommitDiffFile = file
-    selectedCommitDiffComparison = comparison
-    commitDiffTask?.cancel()
-    let requestID = UUID()
+    inspectionSession.beginCommitDiff(
+      file: file,
+      comparison: comparison
+    )
     let sessionID = repositorySessionID
-    commitDiffRequestID = requestID
-    isCommitDiffLoading = true
-    commitDiffTask = Task {
+    commitDiffRequest.start { [weak self] requestID in
+      guard let self else { return }
       defer {
-        if commitDiffRequestID == requestID {
-          isCommitDiffLoading = false
-          commitDiffTask = nil
+        if commitDiffRequest.isCurrent(requestID) {
+          inspectionSession.finishCommitDiff()
         }
       }
       do {
@@ -834,46 +805,43 @@ final class AppModel {
           generation: comparison.generation
         )
         guard
-          commitDiffRequestID == requestID,
+          commitDiffRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
           repositoryStatus?.generation == comparison.generation
         else {
           return
         }
-        selectedCommitDiff = document
+        inspectionSession.finishCommitDiff(with: document)
       } catch is CancellationError {
         return
       } catch {
         guard
-          commitDiffRequestID == requestID,
+          commitDiffRequest.isCurrent(requestID),
           repositorySessionID == sessionID
         else {
           return
         }
-        selectedCommitDiff = nil
+        inspectionSession.failCommitDiff()
         errorMessage = error.localizedDescription
       }
     }
   }
 
   func clearCommitDiff() {
-    commitDiffTask?.cancel()
-    commitDiffTask = nil
-    commitDiffRequestID = nil
-    selectedCommitDiff = nil
-    selectedCommitDiffFile = nil
-    selectedCommitDiffComparison = nil
-    isCommitDiffLoading = false
+    commitDiffRequest.cancel()
+    inspectionSession.clearCommitDiff()
   }
 
   func setDiffOptions(_ options: DiffOptions) {
     guard options != diffOptions else { return }
     diffOptions = options
     preferences.diffOptions = options
-    if let selectedDiffChange {
+    if let selectedDiffChange = inspectionSession.selectedDiffChange {
       loadDiff(selectedDiffChange)
     }
-    if let selectedCommitDiffFile, let selectedCommitDiffComparison {
+    if let selectedCommitDiffFile = inspectionSession.selectedCommitDiffFile,
+      let selectedCommitDiffComparison = inspectionSession.selectedCommitDiffComparison
+    {
       loadCommitDiff(selectedCommitDiffFile, comparison: selectedCommitDiffComparison)
     }
   }
@@ -914,15 +882,13 @@ final class AppModel {
       return
     }
 
-    let requestID = UUID()
     let sessionID = repositorySessionID
-    fileHistoryRequestID = requestID
-    isFileHistoryLoading = true
-    fileHistoryTask = Task {
+    inspectionSession.beginFileInsights()
+    fileHistoryRequest.start { [weak self] requestID in
+      guard let self else { return }
       defer {
-        if fileHistoryRequestID == requestID {
-          isFileHistoryLoading = false
-          fileHistoryTask = nil
+        if fileHistoryRequest.isCurrent(requestID) {
+          inspectionSession.finishFileHistory()
         }
       }
       do {
@@ -933,18 +899,18 @@ final class AppModel {
         )
         guard
           !Task.isCancelled,
-          fileHistoryRequestID == requestID,
+          fileHistoryRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
           repositoryStatus?.generation == generation
         else {
           return
         }
-        fileHistory = result
+        inspectionSession.finishFileHistory(with: result)
       } catch is CancellationError {
         return
       } catch {
         guard
-          fileHistoryRequestID == requestID,
+          fileHistoryRequest.isCurrent(requestID),
           repositorySessionID == sessionID
         else {
           return
@@ -956,10 +922,8 @@ final class AppModel {
   }
 
   func loadBlame(path: GitPath, revision: String?) {
-    blameTask?.cancel()
-    blameTask = nil
-    blameRequestID = nil
-    blameDocument = nil
+    blameRequest.cancel()
+    inspectionSession.beginBlame(clearDocument: true)
     requestBlamePage(
       path: path,
       revision: revision,
@@ -970,9 +934,9 @@ final class AppModel {
 
   func loadNextBlamePage() {
     guard
-      let blameDocument,
+      let blameDocument = inspectionSession.blameDocument,
       let nextLine = blameDocument.nextLine,
-      !isBlameLoading
+      !inspectionSession.isBlameLoading
     else {
       return
     }
@@ -1355,11 +1319,9 @@ final class AppModel {
           source: document.source
         )
         apply(snapshot)
-        selectedDiff = nil
+        inspectionSession.clearDiff()
         if let change = snapshot.status.changes.first(where: { $0.path == document.path }) {
           loadDiff(change)
-        } else {
-          selectedDiffChange = nil
         }
         finishActivity(activityID, state: .succeeded)
       } catch {
@@ -1415,13 +1377,11 @@ final class AppModel {
         )
         apply(result.snapshot)
         lastRecoveryReference = result.recoveryReference
-        selectedDiff = nil
+        inspectionSession.clearDiff()
         if let change = result.snapshot.status.changes.first(
           where: { $0.path == document.path }
         ) {
           loadDiff(change)
-        } else {
-          selectedDiffChange = nil
         }
         finishActivity(activityID, state: .succeeded)
       } catch {
@@ -1551,34 +1511,24 @@ final class AppModel {
     commitTemplate = await template
     gitHooks = await hooks ?? .unavailable
     apply(loadedSnapshot)
-    selectedDiff = nil
-    selectedDiffChange = nil
+    inspectionSession.clear()
     startWatchingRepository(opened)
     recordRecentRepository(opened.location.worktreeURL)
   }
 
   private func clearRepository() {
-    repositoryRefreshTask?.cancel()
-    repositoryRefreshTask = nil
-    repositoryWatchStartTask?.cancel()
-    repositoryWatchStartTask = nil
-    repositoryWatchSession = nil
+    repositoryRefreshRequest.cancel()
+    repositoryWatchLifecycle.stop()
     repositorySessionID = UUID()
     repository = nil
     repositoryName = nil
     repositoryPath = nil
     repositoryStatus = nil
     commitTemplate = nil
-    commits = []
-    graphLayoutTask?.cancel()
-    graphLayoutTask = nil
-    graphLayoutRequestID = nil
-    graphRows = []
+    graphLayoutRequest.cancel()
     historyPageTask?.cancel()
     historyPageTask = nil
-    nextHistoryCursor = nil
-    isHistoryPageLoading = false
-    hasMoreHistory = false
+    historySession.clear()
     clearCommitComparison()
     references = []
     stashes = []
@@ -1587,48 +1537,14 @@ final class AppModel {
     submodules = []
     gitLFS = .unavailable
     gitHooks = .unavailable
-    selectedDiff = nil
-    selectedDiffChange = nil
+    diffRequest.cancel()
+    inspectionSession.clearDiff()
     clearFileInsights()
   }
 
-  private func suggestedCloneName(from remoteURL: String) -> String {
-    let withoutQuery =
-      remoteURL.split(separator: "?", maxSplits: 1).first.map(String.init)
-      ?? remoteURL
-    let tail =
-      withoutQuery
-      .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-      .split(separator: "/")
-      .last
-      .map(String.init)
-      ?? "Repository"
-    if tail.hasSuffix(".git") {
-      return String(tail.dropLast(4))
-    }
-    return tail.isEmpty ? "Repository" : tail
-  }
-
   private func recordRecentRepository(_ url: URL) {
-    let path = url.standardizedFileURL.path
-    let existing = recentRepositories.first { $0.path == path }
-    recentRepositories.removeAll { $0.path == path }
-    recentRepositories.insert(
-      RecentRepository(
-        path: path,
-        displayName: url.lastPathComponent,
-        isFavorite: existing?.isFavorite ?? false
-      ),
-      at: 0
-    )
-    if recentRepositories.count > 100 {
-      recentRepositories.removeLast(recentRepositories.count - 100)
-    }
-    persistRecentRepositories()
-  }
-
-  private func persistRecentRepositories() {
-    preferences.recentRepositories = recentRepositories
+    recentRepositoryCatalog.recordOpened(url)
+    preferences.recentRepositories = recentRepositoryCatalog.repositories
   }
 
   private static var currentArchitecture: String {
@@ -1706,8 +1622,7 @@ final class AppModel {
       do {
         let snapshot = try await repository.applyBranchMutation(mutation)
         apply(snapshot)
-        selectedDiff = nil
-        selectedDiffChange = nil
+        inspectionSession.clearDiff()
         finishActivity(activityID, state: .succeeded)
       } catch {
         if let snapshot = try? await repository.refreshSnapshot() {
@@ -2025,17 +1940,16 @@ final class AppModel {
     }
     historyPageTask?.cancel()
     historyPageTask = nil
-    isHistoryPageLoading = false
+    historySession.finishPageLoading()
     clearRepositoryHistorySearch()
     clearCommitComparison()
     clearFileInsights()
     repositoryStatus = snapshot.status
-    commits = Array(snapshot.commits.prefix(maximumLoadedCommitCount))
-    nextHistoryCursor =
-      commits.count == Self.historyPageSize
-      ? HistoryCursor(offset: commits.count)
-      : nil
-    hasMoreHistory = nextHistoryCursor != nil
+    historySession.reset(
+      commits: snapshot.commits,
+      maximumCount: maximumLoadedCommitCount,
+      pageSize: Self.historyPageSize
+    )
     references = snapshot.references
     stashes = snapshot.stashes
     remotes = snapshot.remotes
@@ -2074,10 +1988,8 @@ final class AppModel {
     )
     let pinnedReferenceNames = pinnedGraphReferences
     let workingCopyChangeCount = repositoryStatus?.changes.count ?? 0
-    let requestID = UUID()
-    graphLayoutRequestID = requestID
-    graphLayoutTask?.cancel()
-    graphLayoutTask = Task {
+    graphLayoutRequest.start { [weak self] requestID in
+      guard let self else { return }
       let rows = await Task.detached(priority: .userInitiated) {
         GraphRowBuilder().build(
           commits: commits,
@@ -2089,12 +2001,12 @@ final class AppModel {
       }.value
       guard
         !Task.isCancelled,
-        graphLayoutRequestID == requestID,
+        graphLayoutRequest.isCurrent(requestID),
         repositoryStatus?.generation == generation
       else {
         return
       }
-      graphRows = rows
+      historySession.replaceGraphRows(rows)
     }
   }
 
@@ -2120,24 +2032,14 @@ final class AppModel {
 
   private func clearCommitComparison() {
     clearCommitDiff()
-    commitComparisonTask?.cancel()
-    commitComparisonTask = nil
-    commitComparisonRequestID = nil
-    commitComparison = nil
-    isCommitComparisonLoading = false
+    commitComparisonRequest.cancel()
+    historySession.clearComparison()
   }
 
   private func clearFileInsights() {
-    fileHistoryTask?.cancel()
-    fileHistoryTask = nil
-    fileHistoryRequestID = nil
-    blameTask?.cancel()
-    blameTask = nil
-    blameRequestID = nil
-    fileHistory = nil
-    blameDocument = nil
-    isFileHistoryLoading = false
-    isBlameLoading = false
+    fileHistoryRequest.cancel()
+    blameRequest.cancel()
+    inspectionSession.clearFileInsights()
   }
 
   private func requestBlamePage(
@@ -2152,15 +2054,13 @@ final class AppModel {
     else {
       return
     }
-    let requestID = UUID()
     let sessionID = repositorySessionID
-    blameRequestID = requestID
-    isBlameLoading = true
-    blameTask = Task {
+    inspectionSession.beginBlame(clearDocument: false)
+    blameRequest.start { [weak self] requestID in
+      guard let self else { return }
       defer {
-        if blameRequestID == requestID {
-          isBlameLoading = false
-          blameTask = nil
+        if blameRequest.isCurrent(requestID) {
+          inspectionSession.finishBlameLoading()
         }
       }
       do {
@@ -2173,29 +2073,21 @@ final class AppModel {
             generation: generation
           ),
           !Task.isCancelled,
-          blameRequestID == requestID,
+          blameRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
           repositoryStatus?.generation == generation
         else {
           return
         }
-        if appending {
-          guard let current = blameDocument?.appending(page) else { return }
-          blameDocument = current
-        } else {
-          blameDocument = BlameDocument(
-            generation: page.generation,
-            path: page.path,
-            revision: page.revision,
-            lines: page.lines,
-            nextLine: page.nextLine
-          )
-        }
+        _ = inspectionSession.finishBlame(
+          with: page,
+          appending: appending
+        )
       } catch is CancellationError {
         return
       } catch {
         guard
-          blameRequestID == requestID,
+          blameRequest.isCurrent(requestID),
           repositorySessionID == sessionID
         else {
           return
@@ -2206,46 +2098,17 @@ final class AppModel {
   }
 
   private func startWatchingRepository(_ opened: RepositoryActor) {
-    repositoryWatchStartTask?.cancel()
-    repositoryWatchStartTask = nil
-    repositoryWatchSession = nil
     let sessionID = repositorySessionID
-    let location = opened.location
-    let handler: @Sendable ([RepositoryWatchEvent]) -> Void = {
-      [weak self] events in
-      Task { @MainActor [weak self] in
+    repositoryWatchLifecycle.start(
+      location: opened.location,
+      onEvents: { [weak self] events in
         self?.repositoryFilesDidChange(events, sessionID: sessionID)
+      },
+      onFailure: { [weak self] message in
+        guard self?.repositorySessionID == sessionID else { return }
+        self?.errorMessage = "Repository monitoring is unavailable: \(message)"
       }
-    }
-    repositoryWatchStartTask = Task {
-      do {
-        let session = try await Task.detached(priority: .utility) {
-          try RepositoryWatchSession(
-            location: location,
-            handler: handler
-          )
-        }.value
-        guard
-          !Task.isCancelled,
-          repositorySessionID == sessionID
-        else {
-          return
-        }
-        repositoryWatchSession = session
-      } catch {
-        guard
-          !Task.isCancelled,
-          repositorySessionID == sessionID
-        else {
-          return
-        }
-        errorMessage =
-          "Repository monitoring is unavailable: \(error.localizedDescription)"
-      }
-      if repositorySessionID == sessionID {
-        repositoryWatchStartTask = nil
-      }
-    }
+    )
   }
 
   private func repositoryFilesDidChange(
@@ -2269,12 +2132,17 @@ final class AppModel {
   }
 
   private func scheduleRepositoryRefresh(sessionID: UUID) {
-    repositoryRefreshTask?.cancel()
-    repositoryRefreshTask = Task {
+    repositoryRefreshRequest.start { [weak self] requestID in
+      guard let self else { return }
       do {
         try await Task.sleep(for: .milliseconds(100))
         try Task.checkCancellation()
-        guard sessionID == repositorySessionID else { return }
+        guard
+          repositoryRefreshRequest.isCurrent(requestID),
+          sessionID == repositorySessionID
+        else {
+          return
+        }
         await refreshRepository(showsLoadingIndicator: false)
       } catch {
         // A newer filesystem event superseded this refresh.

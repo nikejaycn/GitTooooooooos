@@ -117,10 +117,6 @@ public struct CurrentRootView: View {
   private var pinnedGraphReferences: Set<String> { state.history.pinnedGraphReferences }
   private var repositorySearchRows: [GraphRow] { state.history.repositorySearchRows }
   private var isRepositorySearchLoading: Bool { state.history.isRepositorySearchLoading }
-  private var isHistoryPageLoading: Bool { state.history.isPageLoading }
-  private var hasMoreHistory: Bool { state.history.hasMore }
-  private var commitComparison: CommitComparison? { state.history.comparison }
-  private var isCommitComparisonLoading: Bool { state.history.isComparisonLoading }
 
   private var selectedCommitDiff: DiffDocument? { state.diff.selectedCommit }
   private var selectedCommitDiffComparison: CommitComparison? {
@@ -155,17 +151,6 @@ public struct CurrentRootView: View {
   private var cancelRepositoryOperation: () -> Void { actions.repository.cancelOperation }
   private var refresh: () -> Void { actions.repository.refresh }
 
-  private var loadNextHistoryPage: () -> Void { actions.history.loadNextPage }
-  private var searchRepositoryHistory: (String) -> Void { actions.history.search }
-  private var clearRepositoryHistorySearch: () -> Void { actions.history.clearSearch }
-  private var toggleHiddenGraphReference: (String) -> Void {
-    actions.history.toggleHiddenReference
-  }
-  private var setSoloGraphReference: (String?) -> Void { actions.history.setSoloReference }
-  private var togglePinnedGraphReference: (String) -> Void {
-    actions.history.togglePinnedReference
-  }
-  private var compareSelectedCommits: ([String]) -> Void { actions.history.compareCommits }
   private var exportPatch: (String) -> Void { actions.history.exportPatch }
   private var applyPatch: () -> Void { actions.history.applyPatch }
   private var cherryPick: (String) -> Void { actions.history.cherryPick }
@@ -184,9 +169,6 @@ public struct CurrentRootView: View {
   private var commit: (CommitRequest) async throws -> Void { actions.workingCopy.commit }
 
   private var loadDiff: (FileChange) -> Void { actions.diff.load }
-  private var loadCommitDiff: (CommitFileChange, CommitComparison) -> Void {
-    actions.diff.loadCommit
-  }
   private var clearCommitDiff: () -> Void { actions.diff.clearCommit }
   private var setDiffOptions: (DiffOptions) -> Void { actions.diff.setOptions }
   private var loadFileInsights: (GitPath) -> Void { actions.diff.loadFileInsights }
