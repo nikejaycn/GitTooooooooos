@@ -24,6 +24,7 @@ struct CurrentUILayoutTests {
   @Test("History graph and inspector fit the minimum window")
   func historyFitsMinimumWindow() {
     #expect(CurrentUILayout.historyMinimumWidth <= minimumDetailWidth)
+    #expect(CurrentUILayout.historyMinimumHeight <= CurrentUILayout.minimumWindowHeight)
   }
 
   @Test("Every primary pane retains a usable text width")
@@ -34,6 +35,7 @@ struct CurrentUILayoutTests {
     #expect(CurrentUILayout.blameMinimumWidth >= 300)
     #expect(CurrentUILayout.graphMinimumWidth >= 300)
     #expect(CurrentUILayout.inspectorMinimumWidth >= 220)
+    #expect(CurrentUILayout.historyMetadataMinimumWidth >= 220)
   }
 
   @Test("Resizable sidebars expose a meaningful drag range")

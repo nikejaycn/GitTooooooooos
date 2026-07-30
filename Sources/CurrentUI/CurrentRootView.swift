@@ -1413,7 +1413,10 @@ public struct CurrentRootView: View {
     }
     .sheet(
       isPresented: Binding(
-        get: { isCommitDiffLoading || selectedCommitDiff != nil },
+        get: {
+          workspace != .history
+            && (isCommitDiffLoading || selectedCommitDiff != nil)
+        },
         set: { if !$0 { clearCommitDiff() } }
       )
     ) {
@@ -1466,40 +1469,7 @@ public struct CurrentRootView: View {
         .labelsHidden()
         .pickerStyle(.segmented)
         .frame(width: 170)
-        Menu {
-          Toggle(
-            "Ignore Whitespace Changes",
-            isOn: Binding(
-              get: { diffOptions.ignoresWhitespaceChanges },
-              set: { enabled in
-                setDiffOptions(
-                  DiffOptions(
-                    ignoresWhitespaceChanges: enabled,
-                    ignoresEndOfLineWhitespace: diffOptions.ignoresEndOfLineWhitespace
-                  )
-                )
-              }
-            )
-          )
-          Toggle(
-            "Ignore End-of-Line Whitespace",
-            isOn: Binding(
-              get: { diffOptions.ignoresEndOfLineWhitespace },
-              set: { enabled in
-                setDiffOptions(
-                  DiffOptions(
-                    ignoresWhitespaceChanges: diffOptions.ignoresWhitespaceChanges,
-                    ignoresEndOfLineWhitespace: enabled
-                  )
-                )
-              }
-            )
-          )
-        } label: {
-          Image(systemName: "textformat")
-        }
-        .menuStyle(.borderlessButton)
-        .help("Diff whitespace options")
+        commitDiffWhitespaceMenu
         Button("Done") {
           clearCommitDiff()
         }
@@ -1521,6 +1491,43 @@ public struct CurrentRootView: View {
       }
     }
     .frame(minWidth: 760, minHeight: 520)
+  }
+
+  private var commitDiffWhitespaceMenu: some View {
+    Menu {
+      Toggle(
+        "Ignore Whitespace Changes",
+        isOn: Binding(
+          get: { diffOptions.ignoresWhitespaceChanges },
+          set: { enabled in
+            setDiffOptions(
+              DiffOptions(
+                ignoresWhitespaceChanges: enabled,
+                ignoresEndOfLineWhitespace: diffOptions.ignoresEndOfLineWhitespace
+              )
+            )
+          }
+        )
+      )
+      Toggle(
+        "Ignore End-of-Line Whitespace",
+        isOn: Binding(
+          get: { diffOptions.ignoresEndOfLineWhitespace },
+          set: { enabled in
+            setDiffOptions(
+              DiffOptions(
+                ignoresWhitespaceChanges: diffOptions.ignoresWhitespaceChanges,
+                ignoresEndOfLineWhitespace: enabled
+              )
+            )
+          }
+        )
+      )
+    } label: {
+      Image(systemName: "textformat")
+    }
+    .menuStyle(.borderlessButton)
+    .help("Diff whitespace options")
   }
 
   @ViewBuilder
@@ -3017,41 +3024,39 @@ public struct CurrentRootView: View {
       CurrentContentLayout(
         separatesBottom: false
       ) {
-        VStack(spacing: 8) {
-          HStack(spacing: 8) {
-            Text(graphSelectionTitle)
-              .font(.system(.body, design: .monospaced))
+        HStack(spacing: 10) {
+          graphOptionsMenu
+            .fixedSize()
+          Divider()
+            .frame(height: 18)
+          Text(graphSelectionTitle)
+            .font(.system(.callout, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .layoutPriority(1)
+          Spacer(minLength: 4)
+          Picker("Search scope", selection: $graphSearchScope) {
+            ForEach(GraphSearchScope.allCases) { scope in
+              Text(scope.rawValue)
+                .tag(scope)
+            }
+          }
+          .labelsHidden()
+          .frame(width: 108)
+          historySearchField
+          if !graphSearchText.isEmpty {
+            Text(graphSearchCount)
+              .font(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
-              .lineLimit(1)
-              .truncationMode(.middle)
-              .layoutPriority(1)
-            Spacer(minLength: 4)
-            Picker("Search scope", selection: $graphSearchScope) {
-              ForEach(GraphSearchScope.allCases) { scope in
-                Text(scope.rawValue)
-                  .tag(scope)
-              }
-            }
-            .labelsHidden()
-            .frame(width: 108)
-            historySearchField
-            if !graphSearchText.isEmpty {
-              Text(graphSearchCount)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .fixedSize()
-            }
+              .fixedSize()
           }
-          HStack {
-            graphOptionsMenu
-            Spacer()
-            historyCommitActionsMenu
-          }
+          historyCommitActionsMenu
         }
-        .padding(10)
-        .padding(.trailing, 12)
+        .padding(.horizontal, 10)
+        .frame(height: 40)
       } middle: {
-        HSplitView {
+        VSplitView {
           ZStack(alignment: .bottomTrailing) {
             CommitGraphView(
               rows: activeGraphRows,
@@ -3113,11 +3118,16 @@ public struct CurrentRootView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(8)
-                .allowsHitTesting(false)
+              .allowsHitTesting(false)
             }
           }
-          .frame(minWidth: CurrentUILayout.graphMinimumWidth)
-          graphInspector
+          .frame(
+            minWidth: CurrentUILayout.graphMinimumWidth,
+            minHeight: CurrentUILayout.historyGraphMinimumHeight,
+            idealHeight: CurrentUILayout.historyGraphIdealHeight
+          )
+          historyDetailWorkspace
+            .frame(minHeight: CurrentUILayout.historyDetailMinimumHeight)
         }
       } bottom: {
         EmptyView()
@@ -3135,6 +3145,293 @@ public struct CurrentRootView: View {
         guard graphSearchScope == .repository else { return }
         hasSubmittedRepositorySearch = false
         clearRepositoryHistorySearch()
+      }
+    }
+  }
+
+  private var historyDetailWorkspace: some View {
+    HSplitView {
+      VStack(spacing: 0) {
+        historyChangedFilesPane
+          .frame(minHeight: 150, idealHeight: 230)
+        Divider()
+        historySelectionDetailsPane
+          .frame(minHeight: 130)
+      }
+      .frame(
+        minWidth: CurrentUILayout.historyMetadataMinimumWidth,
+        idealWidth: CurrentUILayout.historyMetadataIdealWidth,
+        maxWidth: CurrentUILayout.historyMetadataMaximumWidth
+      )
+
+      embeddedCommitDiffPane
+        .frame(minWidth: CurrentUILayout.diffMinimumWidth)
+    }
+  }
+
+  private var historyChangedFilesPane: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 8) {
+        Label("Changed Files", systemImage: "doc.on.doc")
+          .font(.callout.weight(.semibold))
+        Spacer()
+        if let commitComparison {
+          Text(commitComparison.files.count.formatted())
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(.horizontal, 10)
+      .frame(height: 34)
+      .background(.bar)
+      Divider()
+
+      if isCommitComparisonLoading {
+        ProgressView("Loading changed files…")
+          .controlSize(.small)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if let commitComparison {
+        if commitComparison.files.isEmpty {
+          ContentUnavailableView(
+            "No Changed Files",
+            systemImage: "doc.badge.ellipsis",
+            description: Text("The compared trees are identical.")
+          )
+        } else {
+          ScrollView {
+            LazyVStack(spacing: 2) {
+              ForEach(commitComparison.files) { file in
+                historyFileRow(file, comparison: commitComparison)
+              }
+            }
+            .padding(6)
+          }
+        }
+      } else if isWorkingCopySelected, let status {
+        if status.changes.isEmpty {
+          ContentUnavailableView(
+            "Working Copy Clean",
+            systemImage: "checkmark.circle"
+          )
+        } else {
+          ScrollView {
+            LazyVStack(spacing: 2) {
+              ForEach(status.changes) { change in
+                Button {
+                  workspace = .changes
+                  loadDiff(change)
+                } label: {
+                  HStack(spacing: 8) {
+                    Image(systemName: "ellipsis.rectangle.fill")
+                      .foregroundStyle(.orange)
+                    Text(change.path.displayString)
+                      .lineLimit(1)
+                      .truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Text(change.kind.rawValue)
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                  }
+                  .padding(.horizontal, 7)
+                  .frame(height: 26)
+                  .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+              }
+            }
+            .padding(6)
+          }
+        }
+      } else {
+        ContentUnavailableView(
+          "Select a Commit",
+          systemImage: "point.3.connected.trianglepath.dotted",
+          description: Text("Changed files will appear here.")
+        )
+      }
+    }
+  }
+
+  private func historyFileRow(
+    _ file: CommitFileChange,
+    comparison: CommitComparison
+  ) -> some View {
+    let isSelected =
+      selectedCommitDiffComparison == comparison
+      && selectedCommitDiff?.path == file.path
+    return Button {
+      loadCommitDiff(file, comparison)
+    } label: {
+      HStack(spacing: 8) {
+        Text(file.status)
+          .font(.system(.caption2, design: .monospaced, weight: .bold))
+          .foregroundStyle(comparisonColor(file.kind))
+          .frame(width: 26, alignment: .leading)
+        VStack(alignment: .leading, spacing: 1) {
+          Text(file.path.displayString)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          if let oldPath = file.oldPath {
+            Text("from \(oldPath.displayString)")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+        }
+        Spacer(minLength: 2)
+      }
+      .padding(.horizontal, 7)
+      .frame(minHeight: 27)
+      .background(
+        isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
+        in: RoundedRectangle(cornerRadius: 6)
+      )
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help("View diff for \(file.path.displayString)")
+    .accessibilityLabel("View diff for \(file.path.displayString)")
+  }
+
+  private var historySelectionDetailsPane: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 10) {
+        if selectedGraphRows.isEmpty {
+          VStack(spacing: 7) {
+            Image(systemName: "info.circle")
+              .font(.title2)
+              .foregroundStyle(.secondary)
+            Text("No Commit Selected")
+              .font(.callout.weight(.semibold))
+            Text("Select a row in the graph for commit details.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .multilineTextAlignment(.center)
+          }
+          .frame(maxWidth: .infinity, minHeight: 82)
+        } else if selectedGraphRows.count == 1, let row = selectedGraphRows.first {
+          historyCommitSummary(row)
+        } else {
+          historyComparisonSummary
+        }
+      }
+      .padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .background(.background)
+  }
+
+  @ViewBuilder
+  private func historyCommitSummary(_ row: GraphRow) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: row.isWorkingCopy ? "pencil.circle.fill" : "person.crop.circle.fill")
+        .font(.title)
+        .foregroundStyle(row.isWorkingCopy ? .orange : .secondary)
+      VStack(alignment: .leading, spacing: 3) {
+        Text(row.isWorkingCopy ? "Working Copy" : row.subject)
+          .font(.headline)
+          .lineLimit(3)
+          .textSelection(.enabled)
+        if row.isWorkingCopy {
+          Text(row.subject)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+    if !row.decorations.isEmpty {
+      HStack(spacing: 5) {
+        ForEach(row.decorations, id: \.self) { decoration in
+          Label(decoration.label, systemImage: decorationIcon(decoration.kind))
+            .font(.caption)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+        }
+      }
+    }
+    if let oid = row.commitOID, !row.isWorkingCopy {
+      inspectorField("Commit", value: oid)
+    }
+    if !row.isWorkingCopy {
+      inspectorField(
+        "Author",
+        value: row.authorEmail.isEmpty
+          ? row.author : "\(row.author) <\(row.authorEmail)>"
+      )
+      if let authoredAt = row.authoredAt {
+        inspectorField(
+          "Date",
+          value: authoredAt.formatted(date: .abbreviated, time: .standard)
+        )
+      }
+      inspectorField(
+        "Parents",
+        value:
+          row.parentOIDs.isEmpty
+          ? "Root commit"
+          : row.parentOIDs.map { String($0.prefix(12)) }.joined(separator: ", ")
+      )
+    }
+  }
+
+  @ViewBuilder
+  private var historyComparisonSummary: some View {
+    Text("\(selectedGraphRows.count) commits selected")
+      .font(.headline)
+    if isCommitComparisonLoading {
+      ProgressView("Comparing commits…")
+        .controlSize(.small)
+    } else if let commitComparison {
+      inspectorField("Base", value: commitComparison.baseOID)
+      inspectorField("Target", value: commitComparison.targetOID)
+      Text("\(commitComparison.files.count) changed files")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    } else {
+      Text("Select at least two commits to compare their trees.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var embeddedCommitDiffPane: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 8) {
+        Image(systemName: "doc.text.magnifyingglass")
+          .foregroundStyle(.secondary)
+        Text(selectedCommitDiff?.path.displayString ?? "File Diff")
+          .font(.callout.weight(.semibold))
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .layoutPriority(1)
+        Spacer(minLength: 6)
+        Picker("Diff presentation", selection: $diffPresentation) {
+          Text("Unified").tag(DiffPresentation.unified)
+          Text("Side-by-Side").tag(DiffPresentation.split)
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 154)
+        commitDiffWhitespaceMenu
+      }
+      .padding(.horizontal, 10)
+      .frame(height: 34)
+      .background(.bar)
+      Divider()
+
+      if isCommitDiffLoading {
+        ProgressView("Loading file diff…")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if let selectedCommitDiff {
+        readOnlyDiff(selectedCommitDiff)
+      } else {
+        ContentUnavailableView(
+          "Choose a Changed File",
+          systemImage: "doc.text.magnifyingglass",
+          description: Text("Select a file on the left to inspect its diff.")
+        )
       }
     }
   }
