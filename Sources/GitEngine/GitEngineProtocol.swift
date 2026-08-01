@@ -134,6 +134,7 @@ public protocol GitEngineProtocol: Sendable {
   ) async throws -> RecoveryReference?
   func commitTemplate(at location: RepositoryLocation) async throws -> String?
   func createPatch(at location: RepositoryLocation, commit: String) async throws -> [UInt8]
+  func createPatch(at location: RepositoryLocation, commits: [String]) async throws -> [UInt8]
   func applyPatch(at location: RepositoryLocation, fileURL: URL) async throws
   func diff(
     at location: RepositoryLocation,
@@ -267,6 +268,31 @@ extension GitEngineProtocol {
     commit: String
   ) async throws -> [UInt8] {
     throw GitEngineError.invalidOutput("Patch export is not implemented.")
+  }
+
+  public func createPatch(
+    at location: RepositoryLocation,
+    commits: [String]
+  ) async throws -> [UInt8] {
+    guard !commits.isEmpty, commits.count <= 1_000 else {
+      throw GitEngineError.invalidOutput(
+        "Select between 1 and 1,000 commits to export as a patch."
+      )
+    }
+    guard Set(commits).count == commits.count else {
+      throw GitEngineError.invalidOutput(
+        "The patch selection contains duplicate commits."
+      )
+    }
+    var patch: [UInt8] = []
+    for commit in commits {
+      let next = try await createPatch(at: location, commit: commit)
+      if !patch.isEmpty, patch.last != 0x0A {
+        patch.append(0x0A)
+      }
+      patch.append(contentsOf: next)
+    }
+    return patch
   }
 
   public func applyPatch(

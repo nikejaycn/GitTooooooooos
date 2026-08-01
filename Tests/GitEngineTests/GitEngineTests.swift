@@ -474,6 +474,80 @@ struct GitEngineTests {
     #expect(commands[2].redactedDescription.hasSuffix("\(base) \(target) --"))
   }
 
+  @Test("Commit comparison can target the complete working directory")
+  func commitComparisonAgainstWorkingCopy() async throws {
+    let base = String(repeating: "c", count: 40)
+    var output: [UInt8] = []
+    for field in ["M", "README.md"] {
+      output.append(contentsOf: field.utf8)
+      output.append(0)
+    }
+    let runner = StubRunner(
+      results: [
+        .success("\(base)\n"),
+        GitProcessResult(
+          termination: .exited(0),
+          standardOutput: output,
+          standardError: [],
+          duration: .milliseconds(1)
+        ),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let files = try await engine.compareCommits(
+      at: location,
+      base: base,
+      target: CommitComparisonRevision.workingCopy
+    )
+
+    #expect(files.map(\.path) == [GitPath("README.md")])
+    let commands = await runner.commands()
+    #expect(commands.count == 2)
+    #expect(commands[1].redactedDescription.hasSuffix("\(base) --"))
+    #expect(!commands[1].redactedDescription.contains(CommitComparisonRevision.workingCopy))
+  }
+
+  @Test("Branch cherry-pick resolves and applies only commits missing from HEAD in order")
+  func branchCherryPickRange() async throws {
+    let target = String(repeating: "d", count: 40)
+    let oldest = String(repeating: "e", count: 40)
+    let newest = String(repeating: "f", count: 40)
+    let runner = StubRunner(
+      results: [
+        .success("\(target)\n"),
+        .success("\(oldest)\n\(newest)\n"),
+        .success(""),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    _ = try await engine.mutateHistory(
+      at: location,
+      mutation: .cherryPickRange(revision: "origin/feature/menu")
+    )
+
+    let commands = await runner.commands()
+    #expect(commands.count == 3)
+    #expect(
+      commands[0].redactedDescription
+        == "rev-parse --verify --end-of-options origin/feature/menu^{commit}"
+    )
+    #expect(
+      commands[1].redactedDescription
+        == "rev-list --reverse --topo-order HEAD..\(target)"
+    )
+    #expect(commands[2].redactedDescription == "cherry-pick \(oldest) \(newest)")
+  }
+
   @Test("Commit diff resolves revisions and preserves rename pathspecs")
   func commitDiff() async throws {
     let base = String(repeating: "a", count: 40)
@@ -1076,6 +1150,36 @@ struct GitEngineTests {
     #expect(try runGitOutput(["-C", root.path, "rev-parse", "HEAD"]) == baseOID)
     #expect(try runGitOutput(["-C", root.path, "diff", "--cached", "--name-only"]) == "patch.txt")
     #expect(try String(contentsOf: file, encoding: .utf8) == "after\n")
+  }
+
+  @Test("Multiple commit patch export preserves the requested order")
+  func multiCommitPatchExport() async throws {
+    let oldest = String(repeating: "a", count: 40)
+    let newest = String(repeating: "b", count: 40)
+    let runner = StubRunner(
+      results: [
+        .success("\(oldest)\n"),
+        .success("patch oldest"),
+        .success("\(newest)\n"),
+        .success("patch newest\n"),
+      ]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    let patch = try await engine.createPatch(
+      at: location,
+      commits: ["oldest", "newest"]
+    )
+
+    #expect(String(decoding: patch, as: UTF8.self) == "patch oldest\npatch newest\n")
+    let commands = await runner.commands()
+    #expect(commands.count == 4)
+    #expect(commands[1].redactedDescription == "format-patch --stdout --no-signature -1 \(oldest)")
+    #expect(commands[3].redactedDescription == "format-patch --stdout --no-signature -1 \(newest)")
   }
 
   @Test("Reads a staged file diff through the machine-safe pathspec")

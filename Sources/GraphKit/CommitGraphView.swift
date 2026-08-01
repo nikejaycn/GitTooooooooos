@@ -57,11 +57,25 @@ public struct GraphDisplayConfiguration: Hashable, Sendable {
   }
 }
 
+public indirect enum CommitGraphContextMenuItem {
+  case action(
+    title: String,
+    isEnabled: Bool,
+    perform: () -> Void
+  )
+  case submenu(
+    title: String,
+    items: [CommitGraphContextMenuItem]
+  )
+  case separator
+}
+
 public struct CommitGraphView: NSViewRepresentable {
   private let rows: [GraphRow]
   private let searchQuery: String
   private let onSelection: ([GraphRow]) -> Void
   private let onApproachingEnd: () -> Void
+  private let contextMenuItems: ([GraphRow]) -> [CommitGraphContextMenuItem]
   private let displayConfiguration: GraphDisplayConfiguration
   private let scrollToCommitOID: String?
   private let selectsFirstRowByDefault: Bool
@@ -73,7 +87,8 @@ public struct CommitGraphView: NSViewRepresentable {
     scrollToCommitOID: String? = nil,
     selectsFirstRowByDefault: Bool = false,
     onSelection: @escaping ([GraphRow]) -> Void = { _ in },
-    onApproachingEnd: @escaping () -> Void = {}
+    onApproachingEnd: @escaping () -> Void = {},
+    contextMenuItems: @escaping ([GraphRow]) -> [CommitGraphContextMenuItem] = { _ in [] }
   ) {
     self.rows = rows
     self.searchQuery = searchQuery
@@ -82,6 +97,7 @@ public struct CommitGraphView: NSViewRepresentable {
     self.selectsFirstRowByDefault = selectsFirstRowByDefault
     self.onSelection = onSelection
     self.onApproachingEnd = onApproachingEnd
+    self.contextMenuItems = contextMenuItems
   }
 
   public func makeCoordinator() -> Coordinator {
@@ -89,12 +105,13 @@ public struct CommitGraphView: NSViewRepresentable {
       rows: rows,
       selectsFirstRowByDefault: selectsFirstRowByDefault,
       onSelection: onSelection,
-      onApproachingEnd: onApproachingEnd
+      onApproachingEnd: onApproachingEnd,
+      contextMenuItems: contextMenuItems
     )
   }
 
   public func makeNSView(context: Context) -> NSScrollView {
-    let table = NSTableView()
+    let table = CommitGraphTableView()
     table.usesAlternatingRowBackgroundColors = true
     table.allowsMultipleSelection = true
     table.allowsEmptySelection = true
@@ -103,6 +120,10 @@ public struct CommitGraphView: NSViewRepresentable {
     table.intercellSpacing = NSSize(width: 0, height: 1)
     table.delegate = context.coordinator
     table.dataSource = context.coordinator
+    table.contextMenuProvider = { [weak table, weak coordinator = context.coordinator] row in
+      guard let table, let coordinator else { return nil }
+      return coordinator.contextMenu(clickedRow: row, in: table)
+    }
 
     let graph = NSTableColumn(identifier: .graph)
     graph.title = "Graph"
@@ -145,6 +166,7 @@ public struct CommitGraphView: NSViewRepresentable {
     guard let table = scrollView.documentView as? NSTableView else { return }
     context.coordinator.onSelection = onSelection
     context.coordinator.onApproachingEnd = onApproachingEnd
+    context.coordinator.contextMenuItems = contextMenuItems
     context.coordinator.selectsFirstRowByDefault = selectsFirstRowByDefault
     context.coordinator.apply(rows: rows, to: table)
     context.coordinator.apply(searchQuery: searchQuery, to: table)
@@ -224,24 +246,28 @@ public struct CommitGraphView: NSViewRepresentable {
     var selectsFirstRowByDefault: Bool
     var onSelection: ([GraphRow]) -> Void
     var onApproachingEnd: () -> Void
+    var contextMenuItems: ([GraphRow]) -> [CommitGraphContextMenuItem]
     var displayConfiguration = GraphDisplayConfiguration()
     private var requestedEndForRowCount: Int?
     private var searchQuery = ""
     private var searchedRowCount = 0
     private var lastScrollOID: String?
     private var hasAppliedDefaultSelection = false
+    private var contextMenuActions: [Int: () -> Void] = [:]
     private let dateFormatter: DateFormatter
 
     init(
       rows: [GraphRow],
       selectsFirstRowByDefault: Bool,
       onSelection: @escaping ([GraphRow]) -> Void,
-      onApproachingEnd: @escaping () -> Void
+      onApproachingEnd: @escaping () -> Void,
+      contextMenuItems: @escaping ([GraphRow]) -> [CommitGraphContextMenuItem] = { _ in [] }
     ) {
       self.rows = rows
       self.selectsFirstRowByDefault = selectsFirstRowByDefault
       self.onSelection = onSelection
       self.onApproachingEnd = onApproachingEnd
+      self.contextMenuItems = contextMenuItems
       dateFormatter = DateFormatter()
       dateFormatter.dateStyle = .medium
       dateFormatter.timeStyle = .short
@@ -348,6 +374,60 @@ public struct CommitGraphView: NSViewRepresentable {
           rows.indices.contains(index) ? rows[index] : nil
         }
       )
+    }
+
+    func contextMenu(clickedRow: Int, in tableView: NSTableView) -> NSMenu? {
+      guard rows.indices.contains(clickedRow) else { return nil }
+      let selectedRows = tableView.selectedRowIndexes.compactMap { index in
+        rows.indices.contains(index) ? rows[index] : nil
+      }
+      let descriptors = contextMenuItems(selectedRows)
+      guard !descriptors.isEmpty else { return nil }
+
+      contextMenuActions.removeAll(keepingCapacity: true)
+      let menu = NSMenu()
+      append(descriptors, to: menu)
+      return menu.items.isEmpty ? nil : menu
+    }
+
+    private func append(
+      _ descriptors: [CommitGraphContextMenuItem],
+      to menu: NSMenu
+    ) {
+      for descriptor in descriptors {
+        switch descriptor {
+        case .action(let title, let isEnabled, let perform):
+          let item = NSMenuItem(
+            title: title,
+            action: #selector(performContextMenuAction(_:)),
+            keyEquivalent: ""
+          )
+          let identifier = contextMenuActions.count
+          contextMenuActions[identifier] = perform
+          item.tag = identifier
+          item.target = self
+          item.isEnabled = isEnabled
+          menu.addItem(item)
+        case .submenu(let title, let items):
+          let submenu = NSMenu(title: title)
+          append(items, to: submenu)
+          guard !submenu.items.isEmpty else { continue }
+          let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+          item.submenu = submenu
+          menu.addItem(item)
+        case .separator:
+          if menu.items.last?.isSeparatorItem == false {
+            menu.addItem(.separator())
+          }
+        }
+      }
+      if menu.items.last?.isSeparatorItem == true {
+        menu.removeItem(at: menu.items.count - 1)
+      }
+    }
+
+    @objc private func performContextMenuAction(_ sender: NSMenuItem) {
+      contextMenuActions[sender.tag]?()
     }
 
     func apply(searchQuery newQuery: String, to tableView: NSTableView) {
@@ -462,6 +542,19 @@ public struct CommitGraphView: NSViewRepresentable {
         return ""
       }
     }
+  }
+}
+
+private final class CommitGraphTableView: NSTableView {
+  var contextMenuProvider: ((Int) -> NSMenu?)?
+
+  override func menu(for event: NSEvent) -> NSMenu? {
+    let clickedRow = row(at: convert(event.locationInWindow, from: nil))
+    guard clickedRow >= 0 else { return nil }
+    if !selectedRowIndexes.contains(clickedRow) {
+      selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+    }
+    return contextMenuProvider?(clickedRow)
   }
 }
 

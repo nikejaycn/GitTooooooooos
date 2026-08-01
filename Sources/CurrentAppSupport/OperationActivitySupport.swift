@@ -46,10 +46,12 @@ public enum OperationActivityTitle {
     switch mutation {
     case .create(let name, _, _): "Create branch \(name)"
     case .checkout(let name, _): "Check out \(name)"
+    case .checkoutDetached(let commit, _): "Check out \(commit.prefix(12))"
     case .checkoutRemote(let remoteBranch, let localName, _):
       "Check out \(remoteBranch) as \(localName)"
     case .rename(let oldName, let newName): "Rename \(oldName) to \(newName)"
     case .delete(let name, _): "Delete branch \(name)"
+    case .deleteRemote(let remote, let branch, _): "Delete \(remote)/\(branch)"
     }
   }
 
@@ -124,6 +126,7 @@ public enum OperationActivityTitle {
   public static func title(for mutation: MergeMutation) -> String {
     switch mutation {
     case .start(let branch, _, _, _): "Merge \(branch)"
+    case .fastForward(let branch, _): "Fast-forward to \(branch)"
     case .resolve(let path, let side): "Resolve \(path.displayString) using \(side.rawValue)"
     case .resolveContents(let path, _): "Resolve \(path.displayString)"
     case .continueOperation: "Continue Git operation"
@@ -134,6 +137,8 @@ public enum OperationActivityTitle {
   public static func title(for mutation: HistoryMutation) -> String {
     switch mutation {
     case .cherryPick(let oid): "Cherry-pick \(oid.prefix(12))"
+    case .cherryPickSequence(let commits): "Cherry-pick \(commits.count) commits"
+    case .cherryPickRange(let revision): "Cherry-pick commits from \(revision)"
     case .revert(let oid): "Revert \(oid.prefix(12))"
     case .reset(let target, let mode): "\(mode.rawValue.capitalized) reset to \(target.prefix(12))"
     case .rebase(let onto, _): "Rebase onto \(onto.prefix(12))"

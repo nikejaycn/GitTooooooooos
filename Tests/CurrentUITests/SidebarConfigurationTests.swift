@@ -44,6 +44,39 @@ struct SidebarConfigurationTests {
     )
   }
 
+  @Test("Only exposes the supported sidebar sections")
+  func exposesSupportedSidebarSections() {
+    #expect(
+      SidebarSection.allCases.map(\.rawValue) == [
+        "workspace",
+        "localBranches",
+        "remoteBranches",
+        "tags",
+        "remotes",
+        "worktrees",
+        "submodules",
+        "gitLFS",
+      ]
+    )
+  }
+
+  @Test("Workspace contains only Working Copy and History")
+  func exposesSupportedWorkspaces() {
+    #expect(RepositoryWorkspaceItem.allCases.map(\.title) == ["Working Copy", "History"])
+    #expect(RepositoryWorkspaceItem.allCases.map(\.workspace) == [.changes, .history])
+  }
+
+  @Test("Branch selection survives locating history and clears for another workspace")
+  func synchronizesBranchSelectionWithWorkspace() {
+    let branch = RepositorySidebarSelection.branch("refs/heads/main")
+
+    #expect(branch.synchronizingWorkspace(.history) == branch)
+    #expect(
+      branch.synchronizingWorkspace(.changes)
+        == RepositorySidebarSelection.workspace(.changes)
+    )
+  }
+
   @Test("Maps a remote branch to its local tracking branch name")
   func mapsRemoteCheckoutTarget() throws {
     let remote = GitReference(
@@ -64,6 +97,8 @@ struct SidebarConfigurationTests {
 
     #expect(target.remoteBranch == "origin/feature/accounts/login")
     #expect(target.localName == "feature/accounts/login")
+    #expect(target.remoteName == "origin")
+    #expect(target.branchName == "feature/accounts/login")
   }
 
   @Test("Rejects remote HEAD and references from unknown remotes")

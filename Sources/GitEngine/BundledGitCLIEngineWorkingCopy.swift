@@ -288,7 +288,9 @@ extension BundledGitCLIEngine {
       throw GitEngineError.invalidOutput("A diff path was empty or contained a NUL byte.")
     }
     let baseOID = try await resolveCommit(base, at: location)
-    let targetOID = try await resolveCommit(target, at: location)
+    let targetOID =
+      target == CommitComparisonRevision.workingCopy
+      ? nil : try await resolveCommit(target, at: location)
     var prefix = [
       "diff",
       "--no-ext-diff",
@@ -302,7 +304,7 @@ extension BundledGitCLIEngine {
     if options.ignoresEndOfLineWhitespace {
       prefix.append("--ignore-space-at-eol")
     }
-    prefix += [baseOID, targetOID, "--"]
+    prefix += [baseOID] + (targetOID.map { [$0] } ?? []) + ["--"]
     let result = try await execute(
       GitCommand(
         rawArguments: prefix.map { Array($0.utf8) } + paths.map(\.rawBytes),
@@ -315,7 +317,7 @@ extension BundledGitCLIEngine {
       return try UnifiedDiffParser().parse(
         result.standardOutput,
         path: path,
-        source: .staged
+        source: targetOID == nil ? .unstaged : .staged
       )
     } catch {
       throw GitEngineError.invalidOutput(String(describing: error))
@@ -436,7 +438,9 @@ extension BundledGitCLIEngine {
     target: String
   ) async throws -> [CommitFileChange] {
     let baseOID = try await resolveCommit(base, at: location)
-    let targetOID = try await resolveCommit(target, at: location)
+    let targetOID =
+      target == CommitComparisonRevision.workingCopy
+      ? nil : try await resolveCommit(target, at: location)
     let result = try await execute(
       GitCommand(
         arguments: [
@@ -446,8 +450,8 @@ extension BundledGitCLIEngine {
           "--find-renames",
           "--find-copies",
           baseOID,
-          targetOID,
-          "--",
+        ] + (targetOID.map { [$0] } ?? []) + [
+          "--"
         ],
         workingDirectory: location.worktreeURL,
         outputLimit: 32 * 1024 * 1024,

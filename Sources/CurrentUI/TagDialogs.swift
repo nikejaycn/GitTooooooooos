@@ -11,6 +11,7 @@ struct TagCreationDialogModifier: ViewModifier {
   @Binding var name: String
   @Binding var target: String
   @Binding var message: String
+  let requiresMessage: Bool
   let create: (String, String?, String?) -> Void
 
   func body(content: Content) -> some View {
@@ -27,10 +28,12 @@ struct TagCreationDialogModifier: ViewModifier {
           name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         )
-        Button("Create Lightweight") {
-          create(name, trimmedOrNil(target), nil)
+        if !requiresMessage {
+          Button("Create Lightweight") {
+            create(name, trimmedOrNil(target), nil)
+          }
+          .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         Button("Cancel", role: .cancel) {}
       } message: {
         Text(

@@ -33,6 +33,20 @@ extension BundledGitCLIEngine {
         + (noFastForward ? ["--no-ff"] : [])
         + (autoStash ? ["--autostash"] : [])
         + [targetOID]
+    case .fastForward(let branch, let autoStash):
+      let targetOID = try await resolveCommit(branch, at: location)
+      if !autoStash {
+        try await requireCleanWorkingCopy(at: location)
+      }
+      recovery = try await createRecoveryReference(
+        reason: "fast-forward",
+        kind: .merge,
+        at: location
+      )
+      arguments =
+        ["merge", "--ff-only"]
+        + (autoStash ? ["--autostash"] : [])
+        + [targetOID]
     case .resolve(let path, let side):
       guard !path.rawBytes.isEmpty, !path.rawBytes.contains(0) else {
         throw GitEngineError.invalidOutput("A conflict path was empty or contained a NUL byte.")
@@ -329,6 +343,76 @@ extension BundledGitCLIEngine {
       let oid = try await resolveCommit(commit, at: location)
       let command = GitCommand(
         arguments: ["cherry-pick", oid],
+        workingDirectory: location.worktreeURL,
+        environmentOverrides: ["GIT_EDITOR": "true"],
+        timeout: .seconds(600)
+      )
+      let result = try await runner.run(command)
+      if result.succeeded || operationKind(at: location) == .cherryPick {
+        return nil
+      }
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: command.redactingSecrets(in: result.errorDescription)
+      )
+
+    case .cherryPickSequence(let commits):
+      guard !commits.isEmpty, commits.count <= 1_000 else {
+        throw GitEngineError.invalidOutput(
+          "Select between 1 and 1,000 commits to cherry-pick."
+        )
+      }
+      var seen = Set<String>()
+      var oids: [String] = []
+      oids.reserveCapacity(commits.count)
+      for commit in commits {
+        oids.append(try await resolveCommit(commit, at: location))
+      }
+      guard oids.allSatisfy({ seen.insert($0).inserted }) else {
+        throw GitEngineError.invalidOutput(
+          "The cherry-pick selection contains duplicate commits."
+        )
+      }
+      let command = GitCommand(
+        arguments: ["cherry-pick"] + oids,
+        workingDirectory: location.worktreeURL,
+        environmentOverrides: ["GIT_EDITOR": "true"],
+        timeout: .seconds(600)
+      )
+      let result = try await runner.run(command)
+      if result.succeeded || operationKind(at: location) == .cherryPick {
+        return nil
+      }
+      throw GitEngineError.commandFailed(
+        arguments: command.redactedDescription,
+        message: command.redactingSecrets(in: result.errorDescription)
+      )
+
+    case .cherryPickRange(let revision):
+      let targetOID = try await resolveCommit(revision, at: location)
+      let listResult = try await execute(
+        GitCommand(
+          arguments: [
+            "rev-list", "--reverse", "--topo-order",
+            "HEAD..\(targetOID)",
+          ],
+          workingDirectory: location.worktreeURL,
+          outputLimit: 2 * 1024 * 1024,
+          timeout: .seconds(120)
+        )
+      )
+      let commits = String(decoding: listResult.standardOutput, as: UTF8.self)
+        .split(whereSeparator: \.isNewline)
+        .map(String.init)
+      guard !commits.isEmpty, commits.count <= 1_000 else {
+        throw GitEngineError.invalidOutput(
+          commits.isEmpty
+            ? "The selected branch has no commits to cherry-pick."
+            : "Select a branch with at most 1,000 commits to cherry-pick."
+        )
+      }
+      let command = GitCommand(
+        arguments: ["cherry-pick"] + commits,
         workingDirectory: location.worktreeURL,
         environmentOverrides: ["GIT_EDITOR": "true"],
         timeout: .seconds(600)

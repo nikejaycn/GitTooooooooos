@@ -7,6 +7,11 @@ struct PendingMergeRequest {
   let squash: Bool
 }
 
+struct PendingRemoteBranchDeletion {
+  let reference: GitReference
+  let target: RemoteBranchCheckoutTarget
+}
+
 struct PartialDiscardRequest {
   let document: DiffDocument
   let hunk: DiffHunk
@@ -71,6 +76,61 @@ struct BranchDialogsModifier: ViewModifier {
   }
 }
 
+struct RemoteBranchDeletionDialogModifier: ViewModifier {
+  @Binding var pending: PendingRemoteBranchDeletion?
+  @State private var finalConfirmation: PendingRemoteBranchDeletion?
+  let delete: (String, String, String) -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .confirmationDialog(
+        "Delete remote branch \(pending?.reference.shortName ?? "")?",
+        isPresented: Binding(
+          get: { pending != nil },
+          set: { if !$0 { pending = nil } }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button("Continue") {
+          finalConfirmation = pending
+          pending = nil
+        }
+        Button("Cancel", role: .cancel) {
+          pending = nil
+        }
+      } message: {
+        Text(
+          "This deletes the branch from \(pending?.target.remoteName ?? "the remote") and may affect other collaborators."
+        )
+      }
+      .alert(
+        "Final confirmation: delete remote branch?",
+        isPresented: Binding(
+          get: { finalConfirmation != nil },
+          set: { if !$0 { finalConfirmation = nil } }
+        )
+      ) {
+        Button("Delete Remote Branch", role: .destructive) {
+          if let finalConfirmation {
+            delete(
+              finalConfirmation.target.remoteName,
+              finalConfirmation.target.branchName,
+              finalConfirmation.reference.targetOID
+            )
+          }
+          finalConfirmation = nil
+        }
+        Button("Cancel", role: .cancel) {
+          finalConfirmation = nil
+        }
+      } message: {
+        Text(
+          "GitCurrent uses force-with-lease and refuses deletion if the remote branch changed after the last fetch."
+        )
+      }
+  }
+}
+
 struct PartialDiscardDialogModifier: ViewModifier {
   @Binding var request: PartialDiscardRequest?
   let discardHunk: (DiffDocument, DiffHunk) -> Void
@@ -104,29 +164,6 @@ struct PartialDiscardDialogModifier: ViewModifier {
     } message: {
       Text(
         "GitCurrent stores the original file blob behind a hidden recovery reference. Undo restores it only if the file still matches the post-discard state."
-      )
-    }
-  }
-}
-
-struct HooksConfigurationDialogModifier: ViewModifier {
-  @Binding var isPresented: Bool
-  @Binding var path: String
-  let apply: (String?) -> Void
-
-  func body(content: Content) -> some View {
-    content.alert("Repository Hooks Directory", isPresented: $isPresented) {
-      TextField(".git/hooks or another path", text: $path)
-      Button("Apply") {
-        apply(path)
-      }
-      Button("Use Default") {
-        apply(nil)
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "This writes core.hooksPath only to the current repository. Relative paths are resolved by Git."
       )
     }
   }

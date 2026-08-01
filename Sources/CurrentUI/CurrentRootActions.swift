@@ -101,9 +101,14 @@ extension CurrentRootActions {
     public let setSoloReference: (String?) -> Void
     public let togglePinnedReference: (String) -> Void
     public let compareCommits: ([String]) -> Void
+    public let compareCommitToWorkingCopy: (String) -> Void
     public let exportPatch: (String) -> Void
+    public let exportPatches: ([String]) -> Void
     public let applyPatch: () -> Void
+    public let checkoutCommit: (String) -> Void
     public let cherryPick: (String) -> Void
+    public let cherryPickMany: ([String]) -> Void
+    public let cherryPickBranch: (String) -> Void
     public let revert: (String) -> Void
     public let reset: (String, ResetMode) -> Void
     public let rebase: (String) -> Void
@@ -118,9 +123,14 @@ extension CurrentRootActions {
       setSoloReference: @escaping (String?) -> Void,
       togglePinnedReference: @escaping (String) -> Void,
       compareCommits: @escaping ([String]) -> Void,
+      compareCommitToWorkingCopy: @escaping (String) -> Void,
       exportPatch: @escaping (String) -> Void,
+      exportPatches: @escaping ([String]) -> Void,
       applyPatch: @escaping () -> Void,
+      checkoutCommit: @escaping (String) -> Void,
       cherryPick: @escaping (String) -> Void,
+      cherryPickMany: @escaping ([String]) -> Void,
+      cherryPickBranch: @escaping (String) -> Void,
       revert: @escaping (String) -> Void,
       reset: @escaping (String, ResetMode) -> Void,
       rebase: @escaping (String) -> Void,
@@ -134,9 +144,14 @@ extension CurrentRootActions {
       self.setSoloReference = setSoloReference
       self.togglePinnedReference = togglePinnedReference
       self.compareCommits = compareCommits
+      self.compareCommitToWorkingCopy = compareCommitToWorkingCopy
       self.exportPatch = exportPatch
+      self.exportPatches = exportPatches
       self.applyPatch = applyPatch
+      self.checkoutCommit = checkoutCommit
       self.cherryPick = cherryPick
+      self.cherryPickMany = cherryPickMany
+      self.cherryPickBranch = cherryPickBranch
       self.revert = revert
       self.reset = reset
       self.rebase = rebase
@@ -212,27 +227,36 @@ extension CurrentRootActions {
 
   public struct BranchActions {
     public let create: (String) -> Void
+    public let createAt: (String, String?) -> Void
     public let checkout: (String) -> Void
     public let checkoutRemote: (String, String) -> Void
     public let rename: (String, String) -> Void
     public let delete: (String) -> Void
+    public let deleteRemote: (String, String, String) -> Void
+    public let fastForward: (String) -> Void
     public let merge: (String) -> Void
     public let squashMerge: (String) -> Void
 
     public init(
       create: @escaping (String) -> Void,
+      createAt: @escaping (String, String?) -> Void,
       checkout: @escaping (String) -> Void,
       checkoutRemote: @escaping (String, String) -> Void,
       rename: @escaping (String, String) -> Void,
       delete: @escaping (String) -> Void,
+      deleteRemote: @escaping (String, String, String) -> Void,
+      fastForward: @escaping (String) -> Void,
       merge: @escaping (String) -> Void,
       squashMerge: @escaping (String) -> Void
     ) {
       self.create = create
+      self.createAt = createAt
       self.checkout = checkout
       self.checkoutRemote = checkoutRemote
       self.rename = rename
       self.delete = delete
+      self.deleteRemote = deleteRemote
+      self.fastForward = fastForward
       self.merge = merge
       self.squashMerge = squashMerge
     }
@@ -337,7 +361,6 @@ extension CurrentRootActions {
 
   public struct OperationActions {
     public let performMaintenance: (RepositoryMaintenanceTask) -> Void
-    public let setHooksPath: (String?) -> Void
     public let continueOperation: () -> Void
     public let abortOperation: () -> Void
     public let resolveConflict: (GitPath, ConflictSide) -> Void
@@ -348,7 +371,6 @@ extension CurrentRootActions {
 
     public init(
       performMaintenance: @escaping (RepositoryMaintenanceTask) -> Void,
-      setHooksPath: @escaping (String?) -> Void,
       continueOperation: @escaping () -> Void,
       abortOperation: @escaping () -> Void,
       resolveConflict: @escaping (GitPath, ConflictSide) -> Void,
@@ -358,7 +380,6 @@ extension CurrentRootActions {
       undoLastOperation: @escaping () -> Void
     ) {
       self.performMaintenance = performMaintenance
-      self.setHooksPath = setHooksPath
       self.continueOperation = continueOperation
       self.abortOperation = abortOperation
       self.resolveConflict = resolveConflict

@@ -42,6 +42,7 @@ public struct GitHooksState: Hashable, Sendable, Codable {
 
 public enum MergeMutation: Hashable, Sendable {
   case start(branch: String, squash: Bool, noFastForward: Bool, autoStash: Bool)
+  case fastForward(branch: String, autoStash: Bool)
   case resolve(path: GitPath, side: ConflictSide)
   case resolveContents(path: GitPath, contents: [UInt8])
   case continueOperation

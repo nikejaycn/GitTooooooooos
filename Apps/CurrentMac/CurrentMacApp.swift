@@ -136,7 +136,7 @@ private struct CurrentWorkspaceWindow: View {
       minWidth: CurrentUILayout.minimumWindowWidth,
       minHeight: CurrentUILayout.minimumWindowHeight
     )
-    .preferredColorScheme(model.appearance.colorScheme)
+    .preferredColorScheme(settingsModel.appearance.colorScheme)
     .onOpenURL(perform: model.openRepositoryURL)
     .onChange(of: model.repositoryPath) { _, repositoryPath in
       if workspace == nil {
@@ -187,7 +187,6 @@ private struct CurrentWorkspaceWindow: View {
         worktrees: model.worktrees,
         submodules: model.submodules,
         gitLFS: model.gitLFS,
-        gitHooks: model.gitHooks,
         activities: model.activities,
         recentRepositories: model.recentRepositories,
         lastRecoveryReference: model.lastRecoveryReference,
@@ -257,9 +256,14 @@ private struct CurrentWorkspaceWindow: View {
         setSoloReference: model.setSoloGraphReference,
         togglePinnedReference: model.togglePinnedGraphReference,
         compareCommits: model.compareSelectedCommits,
+        compareCommitToWorkingCopy: model.compareCommitToWorkingCopy,
         exportPatch: model.exportPatch,
+        exportPatches: model.exportPatch,
         applyPatch: model.choosePatchToApply,
+        checkoutCommit: model.checkoutCommit,
         cherryPick: model.cherryPick,
+        cherryPickMany: model.cherryPick,
+        cherryPickBranch: model.cherryPickBranch,
         revert: model.revert,
         reset: model.reset,
         rebase: model.rebase,
@@ -289,10 +293,13 @@ private struct CurrentWorkspaceWindow: View {
       ),
       branches: .init(
         create: model.createBranch,
+        createAt: model.createBranch,
         checkout: model.checkoutBranch,
         checkoutRemote: model.checkoutRemoteBranch,
         rename: model.renameBranch,
         delete: model.deleteBranch,
+        deleteRemote: model.deleteRemoteBranch,
+        fastForward: model.fastForwardBranch,
         merge: model.mergeBranch,
         squashMerge: model.squashMergeBranch
       ),
@@ -329,7 +336,6 @@ private struct CurrentWorkspaceWindow: View {
       ),
       operations: .init(
         performMaintenance: model.performMaintenance,
-        setHooksPath: model.setHooksPath,
         continueOperation: model.continueOperation,
         abortOperation: model.abortOperation,
         resolveConflict: model.resolveConflict,

@@ -606,20 +606,40 @@ final class AppModel {
   }
 
   func compareSelectedCommits(_ commitOIDs: [String]) {
+    guard
+      commitOIDs.count >= 2
+    else {
+      return
+    }
+
+    compareCommitRange(
+      baseOID: commitOIDs[commitOIDs.count - 1],
+      targetOID: commitOIDs[0]
+    )
+  }
+
+  func compareCommitToWorkingCopy(_ commitOID: String) {
+    compareCommitRange(
+      baseOID: commitOID,
+      targetOID: CommitComparisonRevision.workingCopy
+    )
+  }
+
+  private func compareCommitRange(
+    baseOID: String,
+    targetOID: String
+  ) {
     clearCommitDiff()
     commitComparisonRequest.cancel()
     historySession.clearComparison()
 
     guard
-      commitOIDs.count >= 2,
       let repository,
       let generation = repositoryStatus?.generation
     else {
       return
     }
 
-    let baseOID = commitOIDs[commitOIDs.count - 1]
-    let targetOID = commitOIDs[0]
     let sessionID = repositorySessionID
     historySession.beginComparison()
     commitComparisonRequest.start { [weak self] requestID in
@@ -698,16 +718,24 @@ final class AppModel {
   }
 
   func exportPatch(_ commitOID: String) {
+    exportPatch([commitOID])
+  }
+
+  func exportPatch(_ commitOIDs: [String]) {
     guard let repository else { return }
+    guard !commitOIDs.isEmpty else { return }
     let panel = NSSavePanel()
     panel.allowedContentTypes = [.data]
-    panel.nameFieldStringValue = "\(String(commitOID.prefix(12))).patch"
+    panel.nameFieldStringValue =
+      commitOIDs.count == 1
+      ? "\(String(commitOIDs[0].prefix(12))).patch"
+      : "\(commitOIDs.count)-commits.patch"
     panel.canCreateDirectories = true
     guard panel.runModal() == .OK, let destination = panel.url else { return }
     let activityID = beginActivity("Export patch")
     Task {
       do {
-        let bytes = try await repository.createPatch(commit: commitOID)
+        let bytes = try await repository.createPatch(commits: commitOIDs)
         try Data(bytes).write(to: destination, options: .atomic)
         finishActivity(activityID, state: .succeeded)
       } catch {
@@ -949,11 +977,19 @@ final class AppModel {
   }
 
   func createBranch(_ name: String) {
-    applyBranch(.create(name: name, startPoint: nil, checkout: true))
+    createBranch(name, startPoint: nil)
+  }
+
+  func createBranch(_ name: String, startPoint: String?) {
+    applyBranch(.create(name: name, startPoint: startPoint, checkout: true))
   }
 
   func checkoutBranch(_ name: String) {
     applyBranch(.checkout(name: name, autoStash: autoStashEnabled))
+  }
+
+  func checkoutCommit(_ oid: String) {
+    applyBranch(.checkoutDetached(commit: oid, autoStash: autoStashEnabled))
   }
 
   func checkoutRemoteBranch(remoteBranch: String, localName: String) {
@@ -974,12 +1010,35 @@ final class AppModel {
     applyBranch(.delete(name: name, force: false))
   }
 
+  func deleteRemoteBranch(
+    remote: String,
+    branch: String,
+    expectedOID: String
+  ) {
+    applyBranch(
+      .deleteRemote(
+        remote: remote,
+        branch: branch,
+        expectedOID: expectedOID
+      )
+    )
+  }
+
   func mergeBranch(_ name: String) {
     applyMerge(
       .start(
         branch: name,
         squash: false,
         noFastForward: false,
+        autoStash: autoStashEnabled
+      )
+    )
+  }
+
+  func fastForwardBranch(_ name: String) {
+    applyMerge(
+      .fastForward(
+        branch: name,
         autoStash: autoStashEnabled
       )
     )
@@ -1269,6 +1328,19 @@ final class AppModel {
 
   func cherryPick(_ oid: String) {
     applyHistory(.cherryPick(commit: oid))
+  }
+
+  func cherryPick(_ oids: [String]) {
+    guard !oids.isEmpty else { return }
+    if oids.count == 1, let oid = oids.first {
+      cherryPick(oid)
+    } else {
+      applyHistory(.cherryPickSequence(commits: oids))
+    }
+  }
+
+  func cherryPickBranch(_ revision: String) {
+    applyHistory(.cherryPickRange(revision: revision))
   }
 
   func revert(_ oid: String) {

@@ -1,5 +1,9 @@
 import Foundation
 
+public enum CommitComparisonRevision {
+  public static let workingCopy = "__GITCURRENT_WORKING_COPY__"
+}
+
 public enum ResetMode: String, Hashable, Sendable, Codable {
   case soft
   case mixed
@@ -8,6 +12,8 @@ public enum ResetMode: String, Hashable, Sendable, Codable {
 
 public enum HistoryMutation: Hashable, Sendable {
   case cherryPick(commit: String)
+  case cherryPickSequence(commits: [String])
+  case cherryPickRange(revision: String)
   case revert(commit: String)
   case reset(target: String, mode: ResetMode)
   case rebase(onto: String, autoStash: Bool)

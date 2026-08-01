@@ -42,17 +42,19 @@ struct CurrentToolbarContent: ToolbarContent {
   let send: (CurrentToolbarEvent) -> Void
 
   var body: some ToolbarContent {
-    ToolbarItem(placement: .navigation) {
-      Button {
-        send(.toggleSidebar)
-      } label: {
-        Label(
-          model.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
-          systemImage: "sidebar.left"
-        )
+    if model.hasRepository {
+      ToolbarItem(placement: .navigation) {
+        Button {
+          send(.toggleSidebar)
+        } label: {
+          Label(
+            model.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+            systemImage: "sidebar.left"
+          )
+        }
+        .help(model.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+        .keyboardShortcut("s", modifiers: [.control, .command])
       }
-      .help(model.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
-      .keyboardShortcut("s", modifiers: [.control, .command])
     }
 
     ToolbarItemGroup {

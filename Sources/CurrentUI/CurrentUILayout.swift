@@ -11,6 +11,9 @@ public enum CurrentUILayout {
   static let sidebarMinimumWidth: CGFloat = 180
   static let sidebarIdealWidth: CGFloat = 220
   static let sidebarMaximumWidth: CGFloat = 420
+  static let repositoryWelcomeHeaderHeight: CGFloat = 260
+  static let repositoryWelcomeMinimumListHeight: CGFloat = 240
+  static let repositoryWelcomeContentMaximumWidth: CGFloat = 1_080
   static let workingCopyListMinimumWidth: CGFloat = 230
   static let workingCopyListIdealWidth: CGFloat = 300
   static let workingCopyListMaximumWidth: CGFloat = 520

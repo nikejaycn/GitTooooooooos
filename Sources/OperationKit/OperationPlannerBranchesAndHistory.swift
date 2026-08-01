@@ -13,6 +13,9 @@ extension OperationPlanner {
     let impact: WorkingTreeImpact
     let affectedRefs: [String]
     let preconditions: [String]
+    var remoteImpact = RemoteImpact.none
+    var risk = OperationRisk.localSafe
+    var recovery = RecoveryStrategy.none
 
     switch mutation {
     case .create(let name, let startPoint, let checkout):
@@ -77,6 +80,49 @@ extension OperationPlanner {
       affectedRefs = ["HEAD", "refs/heads/\(name)"]
       preconditions = [
         "The target branch exists",
+        autoStash
+          ? "When changes exist, a unique stash OID is verified before switching and restored by OID"
+          : "The working copy permits checkout without auto-stash",
+      ]
+    case .checkoutDetached(let commit, let autoStash):
+      kind = "branch.checkout-detached"
+      title = "Check out commit"
+      let switchCommand = GitCommand(
+        arguments: ["switch", "--detach", commit],
+        workingDirectory: location.worktreeURL
+      )
+      if autoStash {
+        commands = [
+          .git(
+            GitCommand(
+              arguments: [
+                "stash", "push", "--include-untracked", "-m",
+                "<checkout-auto-stash-id>",
+              ],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+          .git(switchCommand),
+          .git(
+            GitCommand(
+              arguments: ["stash", "apply", "--index", "<auto-stash-oid>"],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+          .git(
+            GitCommand(
+              arguments: ["stash", "drop", "<auto-stash-selector>"],
+              workingDirectory: location.worktreeURL
+            )
+          ),
+        ]
+      } else {
+        commands = [.git(switchCommand)]
+      }
+      impact = .indexAndWorktree
+      affectedRefs = ["HEAD"]
+      preconditions = [
+        "The target resolves to a commit",
         autoStash
           ? "When changes exist, a unique stash OID is verified before switching and restored by OID"
           : "The working copy permits checkout without auto-stash",
@@ -157,6 +203,33 @@ extension OperationPlanner {
       impact = .none
       affectedRefs = ["refs/heads/\(name)"]
       preconditions = ["Git verifies the branch is fully merged before deletion"]
+    case .deleteRemote(let remote, let branch, _):
+      let fullName = "refs/heads/\(branch)"
+      kind = "branch.delete.remote"
+      title = "Delete remote branch"
+      commands = [
+        .git(
+          GitCommand(
+            arguments: [
+              "push",
+              "--force-with-lease=\(fullName):<remote-branch-oid>",
+              "--delete",
+              remote,
+              fullName,
+            ],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      impact = .none
+      affectedRefs = [fullName]
+      preconditions = [
+        "The branch and remote names pass Git validation",
+        "The remote branch still matches the inspected commit",
+      ]
+      remoteImpact = .destructiveUpdate
+      risk = .remoteDestructive
+      recovery = .remoteLease(remote: remote, branch: fullName)
     }
 
     return try OperationPlan(
@@ -167,7 +240,9 @@ extension OperationPlanner {
       commands: commands,
       affectedRefs: affectedRefs,
       workingTreeImpact: impact,
-      risk: .localSafe
+      remoteImpact: remoteImpact,
+      risk: risk,
+      recoveryStrategy: recovery
     )
   }
 
@@ -189,6 +264,23 @@ extension OperationPlanner {
       (kind, title, arguments, risk, recovery, impact) =
         (
           "history.cherry-pick", "Cherry-pick commit", ["cherry-pick", commit],
+          .localSafe, .none, .indexAndWorktree
+        )
+    case .cherryPickSequence(let commits):
+      guard !commits.isEmpty else {
+        throw OperationPlanningError.emptyHistorySelection
+      }
+      (kind, title, arguments, risk, recovery, impact) =
+        (
+          "history.cherry-pick-sequence", "Cherry-pick \(commits.count) commits",
+          ["cherry-pick"] + commits,
+          .localSafe, .none, .indexAndWorktree
+        )
+    case .cherryPickRange(let revision):
+      (kind, title, arguments, risk, recovery, impact) =
+        (
+          "history.cherry-pick-range", "Cherry-pick branch commits",
+          ["cherry-pick", "<commits-in-HEAD..\(revision)>"],
           .localSafe, .none, .indexAndWorktree
         )
     case .revert(let commit):

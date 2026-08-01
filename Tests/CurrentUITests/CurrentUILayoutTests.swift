@@ -57,7 +57,7 @@ struct CurrentUILayoutTests {
     #expect(
       CurrentUILayout.historyGraphMinimumHeight
         < CurrentUILayout.minimumWindowHeight
-          - CurrentUILayout.historyDetailMinimumHeight
+        - CurrentUILayout.historyDetailMinimumHeight
     )
     #expect(
       CurrentUILayout.historyChangedFilesMinimumHeight
@@ -70,8 +70,8 @@ struct CurrentUILayoutTests {
     #expect(
       CurrentUILayout.historyDetailMinimumHeight
         == CurrentUILayout.historyChangedFilesMinimumHeight
-          + CurrentUILayout.historyCommitDetailsMinimumHeight
-          + CurrentUILayout.splitViewDividerAllowance
+        + CurrentUILayout.historyCommitDetailsMinimumHeight
+        + CurrentUILayout.splitViewDividerAllowance
     )
   }
 
@@ -89,6 +89,37 @@ struct CurrentUILayoutTests {
       CurrentUILayout.operationConflictListMaximumHeight
         + CurrentUILayout.commitEditorMaximumHeight
         <= CurrentUILayout.minimumWindowHeight * 0.35
+    )
+  }
+
+  @Test("Repository selection omits the sidebar")
+  func repositorySelectionOmitsSidebar() {
+    #expect(
+      !CurrentRootPresentation.showsSidebar(
+        hasRepository: false,
+        isSidebarVisible: true
+      )
+    )
+    #expect(
+      CurrentRootPresentation.showsSidebar(
+        hasRepository: true,
+        isSidebarVisible: true
+      )
+    )
+    #expect(
+      !CurrentRootPresentation.showsSidebar(
+        hasRepository: true,
+        isSidebarVisible: false
+      )
+    )
+  }
+
+  @Test("Repository selection reserves adaptive list height")
+  func repositorySelectionLayoutBudget() {
+    #expect(
+      CurrentUILayout.repositoryWelcomeHeaderHeight
+        + CurrentUILayout.repositoryWelcomeMinimumListHeight
+        <= CurrentUILayout.minimumWindowHeight
     )
   }
 }

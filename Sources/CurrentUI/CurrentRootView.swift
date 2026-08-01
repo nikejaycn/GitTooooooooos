@@ -3,6 +3,15 @@ import DiffKit
 import GraphKit
 import SwiftUI
 
+enum CurrentRootPresentation {
+  static func showsSidebar(
+    hasRepository: Bool,
+    isSidebarVisible: Bool
+  ) -> Bool {
+    hasRepository && isSidebarVisible
+  }
+}
+
 public struct CurrentRootView: View {
   @Environment(\.openSettings) private var openSettings
 
@@ -15,19 +24,21 @@ public struct CurrentRootView: View {
   private let actions: CurrentRootActions
   @State private var workspace: CurrentWorkspace = .history
   @State private var isSidebarVisible = true
-  @State private var isConfiguringHooks = false
-  @State private var hooksPathDraft = ""
   @State private var graphJumpOID: String?
   @State private var newBranchName = ""
+  @State private var newBranchStartPoint: String?
   @State private var isCreatingBranch = false
   @State private var branchToRename: GitReference?
   @State private var renamedBranchName = ""
   @State private var pendingBranchDeletion: GitReference?
+  @State private var pendingRemoteBranchDeletion: PendingRemoteBranchDeletion?
   @State private var pendingMergeRequest: PendingMergeRequest?
+  @State private var pendingFastForwardBranch: String?
   @State private var isCreatingTag = false
   @State private var newTagName = ""
   @State private var newTagTarget = ""
   @State private var newTagMessage = ""
+  @State private var requiresAnnotatedTagMessage = false
   @State private var pendingTagDeletion: GitReference?
   @State private var pendingRemoteTagDeletion: PendingRemoteTagDeletion?
   @State private var isCreatingWorktree = false
@@ -80,7 +91,6 @@ public struct CurrentRootView: View {
   private var worktrees: [GitWorktree] { state.repository.worktrees }
   private var submodules: [GitSubmodule] { state.repository.submodules }
   private var gitLFS: GitLFSRepositoryState { state.repository.gitLFS }
-  private var gitHooks: GitHooksState { state.repository.gitHooks }
   private var activities: [OperationActivity] { state.repository.activities }
   private var recentRepositories: [RecentRepository] { state.repository.recentRepositories }
   private var lastRecoveryReference: RecoveryReference? {
@@ -121,7 +131,8 @@ public struct CurrentRootView: View {
       worktrees: worktrees,
       submodules: submodules,
       gitLFS: gitLFS,
-      gitHooks: gitHooks
+      pinnedGraphReferences: pinnedGraphReferences,
+      soloGraphReference: soloGraphReference
     )
   }
   private var toolbarModel: CurrentToolbarModel {
@@ -158,6 +169,12 @@ public struct CurrentRootView: View {
   private var revert: (String) -> Void { actions.history.revert }
   private var reset: (String, ResetMode) -> Void { actions.history.reset }
   private var rebase: (String) -> Void { actions.history.rebase }
+  private var togglePinnedGraphReference: (String) -> Void {
+    actions.history.togglePinnedReference
+  }
+  private var setSoloGraphReference: (String?) -> Void {
+    actions.history.setSoloReference
+  }
   private var loadInteractiveRebase: (String) async throws -> InteractiveRebasePlan {
     actions.history.loadInteractiveRebase
   }
@@ -174,13 +191,17 @@ public struct CurrentRootView: View {
   private var setDiffOptions: (DiffOptions) -> Void { actions.diff.setOptions }
   private var loadFileInsights: (GitPath) -> Void { actions.diff.loadFileInsights }
 
-  private var createBranch: (String) -> Void { actions.branches.create }
+  private var createBranchAt: (String, String?) -> Void { actions.branches.createAt }
   private var checkoutBranch: (String) -> Void { actions.branches.checkout }
   private var checkoutRemoteBranch: (String, String) -> Void {
     actions.branches.checkoutRemote
   }
   private var renameBranch: (String, String) -> Void { actions.branches.rename }
   private var deleteBranch: (String) -> Void { actions.branches.delete }
+  private var deleteRemoteBranch: (String, String, String) -> Void {
+    actions.branches.deleteRemote
+  }
+  private var fastForwardBranch: (String) -> Void { actions.branches.fastForward }
   private var mergeBranch: (String) -> Void { actions.branches.merge }
   private var squashMergeBranch: (String) -> Void { actions.branches.squashMerge }
 
@@ -218,7 +239,6 @@ public struct CurrentRootView: View {
   private var performMaintenance: (RepositoryMaintenanceTask) -> Void {
     actions.operations.performMaintenance
   }
-  private var setHooksPath: (String?) -> Void { actions.operations.setHooksPath }
   private var continueOperation: () -> Void { actions.operations.continueOperation }
   private var abortOperation: () -> Void { actions.operations.abortOperation }
   private var resolveConflict: (GitPath, ConflictSide) -> Void {
@@ -252,7 +272,10 @@ public struct CurrentRootView: View {
 
   public var body: some View {
     HSplitView {
-      if isSidebarVisible {
+      if CurrentRootPresentation.showsSidebar(
+        hasRepository: status != nil,
+        isSidebarVisible: isSidebarVisible
+      ) {
         RepositorySidebarView(
           selection: $workspace,
           model: repositorySidebarModel,
@@ -272,12 +295,16 @@ public struct CurrentRootView: View {
         .alert("Create Branch", isPresented: $isCreatingBranch) {
           TextField("Branch name", text: $newBranchName)
           Button("Create and Check Out") {
-            createBranch(newBranchName)
+            createBranchAt(newBranchName, newBranchStartPoint)
           }
           .disabled(newBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
           Button("Cancel", role: .cancel) {}
         } message: {
-          Text("The new branch starts at the current HEAD.")
+          Text(
+            newBranchStartPoint.map {
+              "The new branch starts at commit \(String($0.prefix(12)))."
+            } ?? "The new branch starts at the current HEAD."
+          )
         }
         .modifier(
           BranchDialogsModifier(
@@ -289,12 +316,40 @@ public struct CurrentRootView: View {
           )
         )
         .modifier(
+          RemoteBranchDeletionDialogModifier(
+            pending: $pendingRemoteBranchDeletion,
+            delete: deleteRemoteBranch
+          )
+        )
+        .modifier(
           MergeStartDialogModifier(
             request: $pendingMergeRequest,
             merge: mergeBranch,
             squashMerge: squashMergeBranch
           )
         )
+        .confirmationDialog(
+          "Fast-forward current branch?",
+          isPresented: Binding(
+            get: { pendingFastForwardBranch != nil },
+            set: { if !$0 { pendingFastForwardBranch = nil } }
+          ),
+          titleVisibility: .visible
+        ) {
+          Button("Fast-forward") {
+            if let pendingFastForwardBranch {
+              fastForwardBranch(pendingFastForwardBranch)
+            }
+            pendingFastForwardBranch = nil
+          }
+          Button("Cancel", role: .cancel) {
+            pendingFastForwardBranch = nil
+          }
+        } message: {
+          Text(
+            "GitCurrent requires a true fast-forward and preserves the current HEAD in a hidden recovery reference."
+          )
+        }
         .alert("Create Worktree", isPresented: $isCreatingWorktree) {
           TextField("New branch name", text: $newWorktreeBranch)
           TextField("Start point (optional, defaults to HEAD)", text: $newWorktreeStartPoint)
@@ -312,13 +367,6 @@ public struct CurrentRootView: View {
         } message: {
           Text("GitCurrent creates a new branch and checks it out in a separate folder.")
         }
-        .modifier(
-          HooksConfigurationDialogModifier(
-            isPresented: $isConfiguringHooks,
-            path: $hooksPathDraft,
-            apply: setHooksPath
-          )
-        )
         .alert("Add Submodule", isPresented: $isAddingSubmodule) {
           TextField("Remote URL", text: $newSubmoduleURL)
           TextField("Repository-relative path", text: $newSubmodulePath)
@@ -421,6 +469,7 @@ public struct CurrentRootView: View {
             name: $newTagName,
             target: $newTagTarget,
             message: $newTagMessage,
+            requiresMessage: requiresAnnotatedTagMessage,
             create: createTag
           )
         )
@@ -563,8 +612,6 @@ public struct CurrentRootView: View {
   @ViewBuilder
   private func workspaceContent(_ status: RepositoryStatus) -> some View {
     switch workspace {
-    case .gitflow:
-      gitflowWorkspace
     case .changes:
       WorkingCopyWorkspace(
         status: status,
@@ -584,6 +631,7 @@ public struct CurrentRootView: View {
       HistoryWorkspace(
         status: status,
         references: references,
+        remotes: remotes,
         isLoading: isLoading,
         state: state.history,
         diffState: state.diff,
@@ -598,27 +646,10 @@ public struct CurrentRootView: View {
         openFileInsights: openFileInsights,
         requestInteractiveRebase: { oid in
           pendingInteractiveRebaseOID = oid
-        }
-      )
-    case .pullRequests:
-      hostedServicePlaceholder(
-        title: "Pull Requests",
-        systemImage: "arrow.triangle.pull",
-        description: "Connect a GitHub account to review pull requests for this repository."
-      )
-    case .branchReview:
-      branchReviewWorkspace
-    case .issues:
-      hostedServicePlaceholder(
-        title: "Issues",
-        systemImage: "record.circle",
-        description: "Connect a GitHub account to browse and manage repository issues."
-      )
-    case .actions:
-      hostedServicePlaceholder(
-        title: "GitHub Actions",
-        systemImage: "play.square.stack",
-        description: "Connect a GitHub account to inspect workflow runs and checks."
+        },
+        requestCreateBranchAtCommit: prepareNewBranch,
+        requestCreateWorktreeAtCommit: prepareNewWorktree,
+        requestCreateTagAtCommit: prepareNewTag
       )
     case .fileHistory:
       FileInsightsWorkspace(
@@ -637,78 +668,6 @@ public struct CurrentRootView: View {
       )
     case .operations:
       OperationConsoleView(activities: activities)
-    }
-  }
-
-  private var gitflowWorkspace: some View {
-    ContentUnavailableView {
-      Label("Gitflow", systemImage: "arrow.triangle.branch")
-    } description: {
-      Text(
-        "Use the existing branch tools to start feature, release, and hotfix branches. "
-          + "Repository-specific Gitflow initialization is not configured."
-      )
-    } actions: {
-      Button("Create Branch…") {
-        newBranchName = ""
-        isCreatingBranch = true
-      }
-      .disabled(status == nil || isLoading)
-    }
-  }
-
-  private func hostedServicePlaceholder(
-    title: String,
-    systemImage: String,
-    description: String
-  ) -> some View {
-    ContentUnavailableView {
-      Label(title, systemImage: systemImage)
-    } description: {
-      Text(description)
-    } actions: {
-      Button("Open Settings…") {
-        openSettings()
-      }
-    }
-  }
-
-  private var branchReviewWorkspace: some View {
-    HSplitView {
-      List {
-        Section("Local Branches") {
-          ForEach(references.filter { $0.kind == .localBranch }) { reference in
-            RepositoryBranchRow(
-              reference: reference,
-              displayName: reference.shortName,
-              remoteNames: remotes.map(\.name),
-              isLoading: isLoading,
-              send: handleRepositorySidebarEvent
-            )
-          }
-        }
-        Section("Remote Branches") {
-          ForEach(references.filter { $0.kind == .remoteBranch }) { reference in
-            RepositoryBranchRow(
-              reference: reference,
-              displayName: reference.shortName,
-              remoteNames: remotes.map(\.name),
-              isLoading: isLoading,
-              send: handleRepositorySidebarEvent
-            )
-          }
-        }
-      }
-      .frame(minWidth: 260, idealWidth: 320)
-
-      ContentUnavailableView(
-        "Select a Branch",
-        systemImage: "arrow.triangle.branch",
-        description: Text(
-          "Choose a branch to check it out, merge it, compare it, or open its history."
-        )
-      )
-      .frame(minWidth: 360)
     }
   }
 
@@ -735,6 +694,7 @@ public struct CurrentRootView: View {
       pull(strategy)
     case .createBranch:
       newBranchName = ""
+      newBranchStartPoint = nil
       isCreatingBranch = true
     case .stash:
       beginCreatingStash(paths: [])
@@ -782,6 +742,37 @@ public struct CurrentRootView: View {
       branchToRename = reference
     case .deleteBranch(let reference):
       pendingBranchDeletion = reference
+    case .deleteRemoteBranch(let reference):
+      guard
+        let target = RemoteBranchCheckoutTarget(
+          reference: reference,
+          remoteNames: remotes.map(\.name)
+        )
+      else {
+        return
+      }
+      pendingRemoteBranchDeletion = PendingRemoteBranchDeletion(
+        reference: reference,
+        target: target
+      )
+    case .createBranchAt(let reference):
+      prepareNewBranch(at: reference.targetOID)
+    case .createWorktreeAt(let reference):
+      prepareNewWorktree(at: reference.targetOID)
+    case .fastForwardBranch(let reference):
+      pendingFastForwardBranch = reference.shortName
+    case .rebaseOntoBranch(let reference):
+      rebase(reference.shortName)
+    case .cherryPickBranch(let reference):
+      actions.history.cherryPickBranch(reference.shortName)
+    case .compareBranchToWorkingCopy(let reference):
+      actions.history.compareCommitToWorkingCopy(reference.targetOID)
+    case .createTagAt(let reference, let annotated):
+      prepareNewTag(reference.targetOID, annotated: annotated)
+    case .togglePinnedBranch(let reference):
+      togglePinnedGraphReference(reference.shortName)
+    case .setSoloBranch(let reference):
+      setSoloGraphReference(reference?.shortName)
     case .createTag:
       prepareNewTag()
     case .pushTag(let reference, let remote):
@@ -844,9 +835,6 @@ public struct CurrentRootView: View {
       pullLFS()
     case .pruneLFS:
       isConfirmingLFSPrune = true
-    case .configureHooks:
-      hooksPathDraft = gitHooks.configuredPath ?? ""
-      isConfiguringHooks = true
     }
   }
 
@@ -867,10 +855,27 @@ public struct CurrentRootView: View {
   }
 
   private func prepareNewTag() {
+    prepareNewTag(selectedCommitOID ?? "", annotated: false)
+  }
+
+  private func prepareNewTag(_ oid: String, annotated: Bool) {
     newTagName = ""
-    newTagTarget = selectedCommitOID ?? ""
+    newTagTarget = oid
     newTagMessage = ""
+    requiresAnnotatedTagMessage = annotated
     isCreatingTag = true
+  }
+
+  private func prepareNewBranch(at oid: String) {
+    newBranchName = ""
+    newBranchStartPoint = oid
+    isCreatingBranch = true
+  }
+
+  private func prepareNewWorktree(at oid: String) {
+    newWorktreeBranch = ""
+    newWorktreeStartPoint = oid
+    isCreatingWorktree = true
   }
 
   private func beginEditingRemote(_ remote: GitRemote?) {
@@ -1003,6 +1008,7 @@ public struct CurrentRootView: View {
         isEnabled: status != nil && !isLoading
       ) {
         newBranchName = ""
+        newBranchStartPoint = nil
         isCreatingBranch = true
       },
       CommandPaletteAction(

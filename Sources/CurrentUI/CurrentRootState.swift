@@ -40,7 +40,6 @@ extension CurrentRootState {
     public let worktrees: [GitWorktree]
     public let submodules: [GitSubmodule]
     public let gitLFS: GitLFSRepositoryState
-    public let gitHooks: GitHooksState
     public let activities: [OperationActivity]
     public let recentRepositories: [RecentRepository]
     public let lastRecoveryReference: RecoveryReference?
@@ -59,7 +58,6 @@ extension CurrentRootState {
       worktrees: [GitWorktree],
       submodules: [GitSubmodule],
       gitLFS: GitLFSRepositoryState,
-      gitHooks: GitHooksState,
       activities: [OperationActivity],
       recentRepositories: [RecentRepository],
       lastRecoveryReference: RecoveryReference?,
@@ -77,7 +75,6 @@ extension CurrentRootState {
       self.worktrees = worktrees
       self.submodules = submodules
       self.gitLFS = gitLFS
-      self.gitHooks = gitHooks
       self.activities = activities
       self.recentRepositories = recentRepositories
       self.lastRecoveryReference = lastRecoveryReference

@@ -6,13 +6,10 @@ public enum SidebarSection: String, CaseIterable, Codable, Hashable, Identifiabl
   case localBranches
   case remoteBranches
   case tags
-  case github
-  case tools
   case remotes
   case worktrees
   case submodules
   case gitLFS
-  case gitHooks
 
   public var id: Self { self }
 
@@ -22,13 +19,10 @@ public enum SidebarSection: String, CaseIterable, Codable, Hashable, Identifiabl
     case .localBranches: "Local Branches"
     case .remoteBranches: "Remote Branches"
     case .tags: "Tags"
-    case .github: "GitHub"
-    case .tools: "Tools"
     case .remotes: "Remotes"
     case .worktrees: "Worktrees"
     case .submodules: "Submodules"
     case .gitLFS: "Git LFS"
-    case .gitHooks: "Git Hooks"
     }
   }
 
@@ -77,6 +71,8 @@ public struct SidebarBranchFolder: Hashable, Identifiable, Sendable {
 }
 
 public struct RemoteBranchCheckoutTarget: Equatable, Sendable {
+  public let remoteName: String
+  public let branchName: String
   public let remoteBranch: String
   public let localName: String
 
@@ -100,6 +96,8 @@ public struct RemoteBranchCheckoutTarget: Equatable, Sendable {
     }
     let localName = String(reference.shortName.dropFirst(remoteName.count + 1))
     guard !localName.isEmpty, localName != "HEAD" else { return nil }
+    self.remoteName = remoteName
+    branchName = localName
     self.remoteBranch = reference.shortName
     self.localName = localName
   }

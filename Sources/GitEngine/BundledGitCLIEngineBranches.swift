@@ -11,7 +11,7 @@ extension BundledGitCLIEngine {
   ) async throws {
     if location.kind == .bare {
       switch mutation {
-      case .checkout, .checkoutRemote, .create(_, _, checkout: true):
+      case .checkout, .checkoutDetached, .checkoutRemote, .create(_, _, checkout: true):
         throw GitEngineError.invalidRepository("A bare repository cannot check out a branch.")
       default:
         break
@@ -38,6 +38,23 @@ extension BundledGitCLIEngine {
         }
       }
       arguments = ["switch", name]
+    case .checkoutDetached(let commit, let autoStash):
+      let oid = try await resolveCommit(commit, at: location)
+      let switchArguments = ["switch", "--detach", oid]
+      if autoStash {
+        let currentStatus = try await status(
+          at: location,
+          generation: RepositoryGeneration(0)
+        )
+        if !currentStatus.changes.isEmpty {
+          try await checkoutWithAutoStash(
+            arguments: switchArguments,
+            at: location
+          )
+          return
+        }
+      }
+      arguments = switchArguments
     case .checkoutRemote(let remoteBranch, let localName, let autoStash):
       try await validateBranchName(localName, at: location)
       _ = try await resolveCommit(remoteBranch, at: location)
@@ -63,6 +80,27 @@ extension BundledGitCLIEngine {
       arguments = ["branch", "-m", oldName, newName]
     case .delete(let name, let force):
       arguments = ["branch", force ? "-D" : "-d", name]
+    case .deleteRemote(let remote, let branch, let expectedOID):
+      try await validateRemoteName(remote, at: location)
+      try await validateBranchName(branch, at: location)
+      let fullName = "refs/heads/\(branch)"
+      let observedOID = try await remoteReferenceOID(
+        remote: remote,
+        reference: fullName,
+        at: location
+      )
+      guard observedOID == expectedOID else {
+        throw GitEngineError.invalidRepository(
+          "The remote branch changed after it was inspected. Fetch and try again."
+        )
+      }
+      arguments = [
+        "push",
+        "--force-with-lease=\(fullName):\(expectedOID)",
+        "--delete",
+        remote,
+        fullName,
+      ]
     }
     _ = try await execute(
       GitCommand(

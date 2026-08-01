@@ -43,6 +43,31 @@ extension OperationPlanner {
           : "The index and working tree are clean before the merge starts",
         "A hidden recovery reference preserves the pre-merge HEAD",
       ]
+    case .fastForward(_, let autoStash):
+      kind = "merge.fast-forward"
+      title = "Fast-forward branch"
+      commands = [
+        .git(
+          GitCommand(
+            arguments: ["merge", "--ff-only"]
+              + (autoStash ? ["--autostash"] : [])
+              + ["<resolved-target-oid>"],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      ]
+      affectedRefs = ["HEAD", "refs/current/undo/<generated-id>"]
+      impact = .indexAndWorktree
+      risk = .localDestructive
+      recovery = .gitReference
+      preconditions = [
+        "The selected target resolves to one commit before execution",
+        "The current branch can reach the target using a fast-forward",
+        autoStash
+          ? "Git auto-stash protects tracked working-copy changes during the fast-forward"
+          : "The index and working tree are clean before the fast-forward starts",
+        "A hidden recovery reference preserves the pre-fast-forward HEAD",
+      ]
     case .resolve(let path, let side):
       kind = "merge.resolve.\(side.rawValue)"
       title = "Resolve conflict using \(side.rawValue)"

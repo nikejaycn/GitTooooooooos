@@ -82,6 +82,19 @@ struct AppPreferencesStoreTests {
     #expect(reloaded.visibleSidebarSections == [.workspace, .localBranches])
   }
 
+  @Test("Ignores removed sidebar sections saved by an older version")
+  func ignoresRemovedSidebarSections() throws {
+    let (store, defaults, suiteName) = try makeStore()
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    defaults.set(
+      ["workspace", "github", "tools", "gitHooks", "tags"],
+      forKey: "Current.visibleSidebarSections.v1"
+    )
+
+    #expect(store.visibleSidebarSections == [.workspace, .tags])
+  }
+
   private func makeStore() throws -> (AppPreferencesStore, UserDefaults, String) {
     let suiteName = "AppPreferencesStoreTests.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suiteName))

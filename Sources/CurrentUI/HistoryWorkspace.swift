@@ -1,3 +1,4 @@
+import AppKit
 import CurrentDomain
 import DiffKit
 import GraphKit
@@ -15,6 +16,18 @@ struct HistorySelectionSummary: Equatable {
   let comparisonOIDs: [String]
   let includesWorkingCopy: Bool
   let title: String
+}
+
+struct HistoryCommitContextSelection: Equatable {
+  let oidsInGraphOrder: [String]
+
+  var primaryOID: String {
+    oidsInGraphOrder[0]
+  }
+
+  var chronologicalOIDs: [String] {
+    Array(oidsInGraphOrder.reversed())
+  }
 }
 
 enum HistoryPresentation {
@@ -70,6 +83,15 @@ enum HistoryPresentation {
       }
   }
 
+  static func commitContextSelection(
+    for rows: [GraphRow]
+  ) -> HistoryCommitContextSelection? {
+    guard !rows.contains(where: \.isWorkingCopy) else { return nil }
+    let oids = rows.compactMap(\.commitOID)
+    guard oids.count == rows.count, !oids.isEmpty else { return nil }
+    return HistoryCommitContextSelection(oidsInGraphOrder: oids)
+  }
+
   static func decorationIcon(_ kind: GraphDecorationKind) -> String {
     switch kind {
     case .head: "location.fill"
@@ -96,6 +118,7 @@ enum HistoryPresentation {
 struct HistoryWorkspace: View {
   let status: RepositoryStatus
   let references: [GitReference]
+  let remotes: [GitRemote]
   let isLoading: Bool
   let state: CurrentRootState.HistoryState
   let diffState: CurrentRootState.DiffState
@@ -109,6 +132,9 @@ struct HistoryWorkspace: View {
   let createStash: ([GitPath]) -> Void
   let openFileInsights: (GitPath) -> Void
   let requestInteractiveRebase: (String) -> Void
+  let requestCreateBranchAtCommit: (String) -> Void
+  let requestCreateWorktreeAtCommit: (String) -> Void
+  let requestCreateTagAtCommit: (String, Bool) -> Void
 
   @State private var selectedRows: [GraphRow] = []
   @State private var searchText = ""
@@ -247,7 +273,8 @@ struct HistoryWorkspace: View {
         scrollToCommitOID: localJumpOID ?? requestedJumpOID,
         selectsFirstRowByDefault: true,
         onSelection: applySelection,
-        onApproachingEnd: searchScope == .loaded ? actions.loadNextPage : {}
+        onApproachingEnd: searchScope == .loaded ? actions.loadNextPage : {},
+        contextMenuItems: commitContextMenuItems
       )
       if searchScope == .repository, state.isRepositorySearchLoading {
         ProgressView("Searching repository…")
@@ -654,6 +681,147 @@ struct HistoryWorkspace: View {
     .disabled(selectedCommitOID == nil || isLoading)
     .help("Commit Actions")
     .accessibilityLabel("Commit Actions")
+  }
+
+  private func commitContextMenuItems(
+    _ rows: [GraphRow]
+  ) -> [CommitGraphContextMenuItem] {
+    guard let selection = HistoryPresentation.commitContextSelection(for: rows) else {
+      return []
+    }
+
+    if selection.oidsInGraphOrder.count == 1 {
+      return singleCommitContextMenu(oid: selection.primaryOID)
+    }
+    return multipleCommitContextMenu(
+      oidsInGraphOrder: selection.oidsInGraphOrder,
+      primaryOID: selection.primaryOID
+    )
+  }
+
+  private func singleCommitContextMenu(
+    oid: String
+  ) -> [CommitGraphContextMenuItem] {
+    [
+      .action(title: "Checkout This Commit", isEnabled: !isLoading) {
+        actions.checkoutCommit(oid)
+      },
+      .separator,
+      .action(title: "Create Worktree from This Commit…", isEnabled: !isLoading) {
+        requestCreateWorktreeAtCommit(oid)
+      },
+      .separator,
+      .action(title: "Create Branch Here…", isEnabled: !isLoading) {
+        requestCreateBranchAtCommit(oid)
+      },
+      .action(title: "Cherry-pick Commit", isEnabled: !isLoading) {
+        actions.cherryPick(oid)
+      },
+      .action(title: "Rebase Current Branch onto This Commit", isEnabled: !isLoading) {
+        actions.rebase(oid)
+      },
+      resetContextSubmenu(oid: oid),
+      .action(title: "Revert Commit", isEnabled: !isLoading) {
+        actions.revert(oid)
+      },
+      .separator,
+      .action(title: "Copy Commit SHA", isEnabled: true) {
+        copyToPasteboard(oid)
+      },
+      commitLinkContextItem(oid: oid),
+      .action(title: "Create Patch from Commit…", isEnabled: !isLoading) {
+        actions.exportPatch(oid)
+      },
+      .separator,
+      .action(
+        title: "Compare Commit Against Working Directory",
+        isEnabled: !isLoading
+      ) {
+        actions.compareCommitToWorkingCopy(oid)
+      },
+      .separator,
+      .action(title: "Create Tag Here…", isEnabled: !isLoading) {
+        requestCreateTagAtCommit(oid, false)
+      },
+      .action(title: "Create Annotated Tag Here…", isEnabled: !isLoading) {
+        requestCreateTagAtCommit(oid, true)
+      },
+    ]
+  }
+
+  private func multipleCommitContextMenu(
+    oidsInGraphOrder: [String],
+    primaryOID: String
+  ) -> [CommitGraphContextMenuItem] {
+    let chronologicalOIDs = Array(oidsInGraphOrder.reversed())
+    return [
+      .action(title: "Create Branch Here…", isEnabled: !isLoading) {
+        requestCreateBranchAtCommit(primaryOID)
+      },
+      .action(
+        title: "Cherry-pick \(chronologicalOIDs.count) Commits",
+        isEnabled: !isLoading
+      ) {
+        actions.cherryPickMany(chronologicalOIDs)
+      },
+      resetContextSubmenu(oid: primaryOID),
+      .action(title: "Revert Selected Commit", isEnabled: !isLoading) {
+        actions.revert(primaryOID)
+      },
+      .separator,
+      .action(title: "Copy Commit SHAs", isEnabled: true) {
+        copyToPasteboard(oidsInGraphOrder.joined(separator: "\n"))
+      },
+      .action(title: "Create Patch from Commits…", isEnabled: !isLoading) {
+        actions.exportPatches(chronologicalOIDs)
+      },
+      .separator,
+      .action(title: "Create Tag at Selected Commit…", isEnabled: !isLoading) {
+        requestCreateTagAtCommit(primaryOID, false)
+      },
+      .action(title: "Create Annotated Tag at Selected Commit…", isEnabled: !isLoading) {
+        requestCreateTagAtCommit(primaryOID, true)
+      },
+    ]
+  }
+
+  private func resetContextSubmenu(
+    oid: String
+  ) -> CommitGraphContextMenuItem {
+    .submenu(
+      title: "Reset Current Branch to This Commit",
+      items: [
+        .action(title: "Soft Reset", isEnabled: !isLoading) {
+          actions.reset(oid, .soft)
+        },
+        .action(title: "Mixed Reset", isEnabled: !isLoading) {
+          actions.reset(oid, .mixed)
+        },
+        .separator,
+        .action(title: "Hard Reset…", isEnabled: !isLoading) {
+          pendingHardResetOID = oid
+        },
+      ]
+    )
+  }
+
+  private func commitLinkContextItem(
+    oid: String
+  ) -> CommitGraphContextMenuItem {
+    let url = RepositoryWebLink.commit(oid, remotes: remotes)
+    return .action(
+      title: "Copy Link to This Commit",
+      isEnabled: url != nil
+    ) {
+      if let url {
+        copyToPasteboard(url.absoluteString)
+      }
+    }
+  }
+
+  private func copyToPasteboard(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
   }
 
   private var referenceOptions: [GitReference] {

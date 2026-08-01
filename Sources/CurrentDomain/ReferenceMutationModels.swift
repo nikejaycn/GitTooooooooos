@@ -1,9 +1,11 @@
 public enum BranchMutation: Hashable, Sendable {
   case create(name: String, startPoint: String?, checkout: Bool)
   case checkout(name: String, autoStash: Bool)
+  case checkoutDetached(commit: String, autoStash: Bool)
   case checkoutRemote(remoteBranch: String, localName: String, autoStash: Bool)
   case rename(oldName: String, newName: String)
   case delete(name: String, force: Bool)
+  case deleteRemote(remote: String, branch: String, expectedOID: String)
 }
 
 public enum TagMutation: Hashable, Sendable {

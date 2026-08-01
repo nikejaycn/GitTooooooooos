@@ -36,6 +36,32 @@ struct HistoryWorkspaceTests {
     #expect(summary.title == "2 items selected")
   }
 
+  @Test("Commit context preserves graph order and cherry-picks chronologically")
+  func commitContextOrder() throws {
+    let newest = String(repeating: "1", count: 40)
+    let oldest = String(repeating: "2", count: 40)
+
+    let selection = try #require(
+      HistoryPresentation.commitContextSelection(
+        for: [row(oid: newest), row(oid: oldest)]
+      )
+    )
+
+    #expect(selection.primaryOID == newest)
+    #expect(selection.oidsInGraphOrder == [newest, oldest])
+    #expect(selection.chronologicalOIDs == [oldest, newest])
+  }
+
+  @Test("Working copy selections do not expose commit mutation menus")
+  func workingCopyHasNoCommitContext() {
+    let commit = row(oid: String(repeating: "3", count: 40))
+    let workingCopy = row(oid: nil, isWorkingCopy: true)
+
+    #expect(
+      HistoryPresentation.commitContextSelection(for: [workingCopy, commit]) == nil
+    )
+  }
+
   @Test("Reference options keep supported unique short names in display order")
   func referenceOptions() {
     let options = HistoryPresentation.referenceOptions(
@@ -49,6 +75,21 @@ struct HistoryWorkspaceTests {
 
     #expect(options.map(\.shortName) == ["main", "release"])
     #expect(options.map(\.kind) == [.localBranch, .tag])
+  }
+
+  @Test("Builds browser links from HTTPS and SCP-style remotes")
+  func repositoryWebLinks() {
+    #expect(
+      RepositoryWebLink.baseURL(
+        remoteURL: "git@github.com:nikejaycn/GitTooooooooos.git"
+      )?.absoluteString == "https://github.com/nikejaycn/GitTooooooooos"
+    )
+    #expect(
+      RepositoryWebLink.baseURL(
+        remoteURL: "https://gitlab.com/example/project.git"
+      )?.absoluteString == "https://gitlab.com/example/project"
+    )
+    #expect(RepositoryWebLink.baseURL(remoteURL: "/tmp/local-repository") == nil)
   }
 
   private func row(

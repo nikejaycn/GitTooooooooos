@@ -49,10 +49,11 @@ struct OperationPlanTests {
     #expect(plan.repositoryGeneration == RepositoryGeneration(42))
     #expect(plan.confirmationPolicy == .single)
     #expect(plan.requiresConfirmation)
-    #expect(plan.commands.map(\.preview) == [
-      "git reset --hard abc123",
-      "Refresh authoritative repository snapshot",
-    ])
+    #expect(
+      plan.commands.map(\.preview) == [
+        "git reset --hard abc123",
+        "Refresh authoritative repository snapshot",
+      ])
   }
 
   @Test("Remote destructive plans require double confirmation")
@@ -111,6 +112,105 @@ struct OperationPlanTests {
       restored.commands.map(\.preview) == [
         "git config --local --unset-all core.hooksPath"
       ])
+  }
+
+  @Test("Commit context operations plan detached checkout and ordered cherry-pick")
+  func commitContextOperations() throws {
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+    let detached = try OperationPlanner.branch(
+      .checkoutDetached(commit: "abc123", autoStash: false),
+      generation: RepositoryGeneration(5),
+      at: location
+    )
+    #expect(detached.kind == "branch.checkout-detached")
+    #expect(detached.commands.map(\.preview) == ["git switch --detach abc123"])
+
+    let sequence = try OperationPlanner.history(
+      .cherryPickSequence(commits: ["oldest", "newest"]),
+      generation: RepositoryGeneration(6),
+      at: location
+    )
+    #expect(sequence.kind == "history.cherry-pick-sequence")
+    #expect(sequence.commands.map(\.preview) == ["git cherry-pick oldest newest"])
+
+    let branchRange = try OperationPlanner.history(
+      .cherryPickRange(revision: "origin/feature/menu"),
+      generation: RepositoryGeneration(7),
+      at: location
+    )
+    #expect(branchRange.kind == "history.cherry-pick-range")
+    #expect(
+      branchRange.commands.map(\.preview) == [
+        "git cherry-pick <commits-in-HEAD..origin/feature/menu>"
+      ]
+    )
+  }
+
+  @Test("Empty multi-commit cherry-pick is rejected before execution")
+  func rejectsEmptyCherryPickSequence() {
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    #expect(throws: OperationPlanningError.emptyHistorySelection) {
+      try OperationPlanner.history(
+        .cherryPickSequence(commits: []),
+        generation: RepositoryGeneration(7),
+        at: location
+      )
+    }
+  }
+
+  @Test("Remote branch deletion requires a lease and double confirmation")
+  func remoteBranchDeletionPlan() throws {
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+    let plan = try OperationPlanner.branch(
+      .deleteRemote(
+        remote: "origin",
+        branch: "feature/menu",
+        expectedOID: "abc123"
+      ),
+      generation: RepositoryGeneration(8),
+      at: location
+    )
+
+    #expect(plan.kind == "branch.delete.remote")
+    #expect(plan.risk == .remoteDestructive)
+    #expect(plan.confirmationPolicy == .double)
+    #expect(
+      plan.commands.map(\.preview) == [
+        "git push --force-with-lease=refs/heads/feature/menu:<remote-branch-oid> --delete origin refs/heads/feature/menu"
+      ]
+    )
+  }
+
+  @Test("Fast-forward requires a recoverable exact merge")
+  func fastForwardPlan() throws {
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+    let plan = try OperationPlanner.merge(
+      .fastForward(branch: "origin/main", autoStash: false),
+      generation: RepositoryGeneration(9),
+      at: location
+    )
+
+    #expect(plan.kind == "merge.fast-forward")
+    #expect(plan.risk == .localDestructive)
+    #expect(plan.recoveryStrategy == .gitReference)
+    #expect(
+      plan.commands.map(\.preview) == [
+        "git merge --ff-only <resolved-target-oid>"
+      ]
+    )
   }
 
   @Test("Safe plans cannot opt into destructive confirmation")

@@ -3,16 +3,58 @@ import CurrentDomain
 import SwiftUI
 
 enum CurrentWorkspace: Hashable {
-  case gitflow
   case changes
   case history
-  case pullRequests
-  case branchReview
-  case issues
-  case actions
   case fileHistory
   case stashes
   case operations
+}
+
+enum RepositorySidebarSelection: Hashable {
+  case workspace(CurrentWorkspace)
+  case branch(String)
+
+  var workspace: CurrentWorkspace? {
+    guard case .workspace(let workspace) = self else {
+      return nil
+    }
+    return workspace
+  }
+
+  func synchronizingWorkspace(_ workspace: CurrentWorkspace) -> Self {
+    if case .branch = self, workspace == .history {
+      return self
+    }
+    return .workspace(workspace)
+  }
+}
+
+enum RepositoryWorkspaceItem: String, CaseIterable, Identifiable {
+  case workingCopy
+  case history
+
+  var id: Self { self }
+
+  var title: String {
+    switch self {
+    case .workingCopy: "Working Copy"
+    case .history: "History"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .workingCopy: "square.stack.3d.up"
+    case .history: "point.3.connected.trianglepath.dotted"
+    }
+  }
+
+  var workspace: CurrentWorkspace {
+    switch self {
+    case .workingCopy: .changes
+    case .history: .history
+    }
+  }
 }
 
 struct RepositorySidebarModel {
@@ -25,7 +67,8 @@ struct RepositorySidebarModel {
   let worktrees: [GitWorktree]
   let submodules: [GitSubmodule]
   let gitLFS: GitLFSRepositoryState
-  let gitHooks: GitHooksState
+  let pinnedGraphReferences: Set<String>
+  let soloGraphReference: String?
 }
 
 enum RepositorySidebarEvent {
@@ -34,6 +77,16 @@ enum RepositorySidebarEvent {
   case mergeBranch(GitReference, squash: Bool)
   case renameBranch(GitReference)
   case deleteBranch(GitReference)
+  case deleteRemoteBranch(GitReference)
+  case createBranchAt(GitReference)
+  case createWorktreeAt(GitReference)
+  case fastForwardBranch(GitReference)
+  case rebaseOntoBranch(GitReference)
+  case cherryPickBranch(GitReference)
+  case compareBranchToWorkingCopy(GitReference)
+  case createTagAt(GitReference, annotated: Bool)
+  case togglePinnedBranch(GitReference)
+  case setSoloBranch(GitReference?)
   case createTag
   case pushTag(GitReference, GitRemote)
   case deleteRemoteTag(GitReference, GitRemote)
@@ -58,7 +111,6 @@ enum RepositorySidebarEvent {
   case fetchLFS(recent: Bool)
   case pullLFS
   case pruneLFS
-  case configureHooks
 }
 
 struct RepositoryBranchRow: View {
@@ -66,10 +118,16 @@ struct RepositoryBranchRow: View {
   let displayName: String
   let remoteNames: [String]
   let isLoading: Bool
+  let isPinned: Bool
+  let isSolo: Bool
+  let branchWebURL: URL?
+  let commitWebURL: URL?
+  let select: () -> Void
   let send: (RepositorySidebarEvent) -> Void
 
   var body: some View {
     Button {
+      select()
       send(.locateBranch(reference))
       guard
         NSApp.currentEvent?.clickCount ?? 1 >= 2,
@@ -103,15 +161,80 @@ struct RepositoryBranchRow: View {
       )
     )
     .contextMenu {
+      if reference.kind == .remoteBranch {
+        Button("Fast-forward Current Branch to \(reference.shortName)…") {
+          send(.fastForwardBranch(reference))
+        }
+        .disabled(isLoading)
+      }
+      Button(
+        reference.kind == .remoteBranch ? "Check Out as Local Branch" : "Check Out"
+      ) {
+        send(.checkoutBranch(reference))
+      }
+      .disabled(reference.isHEAD || isLoading)
+      Divider()
+      Button("Create Worktree from \(reference.shortName)…") {
+        send(.createWorktreeAt(reference))
+      }
+      Button("Create Branch Here…") {
+        send(.createBranchAt(reference))
+      }
+      Button("Cherry-pick Branch Commits…") {
+        send(.cherryPickBranch(reference))
+      }
+      .disabled(reference.isHEAD || isLoading)
+      Divider()
+      Button("Merge \(reference.shortName) into Current Branch…") {
+        send(.mergeBranch(reference, squash: false))
+      }
+      .disabled(reference.isHEAD || isLoading)
+      Button("Squash \(reference.shortName) into Working Copy…") {
+        send(.mergeBranch(reference, squash: true))
+      }
+      .disabled(reference.isHEAD || isLoading)
+      Button("Rebase Current Branch onto \(reference.shortName)") {
+        send(.rebaseOntoBranch(reference))
+      }
+      .disabled(reference.isHEAD || isLoading)
+      Divider()
+      Button("Copy Branch Name") {
+        copyToPasteboard(reference.shortName)
+      }
+      Button("Copy Commit SHA") {
+        copyToPasteboard(reference.targetOID)
+      }
+      Button("Copy Link to Branch") {
+        if let branchWebURL {
+          copyToPasteboard(branchWebURL.absoluteString)
+        }
+      }
+      .disabled(branchWebURL == nil)
+      Button("Copy Link to Commit") {
+        if let commitWebURL {
+          copyToPasteboard(commitWebURL.absoluteString)
+        }
+      }
+      .disabled(commitWebURL == nil)
+      Divider()
+      Button(isPinned ? "Unpin from Graph" : "Pin to Graph") {
+        send(.togglePinnedBranch(reference))
+      }
+      Button(isSolo ? "Show All References" : "Solo \(reference.shortName)") {
+        send(.setSoloBranch(isSolo ? nil : reference))
+      }
+      Divider()
+      Button("Compare Branch Against Working Directory") {
+        send(.compareBranchToWorkingCopy(reference))
+      }
+      Divider()
+      Button("Create Tag Here…") {
+        send(.createTagAt(reference, annotated: false))
+      }
+      Button("Create Annotated Tag Here…") {
+        send(.createTagAt(reference, annotated: true))
+      }
       if reference.kind == .localBranch {
-        Button("Merge into Current Branch") {
-          send(.mergeBranch(reference, squash: false))
-        }
-        .disabled(reference.isHEAD || isLoading)
-        Button("Squash into Current Working Copy") {
-          send(.mergeBranch(reference, squash: true))
-        }
-        .disabled(reference.isHEAD || isLoading)
         Divider()
         Button("Rename…") {
           send(.renameBranch(reference))
@@ -121,8 +244,19 @@ struct RepositoryBranchRow: View {
           send(.deleteBranch(reference))
         }
         .disabled(reference.isHEAD || isLoading)
+      } else if reference.kind == .remoteBranch {
+        Divider()
+        Button("Delete \(reference.shortName) from Remote…", role: .destructive) {
+          send(.deleteRemoteBranch(reference))
+        }
+        .disabled(isLoading)
       }
     }
+  }
+
+  private func copyToPasteboard(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
   }
 
   private static func referenceIcon(_ kind: GitReferenceKind) -> String {
@@ -142,9 +276,21 @@ struct RepositorySidebarView: View {
   let send: (RepositorySidebarEvent) -> Void
 
   @State private var expandedBranchFolders = Set<String>()
+  @State private var sidebarSelection: RepositorySidebarSelection
+
+  init(
+    selection: Binding<CurrentWorkspace>,
+    model: RepositorySidebarModel,
+    send: @escaping (RepositorySidebarEvent) -> Void
+  ) {
+    _selection = selection
+    self.model = model
+    self.send = send
+    _sidebarSelection = State(initialValue: .workspace(selection.wrappedValue))
+  }
 
   var body: some View {
-    List(selection: $selection) {
+    List(selection: $sidebarSelection) {
       repositorySection
       if model.visibleSections.contains(.workspace) {
         workspaceSection
@@ -161,12 +307,6 @@ struct RepositorySidebarView: View {
           remotes: model.remotes,
           send: send
         )
-      }
-      if model.visibleSections.contains(.github) {
-        githubSection
-      }
-      if model.visibleSections.contains(.tools) {
-        toolsSection
       }
       if model.hasRepository, model.visibleSections.contains(.remotes) {
         RepositoryRemotesSidebarSection(remotes: model.remotes, send: send)
@@ -192,11 +332,19 @@ struct RepositorySidebarView: View {
           send: send
         )
       }
-      if model.hasRepository, model.visibleSections.contains(.gitHooks) {
-        RepositoryHooksSidebarSection(state: model.gitHooks, send: send)
-      }
     }
     .listStyle(.sidebar)
+    .onChange(of: sidebarSelection) { _, newSelection in
+      if let workspace = newSelection.workspace {
+        selection = workspace
+      }
+    }
+    .onChange(of: selection) { oldWorkspace, newWorkspace in
+      guard oldWorkspace != newWorkspace else {
+        return
+      }
+      sidebarSelection = sidebarSelection.synchronizingWorkspace(newWorkspace)
+    }
     .frame(
       minWidth: CurrentUILayout.sidebarMinimumWidth,
       idealWidth: CurrentUILayout.sidebarIdealWidth,
@@ -219,39 +367,10 @@ struct RepositorySidebarView: View {
 
   private var workspaceSection: some View {
     Section("Workspace") {
-      Label("Gitflow", systemImage: "arrow.triangle.branch")
-        .tag(CurrentWorkspace.gitflow)
-      Label("Working Copy", systemImage: "square.stack.3d.up")
-        .tag(CurrentWorkspace.changes)
-      Label("History", systemImage: "point.3.connected.trianglepath.dotted")
-        .tag(CurrentWorkspace.history)
-      Label("Pull Requests", systemImage: "arrow.triangle.pull")
-        .tag(CurrentWorkspace.pullRequests)
-      Label("Branch Review", systemImage: "arrow.triangle.branch")
-        .tag(CurrentWorkspace.branchReview)
-      Label("Stashes", systemImage: "archivebox")
-        .tag(CurrentWorkspace.stashes)
-    }
-  }
-
-  private var githubSection: some View {
-    Section("GitHub") {
-      Label("Issues", systemImage: "record.circle")
-        .tag(CurrentWorkspace.issues)
-      Label("Actions", systemImage: "play.square.stack")
-        .tag(CurrentWorkspace.actions)
-    }
-  }
-
-  private var toolsSection: some View {
-    Section("Tools") {
-      Label(
-        "File History",
-        systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
-      )
-      .tag(CurrentWorkspace.fileHistory)
-      Label("Activity Log", systemImage: "list.bullet.rectangle")
-        .tag(CurrentWorkspace.operations)
+      ForEach(RepositoryWorkspaceItem.allCases) { item in
+        Label(item.title, systemImage: item.systemImage)
+          .tag(RepositorySidebarSelection.workspace(item.workspace))
+      }
     }
   }
 
@@ -330,7 +449,15 @@ struct RepositorySidebarView: View {
       displayName: displayName,
       remoteNames: model.remotes.map(\.name),
       isLoading: model.isLoading,
+      isPinned: model.pinnedGraphReferences.contains(reference.shortName),
+      isSolo: model.soloGraphReference == reference.shortName,
+      branchWebURL: RepositoryWebLink.branch(reference.shortName, remotes: model.remotes),
+      commitWebURL: RepositoryWebLink.commit(reference.targetOID, remotes: model.remotes),
+      select: {
+        sidebarSelection = .branch(reference.fullName)
+      },
       send: send
     )
+    .tag(RepositorySidebarSelection.branch(reference.fullName))
   }
 }

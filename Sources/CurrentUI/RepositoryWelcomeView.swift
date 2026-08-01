@@ -30,17 +30,25 @@ struct RepositoryWelcomeView: View {
   }
 
   var body: some View {
-    GeometryReader { geometry in
-      ScrollView(.vertical) {
-        VStack(spacing: 20) {
-          applicationIdentity
-          repositoryActions
-          errorBanner
-          recentRepositories
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+    VStack(spacing: 0) {
+      VStack(spacing: 20) {
+        applicationIdentity
+        repositoryActions
+        errorBanner
       }
+      .padding(.horizontal, 32)
+      .frame(
+        maxWidth: .infinity,
+        minHeight: CurrentUILayout.repositoryWelcomeHeaderHeight,
+        maxHeight: CurrentUILayout.repositoryWelcomeHeaderHeight
+      )
+      .background(.bar)
+
+      Divider()
+
+      recentRepositories
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .layoutPriority(1)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .alert("Clone Repository", isPresented: $isCloningRepository) {
@@ -97,12 +105,21 @@ struct RepositoryWelcomeView: View {
     }
   }
 
-  @ViewBuilder
   private var recentRepositories: some View {
-    if !state.recentRepositories.isEmpty {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("Repositories")
-          .font(.headline)
+    VStack(alignment: .leading, spacing: 10) {
+      Text("Repositories")
+        .font(.title3.weight(.semibold))
+
+      if state.recentRepositories.isEmpty {
+        ContentUnavailableView(
+          "No Recent Repositories",
+          systemImage: "externaldrive",
+          description: Text(
+            "Open, clone, or initialize a repository to add it to this list."
+          )
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
         List {
           if !sections.favorites.isEmpty {
             Section("Favorites") {
@@ -115,10 +132,18 @@ struct RepositoryWelcomeView: View {
             }
           }
         }
-        .frame(height: min(CGFloat(state.recentRepositories.count) * 48 + 8, 300))
+        .listStyle(.inset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-      .frame(maxWidth: 680)
     }
+    .padding(.horizontal, 32)
+    .padding(.top, 20)
+    .padding(.bottom, 24)
+    .frame(
+      maxWidth: CurrentUILayout.repositoryWelcomeContentMaximumWidth,
+      maxHeight: .infinity,
+      alignment: .topLeading
+    )
   }
 
   private func repositoryRow(_ repository: RecentRepository) -> some View {

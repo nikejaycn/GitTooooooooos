@@ -389,6 +389,10 @@ public actor RepositoryActor {
     try await engine.createPatch(at: location, commit: commit)
   }
 
+  public func createPatch(commits: [String]) async throws -> [UInt8] {
+    try await engine.createPatch(at: location, commits: commits)
+  }
+
   @discardableResult
   public func applyPatch(fileURL: URL, historyLimit: Int = 200) async throws
     -> RepositorySnapshot
