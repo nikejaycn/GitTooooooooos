@@ -24,6 +24,7 @@ source_packages=${CURRENT_SOURCE_PACKAGES:-"$project_dir/.build/SourcePackages"}
 notary_profile=${NOTARYTOOL_PROFILE:-current-notary}
 notarize=1
 dry_run=0
+validate_only=0
 release_mode=
 signing_identity=
 version_updated=0
@@ -44,6 +45,7 @@ Modes:
 
 Options:
   --dry-run       Show the next version/tag without changing files or publishing.
+  --validate-only Build and verify the next package, then roll back version files.
   --no-notarize   Create a signed but non-notarized package (test-only recommended).
   --help          Show this help.
 
@@ -59,7 +61,7 @@ EOF
 
 rollback_generated_version() {
   exit_status=$?
-  if [ "$exit_status" -ne 0 ] && [ "$committed" -eq 0 ]; then
+  if [ "$committed" -eq 0 ] && { [ "$exit_status" -ne 0 ] || [ "$validate_only" -eq 1 ]; }; then
     if [ "$version_updated" -eq 1 ]; then
       git -C "$project_dir" restore -- Current.xcodeproj/project.pbxproj >/dev/null 2>&1 || true
     fi
@@ -88,6 +90,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run)
       dry_run=1
+      ;;
+    --validate-only)
+      validate_only=1
       ;;
     --no-notarize)
       notarize=0
@@ -340,6 +345,12 @@ fi
 /usr/bin/shasum -a 256 "$zip_path" "$dmg_path"
 
 git -C "$project_dir" diff --check
+
+if [ "$validate_only" -eq 1 ]; then
+  echo "Validation complete; no commit, tag, push or GitHub Release was created."
+  exit 0
+fi
+
 git -C "$project_dir" add "$project_file" "$notes_path"
 git -C "$project_dir" commit -m "chore: prepare $release_tag release"
 committed=1
