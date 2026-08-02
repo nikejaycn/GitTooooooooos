@@ -11,7 +11,8 @@ set -eu
 
 # shellcheck disable=SC1007
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-project_file="$project_dir/Current.xcodeproj/project.pbxproj"
+project_path="$project_dir/Current.xcodeproj"
+project_file="$project_path/project.pbxproj"
 scheme=${CURRENT_SCHEME:-Current}
 configuration=${CURRENT_CONFIGURATION:-Release}
 development_team=${DEVELOPMENT_TEAM:-7QSPARVZYS}
@@ -256,7 +257,7 @@ rm -rf "$archive_path" "$export_path"
 # Archive unsigned and sign once during export to avoid Xcode 26 duplicate
 # signature timestamp failures in Swift Package resource bundles.
 /usr/bin/xcodebuild archive \
-  -project "$project_file" \
+  -project "$project_path" \
   -scheme "$scheme" \
   -configuration "$configuration" \
   -destination 'generic/platform=macOS' \
