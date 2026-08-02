@@ -54,6 +54,8 @@ jobs:
             -derivedDataPath .build/XcodeDerivedData \
             -clonedSourcePackagesDirPath .build/SourcePackages \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            DEVELOPMENT_TEAM=7QSPARVZYS \
             MACOSX_DEPLOYMENT_TARGET=14.0
 
       - name: Verify Git toolchain embedded in GitCurrent.app

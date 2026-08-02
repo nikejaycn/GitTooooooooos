@@ -3,7 +3,11 @@ import SwiftUI
 
 public struct InteractiveRebaseView: View {
   private let upstream: String
+  private let title: String
+  private let subtitle: String?
+  private let startButtonTitle: String
   private let load: (String) async throws -> InteractiveRebasePlan
+  private let prepare: ((InteractiveRebasePlan) throws -> InteractiveRebasePlan)?
   private let execute: (InteractiveRebasePlan) -> Void
   private let dismiss: () -> Void
 
@@ -13,12 +17,20 @@ public struct InteractiveRebaseView: View {
 
   public init(
     upstream: String,
+    title: String = "Interactive Rebase",
+    subtitle: String? = nil,
+    startButtonTitle: String = "Start Rebase",
     load: @escaping (String) async throws -> InteractiveRebasePlan,
+    prepare: ((InteractiveRebasePlan) throws -> InteractiveRebasePlan)? = nil,
     execute: @escaping (InteractiveRebasePlan) -> Void,
     dismiss: @escaping () -> Void
   ) {
     self.upstream = upstream
+    self.title = title
+    self.subtitle = subtitle
+    self.startButtonTitle = startButtonTitle
     self.load = load
+    self.prepare = prepare
     self.execute = execute
     self.dismiss = dismiss
   }
@@ -27,9 +39,9 @@ public struct InteractiveRebaseView: View {
     VStack(spacing: 0) {
       HStack {
         VStack(alignment: .leading, spacing: 3) {
-          Text("Interactive Rebase")
+          Text(title)
             .font(.title2.weight(.semibold))
-          Text("Rewrite commits after \(upstream.prefix(12))")
+          Text(subtitle ?? "Rewrite commits after \(upstream.prefix(12))")
             .font(.callout)
             .foregroundStyle(.secondary)
         }
@@ -73,7 +85,7 @@ public struct InteractiveRebaseView: View {
         Spacer()
         Button("Cancel", role: .cancel, action: dismiss)
           .keyboardShortcut(.cancelAction)
-        Button("Start Rebase") {
+        Button(startButtonTitle) {
           guard let plan else { return }
           execute(plan)
           dismiss()
@@ -86,7 +98,11 @@ public struct InteractiveRebaseView: View {
     .frame(minWidth: 680, minHeight: 500)
     .task {
       do {
-        plan = try await load(upstream)
+        var loadedPlan = try await load(upstream)
+        if let prepare {
+          loadedPlan = try prepare(loadedPlan)
+        }
+        plan = loadedPlan
       } catch {
         errorMessage = error.localizedDescription
       }

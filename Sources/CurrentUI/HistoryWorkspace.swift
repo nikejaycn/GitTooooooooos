@@ -30,6 +30,15 @@ struct HistoryCommitContextSelection: Equatable {
   }
 }
 
+struct HistoryRewriteSelection: Equatable {
+  let upstreamOID: String
+  let oidsInGraphOrder: [String]
+  let isContiguous: Bool
+  let moveDownUpstreamOID: String?
+
+  var count: Int { oidsInGraphOrder.count }
+}
+
 enum HistoryPresentation {
   static func selectionSummary(for rows: [GraphRow]) -> HistorySelectionSummary {
     let commitOIDs = rows.compactMap(\.commitOID)
@@ -92,6 +101,76 @@ enum HistoryPresentation {
     return HistoryCommitContextSelection(oidsInGraphOrder: oids)
   }
 
+  /// Returns a rewriteable range on the checked-out branch. Interactive
+  /// rebase operates on one linear first-parent history, so selections on
+  /// another ref, merge commits, or a repository-wide search result are
+  /// intentionally rejected before the menu is built.
+  static func historyRewriteSelection(
+    for rows: [GraphRow],
+    allRows: [GraphRow],
+    references: [GitReference]
+  ) -> HistoryRewriteSelection? {
+    guard rows.count >= 2,
+      let context = commitContextSelection(for: rows),
+      rows.allSatisfy({ $0.parentOIDs.count == 1 }),
+      let head = references.first(where: \.isHEAD)?.targetOID
+    else {
+      return nil
+    }
+
+    let rowsByOID = allRows.reduce(into: [String: GraphRow]()) { result, row in
+      guard let oid = row.commitOID else { return }
+      result[oid] = row
+    }
+
+    // Walk only the first-parent chain from HEAD. This keeps the operation on
+    // the currently checked-out branch and avoids rewriting a side branch
+    // merely because it is visible in the graph.
+    var reachable = Set<String>()
+    var cursor = head
+    var visited = Set<String>()
+    while visited.insert(cursor).inserted,
+      let row = rowsByOID[cursor],
+      row.parentOIDs.count == 1
+    {
+      reachable.insert(cursor)
+      cursor = row.parentOIDs[0]
+    }
+
+    guard context.oidsInGraphOrder.allSatisfy({ reachable.contains($0) }),
+      let oldestOID = context.oidsInGraphOrder.last,
+      let upstreamOID = rowsByOID[oldestOID]?.parentOIDs.first,
+      !upstreamOID.isEmpty
+    else {
+      return nil
+    }
+
+    let isContiguous = zip(
+      context.oidsInGraphOrder,
+      context.oidsInGraphOrder.dropFirst()
+    ).allSatisfy { newerOID, olderOID in
+      rowsByOID[newerOID]?.parentOIDs.first == olderOID
+    }
+
+    let moveDownUpstreamOID: String?
+    if isContiguous,
+      let precedingOID = rowsByOID[oldestOID]?.parentOIDs.first,
+      let precedingRow = rowsByOID[precedingOID],
+      precedingRow.parentOIDs.count == 1
+    {
+      moveDownUpstreamOID = precedingRow.parentOIDs[0]
+    } else {
+      moveDownUpstreamOID = nil
+    }
+
+    return HistoryRewriteSelection(
+      upstreamOID: upstreamOID,
+      oidsInGraphOrder: context.oidsInGraphOrder,
+      isContiguous: isContiguous,
+      moveDownUpstreamOID: moveDownUpstreamOID
+    )
+  }
+
   static func decorationIcon(_ kind: GraphDecorationKind) -> String {
     switch kind {
     case .head: "location.fill"
@@ -132,6 +211,7 @@ struct HistoryWorkspace: View {
   let createStash: ([GitPath]) -> Void
   let openFileInsights: (GitPath) -> Void
   let requestInteractiveRebase: (String) -> Void
+  let requestHistoryRewrite: (HistoryRewriteRequest) -> Void
   let requestCreateBranchAtCommit: (String) -> Void
   let requestCreateWorktreeAtCommit: (String) -> Void
   let requestCreateTagAtCommit: (String, Bool) -> Void
@@ -695,7 +775,12 @@ struct HistoryWorkspace: View {
     }
     return multipleCommitContextMenu(
       oidsInGraphOrder: selection.oidsInGraphOrder,
-      primaryOID: selection.primaryOID
+      primaryOID: selection.primaryOID,
+      rewriteSelection: HistoryPresentation.historyRewriteSelection(
+        for: rows,
+        allRows: activeGraphRows,
+        references: references
+      )
     )
   }
 
@@ -751,10 +836,11 @@ struct HistoryWorkspace: View {
 
   private func multipleCommitContextMenu(
     oidsInGraphOrder: [String],
-    primaryOID: String
+    primaryOID: String,
+    rewriteSelection: HistoryRewriteSelection?
   ) -> [CommitGraphContextMenuItem] {
     let chronologicalOIDs = Array(oidsInGraphOrder.reversed())
-    return [
+    var items: [CommitGraphContextMenuItem] = [
       .action(title: "Create Branch Here…", isEnabled: !isLoading) {
         requestCreateBranchAtCommit(primaryOID)
       },
@@ -764,6 +850,59 @@ struct HistoryWorkspace: View {
       ) {
         actions.cherryPickMany(chronologicalOIDs)
       },
+    ]
+
+    if let rewriteSelection {
+      if rewriteSelection.isContiguous {
+        items.append(
+          .action(
+            title: "Squash \(rewriteSelection.count) Commits",
+            isEnabled: !isLoading
+          ) {
+            requestHistoryRewrite(
+              HistoryRewriteRequest(
+                upstreamOID: rewriteSelection.upstreamOID,
+                commitOIDs: rewriteSelection.oidsInGraphOrder,
+                action: .squash
+              )
+            )
+          }
+        )
+      }
+      items.append(
+        .action(
+          title: "Drop \(rewriteSelection.count) Commits",
+          isEnabled: !isLoading
+        ) {
+          requestHistoryRewrite(
+            HistoryRewriteRequest(
+              upstreamOID: rewriteSelection.upstreamOID,
+              commitOIDs: rewriteSelection.oidsInGraphOrder,
+              action: .drop
+            )
+          )
+        }
+      )
+      if let moveDownUpstreamOID = rewriteSelection.moveDownUpstreamOID {
+        items.append(
+          .action(
+            title: "Move \(rewriteSelection.count) Commits Down",
+            isEnabled: !isLoading && !rewriteSelection.oidsInGraphOrder.isEmpty
+          ) {
+            requestHistoryRewrite(
+              HistoryRewriteRequest(
+                upstreamOID: moveDownUpstreamOID,
+                commitOIDs: rewriteSelection.oidsInGraphOrder,
+                action: .moveDown
+              )
+            )
+          }
+        )
+      }
+      items.append(.separator)
+    }
+
+    items.append(contentsOf: [
       resetContextSubmenu(oid: primaryOID),
       .action(title: "Revert Selected Commit", isEnabled: !isLoading) {
         actions.revert(primaryOID)
@@ -782,7 +921,8 @@ struct HistoryWorkspace: View {
       .action(title: "Create Annotated Tag at Selected Commit…", isEnabled: !isLoading) {
         requestCreateTagAtCommit(primaryOID, true)
       },
-    ]
+    ])
+    return items
   }
 
   private func resetContextSubmenu(

@@ -25,6 +25,10 @@ sites/current-macos-prototype/
 .env
 .env.*
 *.pem
+*.p8
+*.p12
+*.cer
+*.mobileprovision
 .git.nested-backup/
 
 # Logs

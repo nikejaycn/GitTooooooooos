@@ -77,6 +77,85 @@ struct HistoryWorkspaceTests {
     #expect(options.map(\.kind) == [.localBranch, .tag])
   }
 
+  @Test("History rewrites are limited to a linear range on the checked-out branch")
+  func historyRewriteSelection() throws {
+    let base = oid("0")
+    let a = oid("a")
+    let b = oid("b")
+    let c = oid("c")
+    let head = oid("d")
+    let allRows = [
+      row(oid: head, parentOIDs: [c]),
+      row(oid: c, parentOIDs: [b]),
+      row(oid: b, parentOIDs: [a]),
+      row(oid: a, parentOIDs: [base]),
+      row(oid: base),
+    ]
+
+    let selection = try #require(
+      HistoryPresentation.historyRewriteSelection(
+        for: [row(oid: c, parentOIDs: [b]), row(oid: b, parentOIDs: [a])],
+        allRows: allRows,
+        references: [headReference(targetOID: head)]
+      )
+    )
+
+    #expect(selection.upstreamOID == a)
+    #expect(selection.oidsInGraphOrder == [c, b])
+    #expect(selection.isContiguous)
+    #expect(selection.moveDownUpstreamOID == base)
+  }
+
+  @Test("Non-contiguous and off-branch selections do not expose rewrite actions")
+  func historyRewriteSelectionRejectsInvalidRanges() {
+    let base = oid("0")
+    let a = oid("a")
+    let b = oid("b")
+    let c = oid("c")
+    let head = oid("d")
+    let side = oid("e")
+    let allRows = [
+      row(oid: head, parentOIDs: [c]),
+      row(oid: c, parentOIDs: [b]),
+      row(oid: b, parentOIDs: [a]),
+      row(oid: a, parentOIDs: [base]),
+      row(oid: base),
+      row(oid: side, parentOIDs: [base]),
+    ]
+
+    let nonContiguous = HistoryPresentation.historyRewriteSelection(
+      for: [row(oid: c, parentOIDs: [b]), row(oid: a, parentOIDs: [base])],
+      allRows: allRows,
+      references: [headReference(targetOID: head)]
+    )
+    let offBranch = HistoryPresentation.historyRewriteSelection(
+      for: [row(oid: side, parentOIDs: [base]), row(oid: a, parentOIDs: [base])],
+      allRows: allRows,
+      references: [headReference(targetOID: head)]
+    )
+
+    #expect(nonContiguous != nil)
+    #expect(nonContiguous?.isContiguous == false)
+    #expect(offBranch == nil)
+  }
+
+  @Test("Merge commits are excluded from linear rewrite presets")
+  func historyRewriteSelectionRejectsMerges() {
+    let merge = row(
+      oid: oid("m"),
+      parentOIDs: [oid("a"), oid("b")]
+    )
+    let next = row(oid: oid("n"), parentOIDs: [oid("m")])
+
+    #expect(
+      HistoryPresentation.historyRewriteSelection(
+        for: [next, merge],
+        allRows: [next, merge],
+        references: [headReference(targetOID: oid("n"))]
+      ) == nil
+    )
+  }
+
   @Test("Builds browser links from HTTPS and SCP-style remotes")
   func repositoryWebLinks() {
     #expect(
@@ -130,5 +209,20 @@ struct HistoryWorkspaceTests {
       kind: kind,
       isHEAD: false
     )
+  }
+
+  private func headReference(targetOID: String) -> GitReference {
+    GitReference(
+      fullName: "refs/heads/main",
+      shortName: "main",
+      targetOID: targetOID,
+      upstream: nil,
+      kind: .localBranch,
+      isHEAD: true
+    )
+  }
+
+  private func oid(_ suffix: String) -> String {
+    String(repeating: suffix, count: 40)
   }
 }

@@ -10,6 +10,46 @@ public enum ResetMode: String, Hashable, Sendable, Codable {
   case hard
 }
 
+/// A focused history rewrite that starts from a multi-selection in the graph.
+///
+/// The request is deliberately kept separate from `HistoryMutation`: the UI
+/// first turns it into a reviewed interactive-rebase plan, and only then
+/// executes the existing destructive-history pipeline.
+public enum HistoryRewriteAction: String, CaseIterable, Hashable, Sendable, Codable {
+  case squash
+  case drop
+  case moveDown
+}
+
+public enum HistoryRewriteError: Error, Equatable, Sendable {
+  case emptySelection
+  case requiresMultipleCommits
+  case duplicateSelection
+  case unknownCommit
+  case selectionMustBeContiguous
+  case cannotMoveDown
+}
+
+public struct HistoryRewriteRequest: Hashable, Sendable, Codable, Identifiable {
+  public let upstreamOID: String
+  public let commitOIDs: [String]
+  public let action: HistoryRewriteAction
+
+  public init(
+    upstreamOID: String,
+    commitOIDs: [String],
+    action: HistoryRewriteAction
+  ) {
+    self.upstreamOID = upstreamOID
+    self.commitOIDs = commitOIDs
+    self.action = action
+  }
+
+  public var id: String {
+    "\(action.rawValue):\(upstreamOID):\(commitOIDs.joined(separator: ","))"
+  }
+}
+
 public enum HistoryMutation: Hashable, Sendable {
   case cherryPick(commit: String)
   case cherryPickSequence(commits: [String])
@@ -62,6 +102,87 @@ public struct InteractiveRebasePlan: Hashable, Sendable, Codable {
     self.upstreamOID = upstreamOID
     self.originalHeadOID = originalHeadOID
     self.steps = steps
+  }
+
+  /// Applies one of the graph's multi-commit rewrite presets to a freshly
+  /// loaded interactive-rebase plan. The returned plan is still editable in
+  /// the review UI, so this helper only establishes the initial actions/order.
+  public func applying(
+    _ action: HistoryRewriteAction,
+    to selectedOIDs: [String]
+  ) throws -> InteractiveRebasePlan {
+    guard !selectedOIDs.isEmpty else {
+      throw HistoryRewriteError.emptySelection
+    }
+    guard selectedOIDs.count >= 2 else {
+      throw HistoryRewriteError.requiresMultipleCommits
+    }
+    guard Set(selectedOIDs).count == selectedOIDs.count else {
+      throw HistoryRewriteError.duplicateSelection
+    }
+
+    let selected = Set(selectedOIDs)
+    let indices = selectedOIDs.compactMap { oid in
+      steps.firstIndex(where: { $0.oid == oid })
+    }
+    guard indices.count == selectedOIDs.count else {
+      throw HistoryRewriteError.unknownCommit
+    }
+
+    // A preset always starts from a clean pick list. This prevents an
+    // interactive rebase plan loaded in a future context from carrying stale
+    // actions into a new request.
+    var rewrittenSteps = steps.map {
+      InteractiveRebaseStep(oid: $0.oid, subject: $0.subject)
+    }
+    let orderedIndices = indices.sorted()
+
+    switch action {
+    case .squash:
+      guard isContiguous(orderedIndices) else {
+        throw HistoryRewriteError.selectionMustBeContiguous
+      }
+      for index in orderedIndices.dropFirst() {
+        rewrittenSteps[index].action = .squash
+      }
+
+    case .drop:
+      for oid in selected {
+        if let index = rewrittenSteps.firstIndex(where: { $0.oid == oid }) {
+          rewrittenSteps[index].action = .drop
+        }
+      }
+
+    case .moveDown:
+      guard isContiguous(orderedIndices) else {
+        throw HistoryRewriteError.selectionMustBeContiguous
+      }
+      guard let start = orderedIndices.first, start > 0,
+        let end = orderedIndices.last
+      else {
+        throw HistoryRewriteError.cannotMoveDown
+      }
+
+      let selectedBlock = Array(rewrittenSteps[start...end])
+      let precedingStep = rewrittenSteps[start - 1]
+      rewrittenSteps.replaceSubrange(
+        (start - 1)...end,
+        with: selectedBlock + [precedingStep]
+      )
+    }
+
+    return InteractiveRebasePlan(
+      upstreamOID: upstreamOID,
+      originalHeadOID: originalHeadOID,
+      steps: rewrittenSteps
+    )
+  }
+
+  private func isContiguous(_ indices: [Int]) -> Bool {
+    guard let first = indices.first else { return false }
+    return indices.enumerated().allSatisfy { offset, index in
+      index == first + offset
+    }
   }
 }
 

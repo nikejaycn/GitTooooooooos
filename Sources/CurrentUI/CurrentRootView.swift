@@ -61,6 +61,7 @@ public struct CurrentRootView: View {
   @State private var diffPresentation: DiffPresentation = .unified
   @State private var fileInsightPathText = ""
   @State private var pendingInteractiveRebaseOID: String?
+  @State private var pendingHistoryRewrite: HistoryRewriteRequest?
   @State private var conflictEditorPath: GitPath?
   @State private var isShowingCommandPalette = false
   @State private var isEditingRemote = false
@@ -558,6 +559,40 @@ public struct CurrentRootView: View {
         )
       }
     }
+    .sheet(item: $pendingHistoryRewrite) { request in
+      InteractiveRebaseView(
+        upstream: request.upstreamOID,
+        title: historyRewriteTitle(for: request),
+        subtitle: historyRewriteSubtitle(for: request),
+        startButtonTitle: historyRewriteStartTitle(for: request),
+        load: loadInteractiveRebase,
+        prepare: { plan in
+          try plan.applying(request.action, to: request.commitOIDs)
+        },
+        execute: runInteractiveRebase,
+        dismiss: { pendingHistoryRewrite = nil }
+      )
+    }
+  }
+
+  private func historyRewriteTitle(for request: HistoryRewriteRequest) -> String {
+    switch request.action {
+    case .squash: "Squash \(request.commitOIDs.count) Commits"
+    case .drop: "Drop \(request.commitOIDs.count) Commits"
+    case .moveDown: "Move \(request.commitOIDs.count) Commits Down"
+    }
+  }
+
+  private func historyRewriteSubtitle(for request: HistoryRewriteRequest) -> String {
+    "Review the rewrite plan for commits after \(request.upstreamOID.prefix(12))."
+  }
+
+  private func historyRewriteStartTitle(for request: HistoryRewriteRequest) -> String {
+    switch request.action {
+    case .squash: "Squash Commits"
+    case .drop: "Drop Commits"
+    case .moveDown: "Move Commits Down"
+    }
   }
 
   private func beginTrackingLFS(lockable: Bool) {
@@ -646,6 +681,9 @@ public struct CurrentRootView: View {
         openFileInsights: openFileInsights,
         requestInteractiveRebase: { oid in
           pendingInteractiveRebaseOID = oid
+        },
+        requestHistoryRewrite: { request in
+          pendingHistoryRewrite = request
         },
         requestCreateBranchAtCommit: prepareNewBranch,
         requestCreateWorktreeAtCommit: prepareNewWorktree,
