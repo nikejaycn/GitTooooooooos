@@ -32,7 +32,6 @@ jobs:
       DEVELOPMENT_TEAM: 7QSPARVZYS
       CODE_SIGN_IDENTITY: Developer ID Application
       CURRENT_PACKAGE_OUTPUT: .build/Packages
-      SIGNING_KEYCHAIN_PATH: ${{ runner.temp }}/gitcurrent-signing.keychain-db
       SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_SIGNING_KEYCHAIN_PASSWORD }}
       RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
       NOTARIZE_REQUESTED: ${{ github.event_name == 'push' && 'true' || inputs.notarize }}
@@ -42,7 +41,7 @@ jobs:
 
       - name: Select Swift 6.2 capable Xcode
         run: |
-          selected="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          selected="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print 2>/dev/null | sort -V | tail -1)"
           if [[ -z "$selected" ]]; then
             echo "A Swift 6.2 / Xcode 26 installation is required." >&2
             exit 1
@@ -68,26 +67,27 @@ jobs:
           CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
         run: |
+          signing_keychain_path="$RUNNER_TEMP/gitcurrent-signing.keychain-db"
           if [[ -z "$CERTIFICATE_P12_BASE64" || -z "$CERTIFICATE_PASSWORD" || -z "$SIGNING_KEYCHAIN_PASSWORD" ]]; then
             echo "Missing certificate secrets. Provide the P12 bundle, its password, and a temporary keychain password." >&2
             exit 2
           fi
           certificate_path="$RUNNER_TEMP/gitcurrent-developer-id.p12"
           printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate_path"
-          security create-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN_PATH"
-          security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN_PATH"
+          security create-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$signing_keychain_path"
+          security set-keychain-settings -lut 21600 "$signing_keychain_path"
+          security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$signing_keychain_path"
           security import "$certificate_path" \
-            -k "$SIGNING_KEYCHAIN_PATH" \
+            -k "$signing_keychain_path" \
             -P "$CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign \
             -T /usr/bin/security
-          security list-keychains -d user -s "$SIGNING_KEYCHAIN_PATH" login.keychain-db
-          security default-keychain -s "$SIGNING_KEYCHAIN_PATH"
+          security list-keychains -d user -s "$signing_keychain_path" login.keychain-db
+          security default-keychain -s "$signing_keychain_path"
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
-            -s -k "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN_PATH"
-          security find-identity -v -p codesigning "$SIGNING_KEYCHAIN_PATH"
+            -s -k "$SIGNING_KEYCHAIN_PASSWORD" "$signing_keychain_path"
+          security find-identity -v -p codesigning "$signing_keychain_path"
 
       - name: Configure App Store Connect key for notarization
         if: env.NOTARIZE_REQUESTED == 'true'
@@ -145,6 +145,7 @@ jobs:
       - name: Remove temporary signing keychain
         if: always()
         run: |
-          if [[ -f "$SIGNING_KEYCHAIN_PATH" ]]; then
-            security delete-keychain "$SIGNING_KEYCHAIN_PATH" || true
+          signing_keychain_path="$RUNNER_TEMP/gitcurrent-signing.keychain-db"
+          if [[ -f "$signing_keychain_path" ]]; then
+            security delete-keychain "$signing_keychain_path" || true
           fi
