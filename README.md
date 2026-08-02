@@ -56,6 +56,8 @@ Xcode archive，再在导出阶段只签名一次 `GitCurrent.app`；随后重�
 
 ```bash
 Scripts/release-macos.sh test --dry-run
+# 构建并验证但不提交或发布
+Scripts/release-macos.sh test --validate-only
 ```
 
 签名所需证书和私钥只应存在于钥匙串或 CI Secret，不要放入仓库。当前工程的
