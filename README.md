@@ -32,6 +32,26 @@ arm64 Git 2.55.0，并加入 Git LFS 3.7.1。Xcode 会把生成物嵌入
 `GitCurrent.app/Contents/Resources/Git`。Debug 在生成物尚未就绪时可回退
 `/usr/bin/git`；Release 缺少 Bundle 会直接构建失败，生产版本不依赖系统 Git。
 
+## 构建缓存清理
+
+`.build` 中的 DerivedData、SwiftPM、QA 和测试产物都可以重新生成。清理规则由
+`Scripts/cleanup-build-artifacts.sh` 统一管理：目录树内没有任何写入超过 72 小时后
+才会清理，发布目录默认只保留最近 3 组。构建必需的 `.build/GitBundle`，以及
+SwiftPM/Xcode 共用的 `SourcePackages`、`checkouts`、`repositories` 和 `artifacts`
+依赖目录始终保留。脚本默认只预览，不删除文件：
+
+```bash
+# 预览将要清理的内容
+Scripts/cleanup-build-artifacts.sh
+
+# 确认无构建、测试或发布进程后执行
+Scripts/cleanup-build-artifacts.sh --apply
+```
+
+可用 `--cache-days DAYS` 和 `--keep-releases COUNT` 调整规则。脚本使用独占锁避免
+清理任务重入，并跳过保留期内仍有写入的目录。建议每周执行一次；如需无人值守
+执行，应由本机的 launchd 或其他调度器调用带 `--apply` 的命令。
+
 ## 签名打包
 
 Developer ID Release 使用 Apple Developer Team `7QSPARVZYS`、
