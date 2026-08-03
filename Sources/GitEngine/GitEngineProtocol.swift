@@ -150,6 +150,11 @@ public protocol GitEngineProtocol: Sendable {
     oldPath: GitPath?,
     options: DiffOptions
   ) async throws -> DiffDocument
+  func fileContents(
+    at location: RepositoryLocation,
+    path: GitPath,
+    revision: FileContentRevision
+  ) async throws -> [UInt8]?
   func fileHistory(
     at location: RepositoryLocation,
     path: GitPath,
@@ -369,6 +374,14 @@ extension GitEngineProtocol {
     options: DiffOptions
   ) async throws -> DiffDocument {
     throw GitEngineError.invalidOutput("Commit diff is not implemented.")
+  }
+
+  public func fileContents(
+    at location: RepositoryLocation,
+    path: GitPath,
+    revision: FileContentRevision
+  ) async throws -> [UInt8]? {
+    nil
   }
 
   public func fileHistory(

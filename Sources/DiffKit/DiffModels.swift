@@ -6,6 +6,23 @@ public enum DiffPresentation: String, Hashable, Sendable, Codable {
   case split
 }
 
+public struct DiffTextConfiguration: Hashable, Sendable, Codable {
+  public static let minimumFontSize = 9.0
+  public static let maximumFontSize = 24.0
+
+  public let fontName: String?
+  public let fontSize: Double
+
+  public init(fontName: String? = nil, fontSize: Double = 12) {
+    let normalizedName = fontName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    self.fontName = normalizedName?.isEmpty == false ? normalizedName : nil
+    self.fontSize = min(
+      max(fontSize, Self.minimumFontSize),
+      Self.maximumFontSize
+    )
+  }
+}
+
 public enum DiffSource: String, Hashable, Sendable, Codable {
   case unstaged
   case staged

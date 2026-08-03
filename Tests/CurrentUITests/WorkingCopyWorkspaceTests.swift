@@ -34,6 +34,12 @@ struct WorkingCopyWorkspaceTests {
     )
   }
 
+  @Test("Working Copy diff fills wide code viewports")
+  func diffContentWidth() {
+    #expect(WorkingCopyDiffPresentation.contentWidth(viewportWidth: 480) == 620)
+    #expect(WorkingCopyDiffPresentation.contentWidth(viewportWidth: 980) == 980)
+  }
+
   @Test("Commit drafts validate paired co-author fields and build requests")
   func commitDraftRequest() throws {
     var draft = CommitDraftState()

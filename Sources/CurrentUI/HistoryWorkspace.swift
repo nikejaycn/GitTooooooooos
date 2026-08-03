@@ -309,6 +309,12 @@ struct HistoryWorkspace: View {
       hasSubmittedRepositorySearch = false
       actions.clearSearch()
     }
+    .onAppear {
+      synchronizeComparisonFileSelection()
+    }
+    .onChange(of: state.comparison) {
+      synchronizeComparisonFileSelection()
+    }
   }
 
   private var toolbar: some View {
@@ -517,7 +523,7 @@ struct HistoryWorkspace: View {
   ) -> some View {
     let isSelected =
       diffState.selectedCommitComparison == comparison
-      && diffState.selectedCommit?.path == file.path
+      && diffState.selectedCommitFile == file
     return Button {
       diffActions.loadCommit(file, comparison)
     } label: {
@@ -607,18 +613,38 @@ struct HistoryWorkspace: View {
       } else if let document = diffState.selectedCommit {
         DiffDocumentView(
           document: document,
-          presentation: diffPresentation
+          presentation: diffPresentation,
+          preview: diffState.selectedCommitPreview,
+          textConfiguration: diffState.textConfiguration
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        ContentUnavailableView(
-          "Choose a Changed File",
-          systemImage: "doc.text.magnifyingglass",
-          description: Text("Select a file on the left to inspect its diff.")
-        )
+        VStack {
+          ContentUnavailableView(
+            "Choose a Changed File",
+            systemImage: "doc.text.magnifyingglass",
+            description: Text("Select a file on the left to inspect its diff.")
+          )
+          Spacer(minLength: 0)
+        }
+        .padding(.top, 36)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private func synchronizeComparisonFileSelection() {
+    guard let comparison = state.comparison, let first = comparison.files.first else {
+      return
+    }
+    if diffState.selectedCommitComparison == comparison,
+      let selectedFile = diffState.selectedCommitFile,
+      comparison.files.contains(selectedFile)
+    {
+      return
+    }
+    diffActions.loadCommit(first, comparison)
   }
 
   private var searchField: some View {

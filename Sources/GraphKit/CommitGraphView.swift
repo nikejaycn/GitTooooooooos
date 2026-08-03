@@ -132,14 +132,14 @@ public struct CommitGraphView: NSViewRepresentable {
       configuration: displayConfiguration
     )
     graph.minWidth = 46
-    graph.maxWidth = 240
-    graph.resizingMask = []
+    graph.maxWidth = 360
+    graph.resizingMask = .userResizingMask
     table.addTableColumn(graph)
 
     let commit = NSTableColumn(identifier: .commit)
     commit.title = "Commit"
-    commit.minWidth = 300
-    commit.resizingMask = .autoresizingMask
+    commit.minWidth = 180
+    commit.resizingMask = [.userResizingMask, .autoresizingMask]
     table.addTableColumn(commit)
 
     Self.synchronizeOptionalColumns(
@@ -177,8 +177,6 @@ public struct CommitGraphView: NSViewRepresentable {
       in: table,
       configuration: displayConfiguration
     )
-    table.tableColumn(withIdentifier: .graph)?.width =
-      Self.graphColumnWidth(for: rows, configuration: displayConfiguration)
     context.coordinator.scroll(to: scrollToCommitOID, in: table)
     context.coordinator.selectFirstRowIfNeeded(in: table)
     Self.restoreLeadingColumns(in: scrollView)
@@ -231,6 +229,7 @@ public struct CommitGraphView: NSViewRepresentable {
           column.width = 92
           column.minWidth = 78
         }
+        column.resizingMask = .userResizingMask
         table.addTableColumn(column)
       } else if !shouldExist,
         let column = table.tableColumn(withIdentifier: identifier)

@@ -14,7 +14,16 @@ import UniformTypeIdentifiers
 @Observable
 final class AppModel {
   private static let historyPageSize = 200
+  private static let previewableImageExtensions: Set<String> = [
+    "avif", "bmp", "gif", "heic", "heif", "ico", "jpeg", "jpg", "png", "tif", "tiff", "webp",
+  ]
   static let supportedCommitLimits = [1_000, 5_000, 10_000, 25_000, 50_000]
+
+  private static func supportsImagePreview(_ path: GitPath) -> Bool {
+    guard let name = String(bytes: path.rawBytes, encoding: .utf8) else { return false }
+    let pathExtension = URL(fileURLWithPath: name).pathExtension.lowercased()
+    return previewableImageExtensions.contains(pathExtension)
+  }
 
   private(set) var repositoryName: String?
   private(set) var repositoryPath: String?
@@ -40,6 +49,7 @@ final class AppModel {
   private(set) var customDiffToolPath = ""
   private(set) var customMergeToolPath = ""
   private(set) var graphDisplayConfiguration = GraphDisplayConfiguration()
+  private(set) var diffTextConfiguration = DiffTextConfiguration()
   private(set) var hiddenGraphReferences = Set<String>()
   private(set) var soloGraphReference: String?
   private(set) var pinnedGraphReferences = Set<String>()
@@ -62,6 +72,13 @@ final class AppModel {
   private(set) var lastRecoveryReference: RecoveryReference?
   var selectedDiff: DiffDocument? { inspectionSession.selectedDiff }
   var selectedCommitDiff: DiffDocument? { inspectionSession.selectedCommitDiff }
+  var selectedCommitDiffFile: CommitFileChange? {
+    inspectionSession.selectedCommitDiffFile
+  }
+  var selectedFilePreview: FilePreviewContent? { inspectionSession.selectedFilePreview }
+  var selectedCommitFilePreview: FilePreviewContent? {
+    inspectionSession.selectedCommitFilePreview
+  }
   var selectedCommitDiffComparison: CommitComparison? {
     inspectionSession.selectedCommitDiffComparison
   }
@@ -115,6 +132,7 @@ final class AppModel {
     customDiffToolPath = preferences.customDiffToolPath
     customMergeToolPath = preferences.customMergeToolPath
     graphDisplayConfiguration = preferences.graphDisplayConfiguration
+    diffTextConfiguration = preferences.diffTextConfiguration
     hiddenGraphReferences = preferences.hiddenGraphReferences
     soloGraphReference = preferences.soloGraphReference
     pinnedGraphReferences = preferences.pinnedGraphReferences
@@ -343,6 +361,26 @@ final class AppModel {
     guard newAppearance != appearance else { return }
     appearance = newAppearance
     preferences.appearance = newAppearance
+  }
+
+  func setDiffTextFont(_ fontName: String?) {
+    let configuration = DiffTextConfiguration(
+      fontName: fontName,
+      fontSize: diffTextConfiguration.fontSize
+    )
+    guard configuration != diffTextConfiguration else { return }
+    diffTextConfiguration = configuration
+    preferences.diffTextConfiguration = configuration
+  }
+
+  func setDiffTextFontSize(_ fontSize: Double) {
+    let configuration = DiffTextConfiguration(
+      fontName: diffTextConfiguration.fontName,
+      fontSize: fontSize
+    )
+    guard configuration != diffTextConfiguration else { return }
+    diffTextConfiguration = configuration
+    preferences.diffTextConfiguration = configuration
   }
 
   func toggleSidebarSection(_ section: SidebarSection) {
@@ -778,6 +816,9 @@ final class AppModel {
       change.kind == .untracked
       ? .untracked
       : change.isUnstaged ? .unstaged : .staged
+    let previewRevision: FileContentRevision =
+      source == .staged ? .index : .workingTree
+    let shouldLoadPreview = Self.supportsImagePreview(change.path)
     diffRequest.start { [weak self] requestID in
       guard let self else { return }
       defer {
@@ -786,13 +827,22 @@ final class AppModel {
         }
       }
       do {
-        let document = try await repository.diff(
+        async let documentRequest = repository.diff(
           for: change.path,
           source: source,
           options: diffOptions
         )
+        async let previewRequest: FilePreviewContent? =
+          shouldLoadPreview
+          ? (try? await repository.filePreview(
+            for: change.path,
+            revision: previewRevision
+          ))
+          : nil
+        let document = try await documentRequest
+        let preview = await previewRequest
         guard diffRequest.isCurrent(requestID) else { return }
-        inspectionSession.finishDiff(with: document)
+        inspectionSession.finishDiff(with: document, preview: preview)
       } catch is CancellationError {
         return
       } catch {
@@ -815,6 +865,15 @@ final class AppModel {
       file: file,
       comparison: comparison
     )
+    let previewPath =
+      file.kind == .deleted ? (file.oldPath ?? file.path) : file.path
+    let previewRevision: FileContentRevision =
+      file.kind == .deleted
+      ? .commit(comparison.baseOID)
+      : comparison.targetOID == CommitComparisonRevision.workingCopy
+        ? .workingTree
+        : .commit(comparison.targetOID)
+    let shouldLoadPreview = Self.supportsImagePreview(previewPath)
     let sessionID = repositorySessionID
     commitDiffRequest.start { [weak self] requestID in
       guard let self else { return }
@@ -824,7 +883,7 @@ final class AppModel {
         }
       }
       do {
-        let document = try await repository.commitDiff(
+        async let documentRequest = repository.commitDiff(
           base: comparison.baseOID,
           target: comparison.targetOID,
           path: file.path,
@@ -832,6 +891,15 @@ final class AppModel {
           options: diffOptions,
           generation: comparison.generation
         )
+        async let previewRequest: FilePreviewContent? =
+          shouldLoadPreview
+          ? (try? await repository.filePreview(
+            for: previewPath,
+            revision: previewRevision
+          ))
+          : nil
+        let document = try await documentRequest
+        let preview = await previewRequest
         guard
           commitDiffRequest.isCurrent(requestID),
           repositorySessionID == sessionID,
@@ -839,7 +907,7 @@ final class AppModel {
         else {
           return
         }
-        inspectionSession.finishCommitDiff(with: document)
+        inspectionSession.finishCommitDiff(with: document, preview: preview)
       } catch is CancellationError {
         return
       } catch {

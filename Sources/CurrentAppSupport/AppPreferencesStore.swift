@@ -25,6 +25,8 @@ public struct AppPreferencesStore {
     static let graphScale = "Current.graphScale.v1"
     static let ignoresWhitespaceChanges = "Current.ignoresWhitespaceChanges.v1"
     static let ignoresEndOfLineWhitespace = "Current.ignoresEndOfLineWhitespace.v1"
+    static let diffTextFontName = "Current.diffTextFontName.v1"
+    static let diffTextFontSize = "Current.diffTextFontSize.v1"
     static let hiddenGraphReferences = "Current.hiddenGraphReferences.v1"
     static let soloGraphReference = "Current.soloGraphReference.v1"
     static let pinnedGraphReferences = "Current.pinnedGraphReferences.v1"
@@ -153,6 +155,24 @@ public struct AppPreferencesStore {
         newValue.ignoresEndOfLineWhitespace,
         forKey: Key.ignoresEndOfLineWhitespace
       )
+    }
+  }
+
+  public var diffTextConfiguration: DiffTextConfiguration {
+    get {
+      let savedSize = defaults.double(forKey: Key.diffTextFontSize)
+      return DiffTextConfiguration(
+        fontName: defaults.string(forKey: Key.diffTextFontName),
+        fontSize: savedSize == 0 ? 12 : savedSize
+      )
+    }
+    nonmutating set {
+      if let fontName = newValue.fontName {
+        defaults.set(fontName, forKey: Key.diffTextFontName)
+      } else {
+        defaults.removeObject(forKey: Key.diffTextFontName)
+      }
+      defaults.set(newValue.fontSize, forKey: Key.diffTextFontSize)
     }
   }
 

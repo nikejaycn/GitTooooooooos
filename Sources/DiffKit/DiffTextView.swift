@@ -3,9 +3,14 @@ import SwiftUI
 
 public struct DiffTextView: NSViewRepresentable {
   private let document: DiffDocument
+  private let configuration: DiffTextConfiguration
 
-  public init(document: DiffDocument) {
+  public init(
+    document: DiffDocument,
+    configuration: DiffTextConfiguration = DiffTextConfiguration()
+  ) {
     self.document = document
+    self.configuration = configuration
   }
 
   public func makeNSView(context: Context) -> SyntaxDiffScrollView {
@@ -16,7 +21,7 @@ public struct DiffTextView: NSViewRepresentable {
     _ scrollView: SyntaxDiffScrollView,
     context: Context
   ) {
-    scrollView.update(document)
+    scrollView.update(document, configuration: configuration)
   }
 
   public static func dismantleNSView(
@@ -39,6 +44,7 @@ public final class SyntaxDiffScrollView: NSScrollView {
   private let highlightSession = SyntaxHighlightSession()
   private var highlightDebounceTask: Task<Void, Never>?
   private var renderedDocument: DiffDocument?
+  private var renderedConfiguration: DiffTextConfiguration?
 
   override public init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -70,10 +76,16 @@ public final class SyntaxDiffScrollView: NSScrollView {
     documentGeometry.synchronize(diffTextView, in: self)
   }
 
-  public func update(_ document: DiffDocument) {
-    guard renderedDocument != document else { return }
+  public func update(
+    _ document: DiffDocument,
+    configuration: DiffTextConfiguration = DiffTextConfiguration()
+  ) {
+    guard renderedDocument != document || renderedConfiguration != configuration else {
+      return
+    }
     renderedDocument = document
-    let rendered = render(document)
+    renderedConfiguration = configuration
+    let rendered = render(document, configuration: configuration)
     diffTextView.textStorage?.setAttributedString(rendered.attributedText)
     documentGeometry.contentDidChange()
     documentGeometry.synchronize(diffTextView, in: self)
@@ -95,6 +107,10 @@ public final class SyntaxDiffScrollView: NSScrollView {
 
   var documentSizeForTesting: NSSize {
     diffTextView.frame.size
+  }
+
+  var renderedTextForTesting: NSAttributedString {
+    diffTextView.attributedString()
   }
 
   public func cancelHighlighting() {
@@ -146,11 +162,14 @@ public final class SyntaxDiffScrollView: NSScrollView {
     return textView
   }
 
-  private func render(_ document: DiffDocument) -> RenderedDocument {
+  private func render(
+    _ document: DiffDocument,
+    configuration: DiffTextConfiguration
+  ) -> RenderedDocument {
     let output = NSMutableAttributedString()
     var oldProjection = SyntaxHighlightProjectionBuilder()
     var newProjection = SyntaxHighlightProjectionBuilder()
-    let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    let font = configuration.resolvedFont
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = 2
     let base: [NSAttributedString.Key: Any] = [
@@ -173,11 +192,11 @@ public final class SyntaxDiffScrollView: NSScrollView {
       )
     }
 
+    let lineLayout = UnifiedDiffLineLayout(document: document)
     for hunk in document.hunks {
       output.append(
         NSAttributedString(
-          string:
-            "@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@ \(hunk.heading)\n",
+          string: lineLayout.hunkHeader(hunk),
           attributes: base.merging([
             .foregroundColor: NSColor.systemBlue,
             .backgroundColor: NSColor.systemBlue.withAlphaComponent(0.10),
@@ -185,30 +204,26 @@ public final class SyntaxDiffScrollView: NSScrollView {
         )
       )
       for line in hunk.lines {
-        let prefix: String
         let background: NSColor?
         switch line.kind {
         case .addition:
-          prefix = "+"
           background = NSColor.systemGreen.withAlphaComponent(0.12)
         case .deletion:
-          prefix = "-"
           background = NSColor.systemRed.withAlphaComponent(0.12)
         case .context:
-          prefix = " "
           background = nil
         case .noNewlineMarker:
-          prefix = ""
           background = NSColor.systemOrange.withAlphaComponent(0.10)
         }
         var attributes = base
         if let background {
           attributes[.backgroundColor] = background
         }
-        let renderedLocation = output.length + prefix.utf16.count
+        let renderedLine = lineLayout.render(line)
+        let renderedLocation = output.length + renderedLine.codeOffset
         output.append(
           NSAttributedString(
-            string: "\(prefix)\(line.text)\n",
+            string: renderedLine.text,
             attributes: attributes
           )
         )
@@ -234,5 +249,80 @@ public final class SyntaxDiffScrollView: NSScrollView {
       oldProjection: oldProjection.build(),
       newProjection: newProjection.build()
     )
+  }
+}
+
+extension DiffTextConfiguration {
+  var resolvedFont: NSFont {
+    if let fontName,
+      let font = NSFont(name: fontName, size: fontSize),
+      NSFontManager.shared.traits(of: font).contains(.fixedPitchFontMask)
+    {
+      return font
+    }
+    return NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+  }
+}
+
+struct UnifiedDiffLineLayout {
+  struct RenderedLine: Equatable {
+    let text: String
+    let codeOffset: Int
+  }
+
+  let columnWidth: Int
+
+  init(document: DiffDocument) {
+    let maximumLineNumber =
+      document.hunks.lazy
+      .flatMap(\.lines)
+      .compactMap { line in
+        max(line.oldLineNumber ?? 0, line.newLineNumber ?? 0)
+      }
+      .max() ?? 0
+    columnWidth = max(3, String(maximumLineNumber).count)
+  }
+
+  func hunkHeader(_ hunk: DiffHunk) -> String {
+    let gutter = String(repeating: " ", count: (columnWidth * 2) + 4)
+    return gutter
+      + "@@ -\(hunk.oldStart),\(hunk.oldCount) "
+      + "+\(hunk.newStart),\(hunk.newCount) @@ \(hunk.heading)\n"
+  }
+
+  func render(_ line: DiffLine) -> RenderedLine {
+    let oldNumber: Int?
+    let newNumber: Int?
+    let marker: String
+    switch line.kind {
+    case .addition:
+      oldNumber = nil
+      newNumber = line.newLineNumber
+      marker = "+"
+    case .deletion:
+      oldNumber = line.oldLineNumber
+      newNumber = nil
+      marker = "-"
+    case .context:
+      oldNumber = line.oldLineNumber
+      newNumber = line.newLineNumber
+      marker = " "
+    case .noNewlineMarker:
+      oldNumber = nil
+      newNumber = nil
+      marker = "\\"
+    }
+    let oldColumn = padded(oldNumber)
+    let newColumn = padded(newNumber)
+    let prefix = "\(oldColumn) \(newColumn) \(marker) "
+    return RenderedLine(
+      text: "\(prefix)\(line.text)\n",
+      codeOffset: prefix.utf16.count
+    )
+  }
+
+  private func padded(_ number: Int?) -> String {
+    let value = number.map(String.init) ?? ""
+    return String(repeating: " ", count: max(0, columnWidth - value.count)) + value
   }
 }

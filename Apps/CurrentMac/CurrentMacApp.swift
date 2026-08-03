@@ -211,8 +211,12 @@ private struct CurrentWorkspaceWindow: View {
       diff: .init(
         selected: model.selectedDiff,
         selectedCommit: model.selectedCommitDiff,
+        selectedCommitFile: model.selectedCommitDiffFile,
         selectedCommitComparison: model.selectedCommitDiffComparison,
+        selectedPreview: model.selectedFilePreview,
+        selectedCommitPreview: model.selectedCommitFilePreview,
         options: model.diffOptions,
+        textConfiguration: settingsModel.diffTextConfiguration,
         externalDiffTool: model.externalDiffTool,
         externalMergeTool: model.externalMergeTool,
         isLoading: model.isDiffLoading,

@@ -3,9 +3,14 @@ import SwiftUI
 
 public struct SplitDiffTextView: NSViewRepresentable {
   private let document: DiffDocument
+  private let configuration: DiffTextConfiguration
 
-  public init(document: DiffDocument) {
+  public init(
+    document: DiffDocument,
+    configuration: DiffTextConfiguration = DiffTextConfiguration()
+  ) {
     self.document = document
+    self.configuration = configuration
   }
 
   public func makeNSView(context: Context) -> SyncedSplitDiffView {
@@ -13,7 +18,7 @@ public struct SplitDiffTextView: NSViewRepresentable {
   }
 
   public func updateNSView(_ view: SyncedSplitDiffView, context: Context) {
-    view.update(document)
+    view.update(document, configuration: configuration)
   }
 
   public static func dismantleNSView(
@@ -53,6 +58,7 @@ public final class SyncedSplitDiffView: NSView {
   private var highlightDebounceTask: Task<Void, Never>?
   private var isSynchronizingScroll = false
   private var renderedDocument: DiffDocument?
+  private var renderedConfiguration: DiffTextConfiguration?
   private var didSetInitialDividerPosition = false
 
   override public init(frame frameRect: NSRect) {
@@ -108,10 +114,16 @@ public final class SyncedSplitDiffView: NSView {
     newDocumentGeometry.synchronize(newTextView, in: newScrollView)
   }
 
-  public func update(_ document: DiffDocument) {
-    guard renderedDocument != document else { return }
+  public func update(
+    _ document: DiffDocument,
+    configuration: DiffTextConfiguration = DiffTextConfiguration()
+  ) {
+    guard renderedDocument != document || renderedConfiguration != configuration else {
+      return
+    }
     renderedDocument = document
-    let rendered = render(document)
+    renderedConfiguration = configuration
+    let rendered = render(document, configuration: configuration)
     oldTextView.textStorage?.setAttributedString(rendered.old)
     newTextView.textStorage?.setAttributedString(rendered.new)
     oldDocumentGeometry.contentDidChange()
@@ -220,13 +232,14 @@ public final class SyncedSplitDiffView: NSView {
   }
 
   private func render(
-    _ document: DiffDocument
+    _ document: DiffDocument,
+    configuration: DiffTextConfiguration
   ) -> RenderedDocument {
     let oldOutput = NSMutableAttributedString()
     let newOutput = NSMutableAttributedString()
     var oldProjection = SyntaxHighlightProjectionBuilder()
     var newProjection = SyntaxHighlightProjectionBuilder()
-    let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    let font = configuration.resolvedFont
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = 2
     let base: [NSAttributedString.Key: Any] = [

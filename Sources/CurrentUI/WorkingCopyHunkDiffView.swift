@@ -2,6 +2,10 @@ import DiffKit
 import SwiftUI
 
 enum WorkingCopyDiffPresentation {
+  static func contentWidth(viewportWidth: CGFloat) -> CGFloat {
+    max(620, viewportWidth)
+  }
+
   static func lineActionTitle(_ line: DiffLine, source: DiffSource) -> String {
     let verb = source == .staged ? "Unstage" : "Stage"
     return "\(verb) \(lineDescription(line))"
@@ -16,6 +20,7 @@ enum WorkingCopyDiffPresentation {
 
 struct WorkingCopyHunkDiffView: View {
   let document: DiffDocument
+  let textConfiguration: DiffTextConfiguration
   let isLoading: Bool
   let applyHunk: (DiffDocument, DiffHunk) -> Void
   let applyLine: (DiffDocument, DiffHunk, Int) -> Void
@@ -34,13 +39,20 @@ struct WorkingCopyHunkDiffView: View {
         systemImage: "doc.text.magnifyingglass"
       )
     } else {
-      ScrollView([.vertical, .horizontal]) {
-        LazyVStack(alignment: .leading, spacing: 0) {
-          ForEach(Array(document.hunks.enumerated()), id: \.element.id) { entry in
-            hunkView(entry.element, index: entry.offset)
+      GeometryReader { geometry in
+        ScrollView([.vertical, .horizontal]) {
+          LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(document.hunks.enumerated()), id: \.element.id) { entry in
+              hunkView(entry.element, index: entry.offset)
+            }
           }
+          .frame(
+            width: WorkingCopyDiffPresentation.contentWidth(
+              viewportWidth: geometry.size.width
+            ),
+            alignment: .topLeading
+          )
         }
-        .frame(minWidth: 620, alignment: .leading)
       }
       .background(.background)
     }
@@ -105,7 +117,7 @@ struct WorkingCopyHunkDiffView: View {
     }
     .padding(.horizontal, 10)
     .frame(height: 34)
-    .frame(minWidth: 620)
+    .frame(maxWidth: .infinity)
     .background(Color(nsColor: .controlBackgroundColor))
   }
 
@@ -121,9 +133,9 @@ struct WorkingCopyHunkDiffView: View {
         .fixedSize(horizontal: true, vertical: false)
         .padding(.trailing, 12)
     }
-    .font(.system(size: 12, design: .monospaced))
+    .font(codeFont)
     .foregroundStyle(lineForeground(line))
-    .frame(height: 20)
+    .frame(maxWidth: .infinity, minHeight: lineHeight, alignment: .leading)
     .background(lineBackground(line))
   }
 
@@ -152,5 +164,16 @@ struct WorkingCopyHunkDiffView: View {
     case .context: .clear
     case .noNewlineMarker: .orange.opacity(0.08)
     }
+  }
+
+  private var codeFont: Font {
+    if let fontName = textConfiguration.fontName {
+      return .custom(fontName, fixedSize: textConfiguration.fontSize)
+    }
+    return .system(size: textConfiguration.fontSize, design: .monospaced)
+  }
+
+  private var lineHeight: CGFloat {
+    max(18, textConfiguration.fontSize + 8)
   }
 }

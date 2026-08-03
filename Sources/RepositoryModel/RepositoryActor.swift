@@ -175,6 +175,22 @@ public actor RepositoryActor {
     return document
   }
 
+  public func filePreview(
+    for path: GitPath,
+    revision: FileContentRevision
+  ) async throws -> FilePreviewContent? {
+    guard
+      let bytes = try await engine.fileContents(
+        at: location,
+        path: path,
+        revision: revision
+      )
+    else {
+      return nil
+    }
+    return FilePreviewContent(path: path, data: Data(bytes))
+  }
+
   public func fileHistory(
     for path: GitPath,
     limit: Int,

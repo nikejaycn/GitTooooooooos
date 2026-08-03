@@ -104,6 +104,22 @@ public struct FileChange: Hashable, Sendable, Codable, Identifiable {
   }
 }
 
+public enum FileContentRevision: Hashable, Sendable {
+  case workingTree
+  case index
+  case commit(String)
+}
+
+public struct FilePreviewContent: Hashable, Sendable {
+  public let path: GitPath
+  public let data: Data
+
+  public init(path: GitPath, data: Data) {
+    self.path = path
+    self.data = data
+  }
+}
+
 public enum RepositoryOperationKind: String, Hashable, Sendable, Codable {
   case none
   case merge

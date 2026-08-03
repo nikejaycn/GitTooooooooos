@@ -22,6 +22,7 @@ struct AppPreferencesStoreTests {
     #expect(store.externalMergeTool == .none)
     #expect(store.graphDisplayConfiguration == GraphDisplayConfiguration())
     #expect(store.diffOptions == DiffOptions())
+    #expect(store.diffTextConfiguration == DiffTextConfiguration())
     #expect(store.visibleSidebarSections == Set(SidebarSection.allCases))
   }
 
@@ -45,6 +46,7 @@ struct AppPreferencesStoreTests {
       ignoresWhitespaceChanges: true,
       ignoresEndOfLineWhitespace: true
     )
+    let diffText = DiffTextConfiguration(fontName: "Menlo-Regular", fontSize: 15)
 
     store.recentRepositories = [recent]
     store.maximumLoadedCommitCount = 25_000
@@ -58,6 +60,7 @@ struct AppPreferencesStoreTests {
     store.customMergeToolPath = "/Applications/Merge.app"
     store.graphDisplayConfiguration = graph
     store.diffOptions = diff
+    store.diffTextConfiguration = diffText
     store.hiddenGraphReferences = ["refs/heads/hidden"]
     store.soloGraphReference = "refs/heads/main"
     store.pinnedGraphReferences = ["refs/heads/main"]
@@ -76,6 +79,7 @@ struct AppPreferencesStoreTests {
     #expect(reloaded.customMergeToolPath == "/Applications/Merge.app")
     #expect(reloaded.graphDisplayConfiguration == graph)
     #expect(reloaded.diffOptions == diff)
+    #expect(reloaded.diffTextConfiguration == diffText)
     #expect(reloaded.hiddenGraphReferences == ["refs/heads/hidden"])
     #expect(reloaded.soloGraphReference == "refs/heads/main")
     #expect(reloaded.pinnedGraphReferences == ["refs/heads/main"])

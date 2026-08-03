@@ -130,8 +130,12 @@ extension CurrentRootState {
   public struct DiffState {
     public let selected: DiffDocument?
     public let selectedCommit: DiffDocument?
+    public let selectedCommitFile: CommitFileChange?
     public let selectedCommitComparison: CommitComparison?
+    public let selectedPreview: FilePreviewContent?
+    public let selectedCommitPreview: FilePreviewContent?
     public let options: DiffOptions
+    public let textConfiguration: DiffTextConfiguration
     public let externalDiffTool: ExternalTool
     public let externalMergeTool: ExternalTool
     public let isLoading: Bool
@@ -140,8 +144,12 @@ extension CurrentRootState {
     public init(
       selected: DiffDocument?,
       selectedCommit: DiffDocument?,
+      selectedCommitFile: CommitFileChange?,
       selectedCommitComparison: CommitComparison?,
+      selectedPreview: FilePreviewContent?,
+      selectedCommitPreview: FilePreviewContent?,
       options: DiffOptions,
+      textConfiguration: DiffTextConfiguration,
       externalDiffTool: ExternalTool,
       externalMergeTool: ExternalTool,
       isLoading: Bool,
@@ -149,8 +157,12 @@ extension CurrentRootState {
     ) {
       self.selected = selected
       self.selectedCommit = selectedCommit
+      self.selectedCommitFile = selectedCommitFile
       self.selectedCommitComparison = selectedCommitComparison
+      self.selectedPreview = selectedPreview
+      self.selectedCommitPreview = selectedCommitPreview
       self.options = options
+      self.textConfiguration = textConfiguration
       self.externalDiffTool = externalDiffTool
       self.externalMergeTool = externalMergeTool
       self.isLoading = isLoading

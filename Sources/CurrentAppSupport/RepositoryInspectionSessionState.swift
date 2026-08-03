@@ -8,11 +8,13 @@ import DiffKit
 public struct RepositoryInspectionSessionState: Equatable {
   public private(set) var selectedDiff: DiffDocument?
   public private(set) var selectedDiffChange: FileChange?
+  public private(set) var selectedFilePreview: FilePreviewContent?
   public private(set) var isDiffLoading = false
 
   public private(set) var selectedCommitDiff: DiffDocument?
   public private(set) var selectedCommitDiffFile: CommitFileChange?
   public private(set) var selectedCommitDiffComparison: CommitComparison?
+  public private(set) var selectedCommitFilePreview: FilePreviewContent?
   public private(set) var isCommitDiffLoading = false
 
   public private(set) var fileHistory: FileHistoryResult?
@@ -24,12 +26,19 @@ public struct RepositoryInspectionSessionState: Equatable {
 
   public mutating func beginDiff(for change: FileChange) {
     selectedDiffChange = change
+    selectedFilePreview = nil
     isDiffLoading = true
   }
 
-  public mutating func finishDiff(with document: DiffDocument? = nil) {
+  public mutating func finishDiff(
+    with document: DiffDocument? = nil,
+    preview: FilePreviewContent? = nil
+  ) {
     if let document {
       selectedDiff = document
+    }
+    if let preview {
+      selectedFilePreview = preview
     }
     isDiffLoading = false
   }
@@ -42,6 +51,7 @@ public struct RepositoryInspectionSessionState: Equatable {
   public mutating func clearDiff() {
     selectedDiff = nil
     selectedDiffChange = nil
+    selectedFilePreview = nil
     isDiffLoading = false
   }
 
@@ -52,12 +62,19 @@ public struct RepositoryInspectionSessionState: Equatable {
     selectedCommitDiff = nil
     selectedCommitDiffFile = file
     selectedCommitDiffComparison = comparison
+    selectedCommitFilePreview = nil
     isCommitDiffLoading = true
   }
 
-  public mutating func finishCommitDiff(with document: DiffDocument? = nil) {
+  public mutating func finishCommitDiff(
+    with document: DiffDocument? = nil,
+    preview: FilePreviewContent? = nil
+  ) {
     if let document {
       selectedCommitDiff = document
+    }
+    if let preview {
+      selectedCommitFilePreview = preview
     }
     isCommitDiffLoading = false
   }
@@ -71,6 +88,7 @@ public struct RepositoryInspectionSessionState: Equatable {
     selectedCommitDiff = nil
     selectedCommitDiffFile = nil
     selectedCommitDiffComparison = nil
+    selectedCommitFilePreview = nil
     isCommitDiffLoading = false
   }
 

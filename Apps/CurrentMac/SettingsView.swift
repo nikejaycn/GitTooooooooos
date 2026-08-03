@@ -2,6 +2,7 @@ import AppKit
 import CurrentAppSupport
 import CurrentDomain
 import CurrentUI
+import DiffKit
 import GraphKit
 import SwiftUI
 import UpdateKit
@@ -41,6 +42,55 @@ struct CurrentSettingsView: View {
           }
         }
         .pickerStyle(.segmented)
+      }
+
+      Section("Code Viewer") {
+        Picker(
+          "Font",
+          selection: Binding(
+            get: { model.diffTextConfiguration.fontName },
+            set: { model.setDiffTextFont($0) }
+          )
+        ) {
+          Text("System Monospaced").tag(String?.none)
+          ForEach(CodeFontCatalog.availableFonts) { option in
+            Text(option.title).tag(Optional(option.name))
+          }
+        }
+        .accessibilityLabel("Code font")
+
+        LabeledContent("Size") {
+          HStack(spacing: 10) {
+            Stepper(
+              value: Binding(
+                get: { model.diffTextConfiguration.fontSize },
+                set: { model.setDiffTextFontSize($0) }
+              ),
+              in: DiffTextConfiguration.minimumFontSize...DiffTextConfiguration.maximumFontSize,
+              step: 1
+            ) {
+              Text("\(model.diffTextConfiguration.fontSize, specifier: "%.0f") pt")
+                .monospacedDigit()
+                .frame(width: 46, alignment: .trailing)
+            }
+            Button("Reset") {
+              model.setDiffTextFont(nil)
+              model.setDiffTextFontSize(12)
+            }
+            .disabled(model.diffTextConfiguration == DiffTextConfiguration())
+          }
+        }
+
+        Text("let branch = \"main\"  // Diff preview")
+          .font(codePreviewFont)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(10)
+          .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+
+        Text("Used independently by Unified, Side-by-Side, and Working Copy code views.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       Section("Views") {
@@ -355,6 +405,40 @@ struct CurrentSettingsView: View {
       || draftCustomMergeToolPath.trimmingCharacters(in: .whitespacesAndNewlines)
         != model.customMergeToolPath
   }
+
+  private var codePreviewFont: Font {
+    if let fontName = model.diffTextConfiguration.fontName {
+      return .custom(fontName, fixedSize: model.diffTextConfiguration.fontSize)
+    }
+    return .system(
+      size: model.diffTextConfiguration.fontSize,
+      design: .monospaced
+    )
+  }
+}
+
+@MainActor
+private enum CodeFontCatalog {
+  struct Option: Identifiable {
+    let name: String
+    let title: String
+    var id: String { name }
+  }
+
+  static let availableFonts: [Option] = {
+    NSFontManager.shared.availableFonts.compactMap { name in
+      guard
+        let font = NSFont(name: name, size: 12),
+        NSFontManager.shared.traits(of: font).contains(.fixedPitchFontMask)
+      else {
+        return nil
+      }
+      return Option(name: name, title: font.displayName ?? name)
+    }
+    .sorted {
+      $0.title.localizedStandardCompare($1.title) == .orderedAscending
+    }
+  }()
 }
 
 private struct SettingsValueRow: View {

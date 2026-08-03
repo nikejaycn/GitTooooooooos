@@ -1,6 +1,7 @@
 import CurrentAppSupport
 import CurrentDomain
 import DiffKit
+import Foundation
 import Testing
 
 @Suite("Repository inspection session state")
@@ -15,18 +16,21 @@ struct RepositoryInspectionSessionStateTests {
       kind: .modified
     )
     let document = diff(path: change.path)
+    let preview = FilePreviewContent(path: change.path, data: Data([1, 2, 3]))
 
     state.beginDiff(for: change)
     #expect(state.selectedDiffChange == change)
     #expect(state.isDiffLoading)
 
-    state.finishDiff(with: document)
+    state.finishDiff(with: document, preview: preview)
     #expect(state.selectedDiff == document)
+    #expect(state.selectedFilePreview == preview)
     #expect(!state.isDiffLoading)
 
     state.clearDiff()
     #expect(state.selectedDiff == nil)
     #expect(state.selectedDiffChange == nil)
+    #expect(state.selectedFilePreview == nil)
   }
 
   @Test("Commit diff cleanup clears result, file, comparison, and loading together")
@@ -49,10 +53,15 @@ struct RepositoryInspectionSessionStateTests {
     #expect(state.selectedCommitDiffComparison == comparison)
     #expect(state.isCommitDiffLoading)
 
+    let preview = FilePreviewContent(path: file.path, data: Data([4, 5, 6]))
+    state.finishCommitDiff(with: diff(path: file.path), preview: preview)
+    #expect(state.selectedCommitFilePreview == preview)
+
     state.clearCommitDiff()
     #expect(state.selectedCommitDiff == nil)
     #expect(state.selectedCommitDiffFile == nil)
     #expect(state.selectedCommitDiffComparison == nil)
+    #expect(state.selectedCommitFilePreview == nil)
     #expect(!state.isCommitDiffLoading)
   }
 

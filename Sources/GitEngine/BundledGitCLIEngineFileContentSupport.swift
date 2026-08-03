@@ -2,6 +2,33 @@ import CurrentDomain
 import Foundation
 
 extension BundledGitCLIEngine {
+  public func fileContents(
+    at location: RepositoryLocation,
+    path: GitPath,
+    revision: FileContentRevision
+  ) async throws -> [UInt8]? {
+    switch revision {
+    case .workingTree:
+      let url = try workingTreeFileURL(at: location, path: path)
+      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+      let values = try url.resourceValues(
+        forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]
+      )
+      guard
+        values.isRegularFile == true,
+        values.isSymbolicLink != true,
+        (values.fileSize ?? 0) <= 128 * 1024 * 1024
+      else {
+        return nil
+      }
+      return Array(try Data(contentsOf: url, options: .mappedIfSafe))
+    case .index:
+      return try await indexStage(0, path: path, at: location)
+    case .commit(let revision):
+      return try await revisionFile(revision, path: path, at: location)
+    }
+  }
+
   func indexStage(
     _ stage: Int,
     path: GitPath,

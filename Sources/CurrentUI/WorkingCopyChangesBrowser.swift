@@ -60,7 +60,11 @@ struct WorkingCopyChangesBrowser: View {
             maxWidth: CurrentUILayout.workingCopyListMaximumWidth
           )
         diffPane
-          .frame(minWidth: CurrentUILayout.diffMinimumWidth)
+          .frame(
+            minWidth: CurrentUILayout.diffMinimumWidth,
+            maxWidth: .infinity,
+            maxHeight: .infinity
+          )
           .layoutPriority(1)
       }
     }
@@ -329,9 +333,17 @@ struct WorkingCopyChangesBrowser: View {
       VStack(spacing: 0) {
         diffHeader(document)
         Divider()
-        if diffPresentation == .unified {
+        if document.isBinary {
+          DiffDocumentView(
+            document: document,
+            presentation: diffPresentation,
+            preview: diffState.selectedPreview,
+            textConfiguration: diffState.textConfiguration
+          )
+        } else if diffPresentation == .unified {
           WorkingCopyHunkDiffView(
             document: document,
+            textConfiguration: diffState.textConfiguration,
             isLoading: isLoading,
             applyHunk: actions.applyHunk,
             applyLine: actions.applyLine,
@@ -344,7 +356,12 @@ struct WorkingCopyChangesBrowser: View {
             }
           )
         } else {
-          DiffDocumentView(document: document, presentation: .split)
+          DiffDocumentView(
+            document: document,
+            presentation: .split,
+            preview: diffState.selectedPreview,
+            textConfiguration: diffState.textConfiguration
+          )
         }
       }
     } else {

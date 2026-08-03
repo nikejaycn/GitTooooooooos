@@ -8,6 +8,7 @@ struct CommitDiffSheet: View {
   let isLoading: Bool
   @Binding var presentation: DiffPresentation
   let options: DiffOptions
+  let textConfiguration: DiffTextConfiguration
   let setOptions: (DiffOptions) -> Void
   let dismiss: () -> Void
 
@@ -60,7 +61,8 @@ struct CommitDiffSheet: View {
     } else if let document {
       DiffDocumentView(
         document: document,
-        presentation: presentation
+        presentation: presentation,
+        textConfiguration: textConfiguration
       )
     } else {
       ContentUnavailableView(

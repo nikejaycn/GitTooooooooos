@@ -26,6 +26,40 @@ struct GitEngineTests {
     #expect(commands[0].redactedDescription == "--version")
   }
 
+  @Test("Reads preview bytes from the working tree, index, and a commit")
+  func fileContents() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data([1, 2, 3]).write(to: root.appendingPathComponent("image.png"))
+    let runner = StubRunner(results: [.success([4, 5]), .success([6, 7])])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: root,
+      commonGitDirectoryURL: root.appendingPathComponent(".git")
+    )
+    let path = GitPath("image.png")
+
+    #expect(
+      try await engine.fileContents(at: location, path: path, revision: .workingTree)
+        == [1, 2, 3]
+    )
+    #expect(
+      try await engine.fileContents(at: location, path: path, revision: .index)
+        == [4, 5]
+    )
+    #expect(
+      try await engine.fileContents(at: location, path: path, revision: .commit("abc123"))
+        == [6, 7]
+    )
+    #expect(
+      await runner.commands().map(\.redactedDescription) == [
+        "show :image.png",
+        "show abc123:image.png",
+      ])
+  }
+
   @Test("Pull strategies map to explicit non-interactive Git arguments")
   func pullStrategyArguments() async throws {
     let runner = StubRunner(results: [.success(""), .success(""), .success("")])

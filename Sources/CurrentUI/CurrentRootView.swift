@@ -533,6 +533,7 @@ public struct CurrentRootView: View {
         isLoading: isCommitDiffLoading,
         presentation: $diffPresentation,
         options: diffOptions,
+        textConfiguration: state.diff.textConfiguration,
         setOptions: setDiffOptions,
         dismiss: clearCommitDiff
       )
