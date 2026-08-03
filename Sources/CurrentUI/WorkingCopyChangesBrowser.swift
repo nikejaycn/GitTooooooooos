@@ -2,7 +2,36 @@ import CurrentDomain
 import DiffKit
 import SwiftUI
 
+enum ChangedFilesBulkSelection: Equatable {
+  case none
+  case mixed
+  case all
+
+  var systemImage: String {
+    switch self {
+    case .none: "square"
+    case .mixed: "minus.square.fill"
+    case .all: "checkmark.square.fill"
+    }
+  }
+}
+
 enum ChangedFilesPresentation {
+  static func bulkSelection(for changes: [FileChange]) -> ChangedFilesBulkSelection {
+    let stagedCount = changes.count(where: \.isStaged)
+    if stagedCount == 0 { return .none }
+    if stagedCount == changes.count { return .all }
+    return .mixed
+  }
+
+  static func isToggleDisabled(
+    for path: GitPath,
+    isLoading: Bool,
+    pendingPaths: Set<GitPath>
+  ) -> Bool {
+    isLoading || pendingPaths.contains(path)
+  }
+
   static func sortedWorkingCopyChanges(_ changes: [FileChange]) -> [FileChange] {
     changes.sorted { lhs, rhs in
       let lhsRank = statusRank(lhs)
@@ -36,6 +65,7 @@ struct WorkingCopyChangesBrowser: View {
   let status: RepositoryStatus
   let diffState: CurrentRootState.DiffState
   let isLoading: Bool
+  let pendingPaths: Set<GitPath>
   @Binding var selectedPath: GitPath?
   @Binding var diffPresentation: DiffPresentation
   let actions: CurrentRootActions.WorkingCopyActions
@@ -108,8 +138,7 @@ struct WorkingCopyChangesBrowser: View {
 
   private var toolbar: some View {
     HStack(spacing: 8) {
-      Image(systemName: "minus.square")
-        .foregroundStyle(.secondary)
+      bulkSelectionButton
       Menu {
         ForEach(WorkingCopyStatusFilter.allCases) { filter in
           Button {
@@ -202,9 +231,40 @@ struct WorkingCopyChangesBrowser: View {
       .fixedSize()
       .help("Working copy options")
     }
-    .padding(.horizontal, 10)
+    .padding(.leading, 14)
+    .padding(.trailing, 10)
     .frame(height: 38)
     .background(.bar)
+  }
+
+  private var bulkSelectionButton: some View {
+    let selection = ChangedFilesPresentation.bulkSelection(for: visibleChanges)
+    let paths = visibleChanges.map(\.path)
+    let isPending = !pendingPaths.isDisjoint(with: paths)
+    let actionTitle = selection == .all ? "Unstage All Files" : "Stage All Files"
+
+    return Button {
+      if selection == .all {
+        actions.unstageAll(paths)
+      } else {
+        actions.stageAll(paths)
+      }
+    } label: {
+      Group {
+        if isPending {
+          ProgressView()
+            .controlSize(.small)
+        } else {
+          Image(systemName: selection.systemImage)
+            .foregroundStyle(selection == .none ? Color.secondary : Color.accentColor)
+        }
+      }
+      .frame(width: 16, height: 16)
+    }
+    .buttonStyle(.plain)
+    .disabled(paths.isEmpty || isLoading || isPending)
+    .help(actionTitle)
+    .accessibilityLabel(actionTitle)
   }
 
   private var toolbarTitle: String {
@@ -238,6 +298,7 @@ struct WorkingCopyChangesBrowser: View {
 
   private func changedFileRow(_ change: FileChange) -> some View {
     let isSelected = selectedPath == change.path
+    let isPending = pendingPaths.contains(change.path)
     return HStack(spacing: 8) {
       Button {
         if change.isStaged {
@@ -246,11 +307,25 @@ struct WorkingCopyChangesBrowser: View {
           actions.stage(change.path)
         }
       } label: {
-        Image(systemName: change.isStaged ? "checkmark.square.fill" : "square")
-          .foregroundStyle(change.isStaged ? Color.accentColor : .secondary)
+        Group {
+          if isPending {
+            ProgressView()
+              .controlSize(.small)
+          } else {
+            Image(systemName: change.isStaged ? "checkmark.square.fill" : "square")
+              .foregroundStyle(change.isStaged ? Color.accentColor : .secondary)
+          }
+        }
+        .frame(width: 16, height: 16)
       }
       .buttonStyle(.plain)
-      .disabled(isLoading)
+      .disabled(
+        ChangedFilesPresentation.isToggleDisabled(
+          for: change.path,
+          isLoading: isLoading,
+          pendingPaths: pendingPaths
+        )
+      )
       .help(change.isStaged ? "Unstage File" : "Stage File")
 
       Image(systemName: ChangedFilesPresentation.fileIcon(for: change.kind))

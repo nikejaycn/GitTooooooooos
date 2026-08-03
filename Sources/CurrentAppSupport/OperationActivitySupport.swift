@@ -117,9 +117,16 @@ public enum OperationActivityTitle {
     case .update(let name, _, _): "Update remote \(name)"
     case .remove(let name): "Remove remote \(name)"
     case .fetch(let remote, _): "Fetch \(remote ?? "all remotes")"
+    case .fetchConfigured(let remote, let fetchAll, _, _):
+      "Fetch \(fetchAll ? "all remotes" : (remote ?? "upstream"))"
     case .pull(let remote, _, _): "Pull \(remote ?? "upstream")"
+    case .pullConfigured(let remote, let branch, _, _, _, let rebase):
+      "\(rebase ? "Rebase-pull" : "Pull") \(remote)/\(branch)"
     case .push(let remote, let branch, _, let forceWithLease):
       "\(forceWithLease ? "Force-with-lease push" : "Push") \(branch) to \(remote)"
+    case .pushConfigured(let remote, let localBranch, let remoteBranch, _):
+      "Push \(localBranch) to \(remote)/\(remoteBranch)"
+    case .pushTags(let remote): "Push all tags to \(remote)"
     }
   }
 

@@ -37,6 +37,18 @@ public struct GitRemote: Hashable, Sendable, Codable, Identifiable {
   public var id: String { name }
 }
 
+public struct RemotePushBranch: Hashable, Sendable {
+  public let localBranch: String
+  public let remoteBranch: String
+  public let setUpstream: Bool
+
+  public init(localBranch: String, remoteBranch: String, setUpstream: Bool) {
+    self.localBranch = localBranch
+    self.remoteBranch = remoteBranch
+    self.setUpstream = setUpstream
+  }
+}
+
 public enum PullStrategy: String, CaseIterable, Hashable, Sendable, Codable, Identifiable {
   case merge
   case fastForwardOnly
@@ -59,8 +71,24 @@ public enum RemoteMutation: Hashable, Sendable {
   case update(name: String, fetchURL: String, pushURL: String)
   case remove(name: String)
   case fetch(remote: String?, prune: Bool)
+  case fetchConfigured(remote: String?, fetchAll: Bool, prune: Bool, fetchTags: Bool)
   case pull(remote: String?, branch: String?, strategy: PullStrategy)
+  case pullConfigured(
+    remote: String,
+    branch: String,
+    commitMerge: Bool,
+    includeLog: Bool,
+    noFastForward: Bool,
+    rebase: Bool
+  )
   case push(remote: String, branch: String, setUpstream: Bool, forceWithLease: Bool)
+  case pushConfigured(
+    remote: String,
+    localBranch: String,
+    remoteBranch: String,
+    setUpstream: Bool
+  )
+  case pushTags(remote: String)
 }
 
 public enum OperationActivityState: String, Hashable, Sendable, Codable {

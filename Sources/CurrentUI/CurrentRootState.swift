@@ -44,6 +44,7 @@ extension CurrentRootState {
     public let recentRepositories: [RecentRepository]
     public let lastRecoveryReference: RecoveryReference?
     public let isLoading: Bool
+    public let pendingWorkingCopyPaths: Set<GitPath>
     public let isOperationRunning: Bool
     public let errorMessage: String?
 
@@ -62,6 +63,7 @@ extension CurrentRootState {
       recentRepositories: [RecentRepository],
       lastRecoveryReference: RecoveryReference?,
       isLoading: Bool,
+      pendingWorkingCopyPaths: Set<GitPath>,
       isOperationRunning: Bool,
       errorMessage: String?
     ) {
@@ -79,6 +81,7 @@ extension CurrentRootState {
       self.recentRepositories = recentRepositories
       self.lastRecoveryReference = lastRecoveryReference
       self.isLoading = isLoading
+      self.pendingWorkingCopyPaths = pendingWorkingCopyPaths
       self.isOperationRunning = isOperationRunning
       self.errorMessage = errorMessage
     }

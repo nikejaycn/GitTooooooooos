@@ -74,6 +74,10 @@ public struct CurrentRootView: View {
   @State private var isConfirmingForcePush = false
   @State private var selectedWorkingCopyPath: GitPath?
   @State private var stashRequest: StashRequest?
+  @State private var isShowingFetchDialog = false
+  @State private var isShowingPullDialog = false
+  @State private var isShowingPushDialog = false
+  @State private var isShowingBranchDialog = false
 
   public init(state: CurrentRootState, actions: CurrentRootActions) {
     self.state = state
@@ -138,17 +142,11 @@ public struct CurrentRootView: View {
   }
   private var toolbarModel: CurrentToolbarModel {
     CurrentToolbarModel(
-      isSidebarVisible: isSidebarVisible,
       hasRepository: status != nil,
       isLoading: isLoading,
       hasRemotes: !remotes.isEmpty,
-      hasRecoveryReference: lastRecoveryReference != nil,
-      hasWorkingCopyChanges: status?.changes.isEmpty == false,
-      hasPushTarget: pushTargetDescription != nil,
-      hasUpstream: status?.upstream != nil,
-      repositoryName: repositoryName,
-      selectedCommitOID: selectedCommitOID,
-      activities: activities
+      hasUpstream: upstreamTarget != nil,
+      hasCurrentBranch: currentBranchName != nil
     )
   }
 
@@ -158,6 +156,7 @@ public struct CurrentRootView: View {
   private var newRepositoryWindow: () -> Void { actions.repository.openNewWindow }
   private var openRecentRepository: (RecentRepository) -> Void { actions.repository.openRecent }
   private var revealRepositoryInFinder: () -> Void { actions.repository.revealInFinder }
+  private var openRepositoryInTerminal: () -> Void { actions.repository.openInTerminal }
   private var chooseExternalApplication: () -> Void {
     actions.repository.chooseExternalApplication
   }
@@ -193,12 +192,19 @@ public struct CurrentRootView: View {
   private var loadFileInsights: (GitPath) -> Void { actions.diff.loadFileInsights }
 
   private var createBranchAt: (String, String?) -> Void { actions.branches.createAt }
+  private var createBranchConfigured: (String, String?, Bool) -> Void {
+    actions.branches.createConfigured
+  }
   private var checkoutBranch: (String) -> Void { actions.branches.checkout }
   private var checkoutRemoteBranch: (String, String) -> Void {
     actions.branches.checkoutRemote
   }
   private var renameBranch: (String, String) -> Void { actions.branches.rename }
   private var deleteBranch: (String) -> Void { actions.branches.delete }
+  private var deleteBranchConfigured: (String, Bool) -> Void {
+    actions.branches.deleteConfigured
+  }
+  private var deleteBranches: ([BranchMutation]) -> Void { actions.branches.deleteMany }
   private var deleteRemoteBranch: (String, String, String) -> Void {
     actions.branches.deleteRemote
   }
@@ -270,6 +276,16 @@ public struct CurrentRootView: View {
   }
   private var removeRemote: (GitRemote) -> Void { actions.remotes.remove }
   private var forcePushWithLease: () -> Void { actions.remotes.forcePushWithLease }
+  private var quickPull: () -> Void { actions.remotes.quickPull }
+  private var fetchConfigured: (String?, Bool, Bool, Bool) -> Void {
+    actions.remotes.fetchConfigured
+  }
+  private var pullConfigured: (String, String, Bool, Bool, Bool, Bool) -> Void {
+    actions.remotes.pullConfigured
+  }
+  private var pushConfigured: (String, [RemotePushBranch], Bool) -> Void {
+    actions.remotes.pushConfigured
+  }
 
   public var body: some View {
     HSplitView {
@@ -495,6 +511,43 @@ public struct CurrentRootView: View {
           )
         )
     }
+    .sheet(isPresented: $isShowingFetchDialog) {
+      ToolbarFetchDialog(
+        remotes: remotes,
+        initialRemote: upstreamTarget?.remote,
+        perform: fetchConfigured
+      )
+    }
+    .sheet(isPresented: $isShowingPullDialog) {
+      if let currentBranchName {
+        ToolbarPullDialog(
+          remotes: remotes,
+          references: references,
+          currentBranch: currentBranchName,
+          initialTarget: upstreamTarget,
+          perform: pullConfigured
+        )
+      }
+    }
+    .sheet(isPresented: $isShowingPushDialog) {
+      ToolbarPushDialog(
+        remotes: remotes,
+        references: references,
+        currentBranch: currentBranchName,
+        initialRemote: upstreamTarget?.remote,
+        perform: pushConfigured
+      )
+    }
+    .sheet(isPresented: $isShowingBranchDialog) {
+      ToolbarBranchDialog(
+        references: references,
+        currentBranch: currentBranchName,
+        selectedCommitOID: selectedCommitOID,
+        commits: commits,
+        create: createBranchConfigured,
+        delete: deleteBranches
+      )
+    }
     .sheet(
       isPresented: Binding(
         get: { conflictEditorPath != nil },
@@ -655,6 +708,7 @@ public struct CurrentRootView: View {
         commitTemplate: commitTemplate,
         hasRemotes: !remotes.isEmpty,
         isLoading: isLoading,
+        pendingPaths: state.repository.pendingWorkingCopyPaths,
         selectedPath: $selectedWorkingCopyPath,
         diffPresentation: $diffPresentation,
         actions: actions.workingCopy,
@@ -669,6 +723,7 @@ public struct CurrentRootView: View {
         references: references,
         remotes: remotes,
         isLoading: isLoading,
+        pendingWorkingCopyPaths: state.repository.pendingWorkingCopyPaths,
         state: state.history,
         diffState: state.diff,
         requestedJumpOID: graphJumpOID,
@@ -719,48 +774,24 @@ public struct CurrentRootView: View {
 
   private func handleToolbarEvent(_ event: CurrentToolbarEvent) {
     switch event {
-    case .toggleSidebar:
-      isSidebarVisible.toggle()
-    case .openRepository:
-      openRepository()
-    case .openNewWindow:
-      newRepositoryWindow()
-    case .undo:
-      undoLastOperation()
-    case .fetch:
-      fetch()
-    case .pull(let strategy):
-      pull(strategy)
-    case .createBranch:
-      newBranchName = ""
-      newBranchStartPoint = nil
-      isCreatingBranch = true
-    case .stash:
-      beginCreatingStash(paths: [])
+    case .commit:
+      workspace = .changes
+    case .quickPull:
+      quickPull()
+    case .pull:
+      isShowingPullDialog = true
     case .push:
-      isConfirmingPush = true
-    case .forcePush:
-      isConfirmingForcePush = true
-    case .search:
-      isShowingCommandPalette = true
-    case .settings:
-      openSettings()
-    case .openActivityLog:
-      workspace = .operations
-    case .exportSelectedCommit:
-      if let selectedCommitOID {
-        exportPatch(selectedCommitOID)
-      }
-    case .applyPatch:
-      applyPatch()
+      isShowingPushDialog = true
+    case .fetch:
+      isShowingFetchDialog = true
+    case .branch:
+      isShowingBranchDialog = true
     case .revealRepository:
       revealRepositoryInFinder()
-    case .chooseExternalApplication:
-      chooseExternalApplication()
-    case .pruneWorktrees:
-      pruneWorktrees()
-    case .maintenance(let task):
-      performMaintenance(task)
+    case .terminal:
+      openRepositoryInTerminal()
+    case .settings:
+      openSettings()
     }
   }
 
@@ -960,6 +991,19 @@ public struct CurrentRootView: View {
       remote = remotes.first?.name
     }
     return remote.map { "\($0)/\(branch)" }
+  }
+
+  private var currentBranchName: String? {
+    guard case .branch(let branch) = status?.head else { return nil }
+    return branch
+  }
+
+  private var upstreamTarget: (remote: String, branch: String)? {
+    ToolbarRemotePresentation.upstreamTarget(
+      status: status,
+      remotes: remotes,
+      references: references
+    )
   }
 
   private var pushRangeDescription: String {

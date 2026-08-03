@@ -8,6 +8,7 @@ struct WorkingCopyWorkspace: View {
   let commitTemplate: String?
   let hasRemotes: Bool
   let isLoading: Bool
+  let pendingPaths: Set<GitPath>
   @Binding var selectedPath: GitPath?
   @Binding var diffPresentation: DiffPresentation
   let actions: CurrentRootActions.WorkingCopyActions
@@ -33,6 +34,7 @@ struct WorkingCopyWorkspace: View {
           status: status,
           diffState: diffState,
           isLoading: isLoading,
+          pendingPaths: pendingPaths,
           selectedPath: $selectedPath,
           diffPresentation: $diffPresentation,
           actions: actions,
@@ -47,7 +49,7 @@ struct WorkingCopyWorkspace: View {
         status: status,
         commitTemplate: commitTemplate,
         hasRemotes: hasRemotes,
-        isLoading: isLoading,
+        isLoading: isLoading || !pendingPaths.isEmpty,
         commit: actions.commit,
         push: push
       )

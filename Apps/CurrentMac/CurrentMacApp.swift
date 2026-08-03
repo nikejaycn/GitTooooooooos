@@ -191,6 +191,7 @@ private struct CurrentWorkspaceWindow: View {
         recentRepositories: model.recentRepositories,
         lastRecoveryReference: model.lastRecoveryReference,
         isLoading: model.isLoading,
+        pendingWorkingCopyPaths: model.pendingWorkingCopyPaths,
         isOperationRunning: model.isRepositoryOperation,
         errorMessage: model.errorMessage
       ),
@@ -248,6 +249,7 @@ private struct CurrentWorkspaceWindow: View {
         toggleFavorite: model.toggleFavoriteRepository,
         removeRecent: model.removeRecentRepository,
         revealInFinder: model.revealRepositoryInFinder,
+        openInTerminal: model.openRepositoryInTerminal,
         chooseExternalApplication: model.chooseExternalApplication,
         cancelOperation: model.cancelRepositoryOperation,
         refresh: model.refresh
@@ -277,6 +279,8 @@ private struct CurrentWorkspaceWindow: View {
       workingCopy: .init(
         stage: model.stage,
         unstage: model.unstage,
+        stageAll: model.stageAll,
+        unstageAll: model.unstageAll,
         discard: model.discard,
         ignore: model.ignore,
         commit: model.commit,
@@ -298,10 +302,13 @@ private struct CurrentWorkspaceWindow: View {
       branches: .init(
         create: model.createBranch,
         createAt: model.createBranch,
+        createConfigured: model.createBranch,
         checkout: model.checkoutBranch,
         checkoutRemote: model.checkoutRemoteBranch,
         rename: model.renameBranch,
         delete: model.deleteBranch,
+        deleteConfigured: model.deleteBranch,
+        deleteMany: model.deleteBranches,
         deleteRemote: model.deleteRemoteBranch,
         fastForward: model.fastForwardBranch,
         merge: model.mergeBranch,
@@ -361,7 +368,11 @@ private struct CurrentWorkspaceWindow: View {
         add: model.addRemote,
         update: model.updateRemote,
         remove: model.removeRemote,
-        forcePushWithLease: model.forcePushWithLease
+        forcePushWithLease: model.forcePushWithLease,
+        quickPull: model.quickPull,
+        fetchConfigured: model.fetchConfigured,
+        pullConfigured: model.pullConfigured,
+        pushConfigured: model.pushConfigured
       )
     )
   }

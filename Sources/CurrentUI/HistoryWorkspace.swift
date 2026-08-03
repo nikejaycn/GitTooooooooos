@@ -199,6 +199,7 @@ struct HistoryWorkspace: View {
   let references: [GitReference]
   let remotes: [GitRemote]
   let isLoading: Bool
+  let pendingWorkingCopyPaths: Set<GitPath>
   let state: CurrentRootState.HistoryState
   let diffState: CurrentRootState.DiffState
   let requestedJumpOID: String?
@@ -406,6 +407,7 @@ struct HistoryWorkspace: View {
           status: status,
           diffState: diffState,
           isLoading: isLoading,
+          pendingPaths: pendingWorkingCopyPaths,
           selectedPath: $selectedWorkingCopyPath,
           diffPresentation: $diffPresentation,
           actions: workingCopyActions,

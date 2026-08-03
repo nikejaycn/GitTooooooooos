@@ -6,6 +6,14 @@ import Testing
 
 @Suite("BundledGitCLIEngine")
 struct GitEngineTests {
+  private var remoteValidationResults: [GitProcessResult] {
+    [
+      .success("origin\n"),
+      .success("git@example.com:team/repository.git\n"),
+      .success("git@example.com:team/repository.git\n"),
+    ]
+  }
+
   @Test("Reads the Git version through the runner")
   func version() async throws {
     let runner = StubRunner(
@@ -88,6 +96,111 @@ struct GitEngineTests {
         "pull --ff-only",
         "pull --rebase",
       ])
+  }
+
+  @Test("Toolbar fetch options map to prune, tags, and all-remotes arguments")
+  func configuredFetchArguments() async throws {
+    let runner = StubRunner(results: [.success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .fetchConfigured(
+        remote: nil,
+        fetchAll: true,
+        prune: true,
+        fetchTags: true
+      )
+    )
+
+    #expect(
+      await runner.commands().map(\.redactedDescription) == [
+        "fetch --all --prune --tags"
+      ]
+    )
+  }
+
+  @Test("Toolbar pull options map to explicit merge controls")
+  func configuredPullArguments() async throws {
+    let runner = StubRunner(
+      results: remoteValidationResults
+        + [.success(""), .success("")]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .pullConfigured(
+        remote: "origin",
+        branch: "main",
+        commitMerge: false,
+        includeLog: true,
+        noFastForward: true,
+        rebase: false
+      )
+    )
+
+    #expect(
+      await runner.commands().map(\.redactedDescription).suffix(2) == [
+        "check-ref-format --branch main",
+        "pull --no-rebase --no-commit --log --no-ff origin main",
+      ]
+    )
+  }
+
+  @Test("Toolbar push maps local and remote branches as an explicit refspec")
+  func configuredPushArguments() async throws {
+    let runner = StubRunner(
+      results: remoteValidationResults
+        + [.success(""), .success(""), .success("")]
+    )
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .pushConfigured(
+        remote: "origin",
+        localBranch: "feature/local",
+        remoteBranch: "feature/remote",
+        setUpstream: true
+      )
+    )
+
+    #expect(
+      await runner.commands().map(\.redactedDescription).suffix(2) == [
+        "check-ref-format --branch feature/remote",
+        "push --set-upstream origin feature/local:feature/remote",
+      ]
+    )
+  }
+
+  @Test("Toolbar push-all-tags maps to an explicit tags command")
+  func configuredPushTagsArguments() async throws {
+    let runner = StubRunner(results: remoteValidationResults + [.success("")])
+    let engine = BundledGitCLIEngine(runner: runner)
+    let location = RepositoryLocation(
+      worktreeURL: URL(fileURLWithPath: "/tmp/repo"),
+      commonGitDirectoryURL: URL(fileURLWithPath: "/tmp/repo/.git")
+    )
+
+    try await engine.mutateRemote(
+      at: location,
+      mutation: .pushTags(remote: "origin")
+    )
+
+    #expect(await runner.commands().last?.redactedDescription == "push origin --tags")
   }
 
   @Test("Reads the Git LFS version through the bundled helper path")

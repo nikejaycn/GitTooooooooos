@@ -60,6 +60,7 @@ extension CurrentRootActions {
     public let toggleFavorite: (RecentRepository) -> Void
     public let removeRecent: (RecentRepository) -> Void
     public let revealInFinder: () -> Void
+    public let openInTerminal: () -> Void
     public let chooseExternalApplication: () -> Void
     public let cancelOperation: () -> Void
     public let refresh: () -> Void
@@ -74,6 +75,7 @@ extension CurrentRootActions {
       toggleFavorite: @escaping (RecentRepository) -> Void,
       removeRecent: @escaping (RecentRepository) -> Void,
       revealInFinder: @escaping () -> Void,
+      openInTerminal: @escaping () -> Void,
       chooseExternalApplication: @escaping () -> Void,
       cancelOperation: @escaping () -> Void,
       refresh: @escaping () -> Void
@@ -87,6 +89,7 @@ extension CurrentRootActions {
       self.toggleFavorite = toggleFavorite
       self.removeRecent = removeRecent
       self.revealInFinder = revealInFinder
+      self.openInTerminal = openInTerminal
       self.chooseExternalApplication = chooseExternalApplication
       self.cancelOperation = cancelOperation
       self.refresh = refresh
@@ -163,6 +166,8 @@ extension CurrentRootActions {
   public struct WorkingCopyActions {
     public let stage: (GitPath) -> Void
     public let unstage: (GitPath) -> Void
+    public let stageAll: ([GitPath]) -> Void
+    public let unstageAll: ([GitPath]) -> Void
     public let discard: (GitPath) -> Void
     public let ignore: (GitPath) -> Void
     public let commit: (CommitRequest) async throws -> Void
@@ -174,6 +179,8 @@ extension CurrentRootActions {
     public init(
       stage: @escaping (GitPath) -> Void,
       unstage: @escaping (GitPath) -> Void,
+      stageAll: @escaping ([GitPath]) -> Void,
+      unstageAll: @escaping ([GitPath]) -> Void,
       discard: @escaping (GitPath) -> Void,
       ignore: @escaping (GitPath) -> Void,
       commit: @escaping (CommitRequest) async throws -> Void,
@@ -184,6 +191,8 @@ extension CurrentRootActions {
     ) {
       self.stage = stage
       self.unstage = unstage
+      self.stageAll = stageAll
+      self.unstageAll = unstageAll
       self.discard = discard
       self.ignore = ignore
       self.commit = commit
@@ -228,10 +237,13 @@ extension CurrentRootActions {
   public struct BranchActions {
     public let create: (String) -> Void
     public let createAt: (String, String?) -> Void
+    public let createConfigured: (String, String?, Bool) -> Void
     public let checkout: (String) -> Void
     public let checkoutRemote: (String, String) -> Void
     public let rename: (String, String) -> Void
     public let delete: (String) -> Void
+    public let deleteConfigured: (String, Bool) -> Void
+    public let deleteMany: ([BranchMutation]) -> Void
     public let deleteRemote: (String, String, String) -> Void
     public let fastForward: (String) -> Void
     public let merge: (String) -> Void
@@ -240,10 +252,13 @@ extension CurrentRootActions {
     public init(
       create: @escaping (String) -> Void,
       createAt: @escaping (String, String?) -> Void,
+      createConfigured: @escaping (String, String?, Bool) -> Void,
       checkout: @escaping (String) -> Void,
       checkoutRemote: @escaping (String, String) -> Void,
       rename: @escaping (String, String) -> Void,
       delete: @escaping (String) -> Void,
+      deleteConfigured: @escaping (String, Bool) -> Void,
+      deleteMany: @escaping ([BranchMutation]) -> Void,
       deleteRemote: @escaping (String, String, String) -> Void,
       fastForward: @escaping (String) -> Void,
       merge: @escaping (String) -> Void,
@@ -251,10 +266,13 @@ extension CurrentRootActions {
     ) {
       self.create = create
       self.createAt = createAt
+      self.createConfigured = createConfigured
       self.checkout = checkout
       self.checkoutRemote = checkoutRemote
       self.rename = rename
       self.delete = delete
+      self.deleteConfigured = deleteConfigured
+      self.deleteMany = deleteMany
       self.deleteRemote = deleteRemote
       self.fastForward = fastForward
       self.merge = merge
@@ -415,6 +433,10 @@ extension CurrentRootActions {
     public let update: (GitRemote, String, String, String) -> Void
     public let remove: (GitRemote) -> Void
     public let forcePushWithLease: () -> Void
+    public let quickPull: () -> Void
+    public let fetchConfigured: (String?, Bool, Bool, Bool) -> Void
+    public let pullConfigured: (String, String, Bool, Bool, Bool, Bool) -> Void
+    public let pushConfigured: (String, [RemotePushBranch], Bool) -> Void
 
     public init(
       fetch: @escaping () -> Void,
@@ -424,7 +446,11 @@ extension CurrentRootActions {
       add: @escaping (String, String, String?) -> Void,
       update: @escaping (GitRemote, String, String, String) -> Void,
       remove: @escaping (GitRemote) -> Void,
-      forcePushWithLease: @escaping () -> Void
+      forcePushWithLease: @escaping () -> Void,
+      quickPull: @escaping () -> Void,
+      fetchConfigured: @escaping (String?, Bool, Bool, Bool) -> Void,
+      pullConfigured: @escaping (String, String, Bool, Bool, Bool, Bool) -> Void,
+      pushConfigured: @escaping (String, [RemotePushBranch], Bool) -> Void
     ) {
       self.fetch = fetch
       self.fetchRemote = fetchRemote
@@ -434,6 +460,10 @@ extension CurrentRootActions {
       self.update = update
       self.remove = remove
       self.forcePushWithLease = forcePushWithLease
+      self.quickPull = quickPull
+      self.fetchConfigured = fetchConfigured
+      self.pullConfigured = pullConfigured
+      self.pushConfigured = pushConfigured
     }
   }
 }

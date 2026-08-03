@@ -90,6 +90,7 @@ final class AppModel {
   var isFileHistoryLoading: Bool { inspectionSession.isFileHistoryLoading }
   var isBlameLoading: Bool { inspectionSession.isBlameLoading }
   private(set) var isLoading = false
+  private(set) var pendingWorkingCopyPaths = Set<GitPath>()
   private(set) var isRepositoryOperation = false
   private(set) var errorMessage: String?
 
@@ -232,6 +233,30 @@ final class AppModel {
   func revealRepositoryInFinder() {
     guard let repositoryURL = repository?.location.worktreeURL else { return }
     NSWorkspace.shared.activateFileViewerSelecting([repositoryURL])
+  }
+
+  func openRepositoryInTerminal() {
+    guard let repositoryURL = repository?.location.worktreeURL else { return }
+    guard
+      let terminalURL = NSWorkspace.shared.urlForApplication(
+        withBundleIdentifier: "com.apple.Terminal"
+      )
+    else {
+      errorMessage = "Terminal.app could not be found."
+      return
+    }
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = true
+    NSWorkspace.shared.open(
+      [repositoryURL],
+      withApplicationAt: terminalURL,
+      configuration: configuration
+    ) { [weak self] _, error in
+      guard let error else { return }
+      Task { @MainActor in
+        self?.errorMessage = error.localizedDescription
+      }
+    }
   }
 
   func chooseExternalApplication() {
@@ -718,11 +743,21 @@ final class AppModel {
   }
 
   func stage(_ path: GitPath) {
-    apply(.stage([path]))
+    stageAll([path])
   }
 
   func unstage(_ path: GitPath) {
-    apply(.unstage([path]))
+    unstageAll([path])
+  }
+
+  func stageAll(_ paths: [GitPath]) {
+    guard !paths.isEmpty else { return }
+    applyWithoutReplacingContent(.stage(paths), paths: Set(paths))
+  }
+
+  func unstageAll(_ paths: [GitPath]) {
+    guard !paths.isEmpty else { return }
+    applyWithoutReplacingContent(.unstage(paths), paths: Set(paths))
   }
 
   func discard(_ path: GitPath) {
@@ -1052,6 +1087,10 @@ final class AppModel {
     applyBranch(.create(name: name, startPoint: startPoint, checkout: true))
   }
 
+  func createBranch(_ name: String, startPoint: String?, checkout: Bool) {
+    applyBranch(.create(name: name, startPoint: startPoint, checkout: checkout))
+  }
+
   func checkoutBranch(_ name: String) {
     applyBranch(.checkout(name: name, autoStash: autoStashEnabled))
   }
@@ -1076,6 +1115,14 @@ final class AppModel {
 
   func deleteBranch(_ name: String) {
     applyBranch(.delete(name: name, force: false))
+  }
+
+  func deleteBranch(_ name: String, force: Bool) {
+    applyBranch(.delete(name: name, force: force))
+  }
+
+  func deleteBranches(_ mutations: [BranchMutation]) {
+    applyBranchSequence(mutations)
   }
 
   func deleteRemoteBranch(
@@ -1664,6 +1711,7 @@ final class AppModel {
     repositoryName = nil
     repositoryPath = nil
     repositoryStatus = nil
+    pendingWorkingCopyPaths.removeAll()
     commitTemplate = nil
     graphLayoutRequest.cancel()
     historyPageTask?.cancel()
@@ -1753,6 +1801,30 @@ final class AppModel {
     }
   }
 
+  private func applyWithoutReplacingContent(
+    _ mutation: WorkingCopyMutation,
+    paths: Set<GitPath>
+  ) {
+    guard let repository, pendingWorkingCopyPaths.isDisjoint(with: paths) else { return }
+    let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
+    pendingWorkingCopyPaths.formUnion(paths)
+    Task {
+      defer { pendingWorkingCopyPaths.subtract(paths) }
+      errorMessage = nil
+      do {
+        let result = try await repository.applyWorkingCopyMutation(mutation)
+        apply(result.status)
+        if let recovery = result.recoveryReference {
+          lastRecoveryReference = recovery
+        }
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+    }
+  }
+
   private func applyBranch(_ mutation: BranchMutation) {
     guard let repository else { return }
     let activityID = beginActivity(OperationActivityTitle.title(for: mutation))
@@ -1762,6 +1834,33 @@ final class AppModel {
       do {
         let snapshot = try await repository.applyBranchMutation(mutation)
         apply(snapshot)
+        inspectionSession.clearDiff()
+        finishActivity(activityID, state: .succeeded)
+      } catch {
+        if let snapshot = try? await repository.refreshSnapshot() {
+          apply(snapshot)
+        }
+        errorMessage = error.localizedDescription
+        finishActivity(activityID, error: error)
+      }
+      isLoading = false
+    }
+  }
+
+  private func applyBranchSequence(_ mutations: [BranchMutation]) {
+    guard let repository, !mutations.isEmpty else { return }
+    let activityID = beginActivity("Delete branches")
+    Task {
+      isLoading = true
+      errorMessage = nil
+      do {
+        var snapshot: RepositorySnapshot?
+        for mutation in mutations {
+          snapshot = try await repository.applyBranchMutation(mutation)
+        }
+        if let snapshot {
+          apply(snapshot)
+        }
         inspectionSession.clearDiff()
         finishActivity(activityID, state: .succeeded)
       } catch {
@@ -1854,6 +1953,73 @@ final class AppModel {
     applyRemote(.pull(remote: nil, branch: nil, strategy: strategy))
   }
 
+  func quickPull() {
+    guard let target = upstreamTarget else {
+      errorMessage = "The current branch does not track a valid remote branch."
+      return
+    }
+    applyRemote(.pull(remote: target.remote, branch: target.branch, strategy: .rebase))
+  }
+
+  func fetchConfigured(
+    remote: String?,
+    fetchAll: Bool,
+    prune: Bool,
+    fetchTags: Bool
+  ) {
+    applyRemote(
+      .fetchConfigured(
+        remote: remote,
+        fetchAll: fetchAll,
+        prune: prune,
+        fetchTags: fetchTags
+      )
+    )
+  }
+
+  func pullConfigured(
+    remote: String,
+    branch: String,
+    commitMerge: Bool,
+    includeLog: Bool,
+    noFastForward: Bool,
+    rebase: Bool
+  ) {
+    applyRemote(
+      .pullConfigured(
+        remote: remote,
+        branch: branch,
+        commitMerge: commitMerge,
+        includeLog: includeLog,
+        noFastForward: noFastForward,
+        rebase: rebase
+      )
+    )
+  }
+
+  func pushConfigured(
+    remote: String,
+    branches: [RemotePushBranch],
+    pushTags: Bool
+  ) {
+    guard !branches.isEmpty || pushTags else {
+      errorMessage = "Select at least one branch or choose to push all tags."
+      return
+    }
+    var mutations = branches.map {
+      RemoteMutation.pushConfigured(
+        remote: remote,
+        localBranch: $0.localBranch,
+        remoteBranch: $0.remoteBranch,
+        setUpstream: $0.setUpstream
+      )
+    }
+    if pushTags {
+      mutations.append(.pushTags(remote: remote))
+    }
+    applyRemoteSequence(mutations, activityTitle: "Push to \(remote)")
+  }
+
   func push() {
     guard let branch = currentBranch,
       let remote = pushRemote
@@ -1903,6 +2069,26 @@ final class AppModel {
         .name
     }
     return remotes.first?.name
+  }
+
+  private var upstreamTarget: (remote: String, branch: String)? {
+    guard let upstream = repositoryStatus?.upstream else { return nil }
+    guard
+      references.contains(where: {
+        $0.kind == .remoteBranch
+          && ($0.shortName == upstream || $0.fullName == "refs/remotes/\(upstream)")
+      })
+    else {
+      return nil
+    }
+    for remote in remotes.sorted(by: { $0.name.count > $1.name.count }) {
+      let prefix = "\(remote.name)/"
+      guard upstream.hasPrefix(prefix) else { continue }
+      let branch = String(upstream.dropFirst(prefix.count))
+      guard !branch.isEmpty else { return nil }
+      return (remote.name, branch)
+    }
+    return nil
   }
 
   private func applyStash(_ mutation: StashMutation) {
@@ -1997,9 +2183,12 @@ final class AppModel {
     }
   }
 
-  private func applyRemoteSequence(_ mutations: [RemoteMutation]) {
+  private func applyRemoteSequence(
+    _ mutations: [RemoteMutation],
+    activityTitle: String = "Update remote"
+  ) {
     guard let repository else { return }
-    let activityID = beginActivity("Update remote")
+    let activityID = beginActivity(activityTitle)
     Task {
       isLoading = true
       errorMessage = nil

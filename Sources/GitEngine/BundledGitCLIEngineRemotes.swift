@@ -211,6 +211,16 @@ extension BundledGitCLIEngine {
         ["fetch"]
         + (prune ? ["--prune"] : [])
         + (remote.map { [$0] } ?? ["--all"])
+    case .fetchConfigured(let remote, let fetchAll, let prune, let fetchTags):
+      if let remote {
+        try await validateRemoteName(remote, at: location)
+      }
+      arguments =
+        ["fetch"]
+        + (fetchAll ? ["--all"] : [])
+        + (prune ? ["--prune"] : [])
+        + (fetchTags ? ["--tags"] : [])
+        + (!fetchAll ? (remote.map { [$0] } ?? []) : [])
     case .pull(let remote, let branch, let strategy):
       if let remote {
         try await validateRemoteName(remote, at: location)
@@ -232,6 +242,22 @@ extension BundledGitCLIEngine {
         + strategyArguments
         + (remote.map { [$0] } ?? [])
         + (branch.map { [$0] } ?? [])
+    case .pullConfigured(
+      let remote,
+      let branch,
+      let commitMerge,
+      let includeLog,
+      let noFastForward,
+      let rebase
+    ):
+      try await validateRemoteName(remote, at: location)
+      try await validateBranchName(branch, at: location)
+      arguments =
+        ["pull", rebase ? "--rebase" : "--no-rebase"]
+        + (!rebase && !commitMerge ? ["--no-commit"] : [])
+        + (!rebase && includeLog ? ["--log"] : [])
+        + (!rebase && noFastForward ? ["--no-ff"] : [])
+        + [remote, branch]
     case .push(let remote, let branch, let setUpstream, let forceWithLease):
       try await validateRemoteName(remote, at: location)
       try await validateBranchName(branch, at: location)
@@ -252,6 +278,17 @@ extension BundledGitCLIEngine {
         + (setUpstream ? ["--set-upstream"] : [])
         + leaseArgument
         + [remote, branch]
+    case .pushConfigured(let remote, let localBranch, let remoteBranch, let setUpstream):
+      try await validateRemoteName(remote, at: location)
+      try await validateBranchName(localBranch, at: location)
+      try await validateBranchName(remoteBranch, at: location)
+      arguments =
+        ["push"]
+        + (setUpstream ? ["--set-upstream"] : [])
+        + [remote, "\(localBranch):\(remoteBranch)"]
+    case .pushTags(let remote):
+      try await validateRemoteName(remote, at: location)
+      arguments = ["push", remote, "--tags"]
     }
     _ = try await execute(
       GitCommand(

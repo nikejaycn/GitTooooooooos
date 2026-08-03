@@ -34,10 +34,51 @@ struct WorkingCopyWorkspaceTests {
     )
   }
 
+  @Test("Bulk selection reflects none, mixed, and all staged files")
+  func bulkSelectionState() {
+    let unstaged = change("Sources/A.swift", index: " ", worktree: "M", kind: .modified)
+    let staged = change("Sources/B.swift", index: "M", worktree: " ", kind: .modified)
+
+    #expect(ChangedFilesPresentation.bulkSelection(for: [unstaged]) == .none)
+    #expect(ChangedFilesPresentation.bulkSelection(for: [unstaged, staged]) == .mixed)
+    #expect(ChangedFilesPresentation.bulkSelection(for: [staged]) == .all)
+    #expect(ChangedFilesBulkSelection.none.systemImage == "square")
+    #expect(ChangedFilesBulkSelection.mixed.systemImage == "minus.square.fill")
+    #expect(ChangedFilesBulkSelection.all.systemImage == "checkmark.square.fill")
+  }
+
   @Test("Working Copy diff fills wide code viewports")
   func diffContentWidth() {
     #expect(WorkingCopyDiffPresentation.contentWidth(viewportWidth: 480) == 620)
     #expect(WorkingCopyDiffPresentation.contentWidth(viewportWidth: 980) == 980)
+  }
+
+  @Test("Only repository loading or the pending file disables its stage toggle")
+  func stageToggleAvailability() {
+    let pending = GitPath("Sources/Pending.swift")
+    let available = GitPath("Sources/Available.swift")
+
+    #expect(
+      ChangedFilesPresentation.isToggleDisabled(
+        for: pending,
+        isLoading: false,
+        pendingPaths: [pending]
+      )
+    )
+    #expect(
+      !ChangedFilesPresentation.isToggleDisabled(
+        for: available,
+        isLoading: false,
+        pendingPaths: [pending]
+      )
+    )
+    #expect(
+      ChangedFilesPresentation.isToggleDisabled(
+        for: available,
+        isLoading: true,
+        pendingPaths: []
+      )
+    )
   }
 
   @Test("Commit drafts validate paired co-author fields and build requests")
