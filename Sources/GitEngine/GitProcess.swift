@@ -123,7 +123,10 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
   public let executableURL: URL
   private let runtimeEnvironment: [String: String?]
 
-  public init(executableURL: URL) {
+  public init(
+    executableURL: URL,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) {
     self.executableURL = executableURL
     let binDirectory = executableURL.deletingLastPathComponent()
     let bundleRoot = binDirectory.deletingLastPathComponent()
@@ -142,22 +145,61 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
       .appendingPathComponent("current", isDirectory: true)
       .appendingPathComponent("gitconfig")
 
+    var runtimeEnvironment: [String: String?] = [
+      "PATH": Self.executableSearchPath(
+        gitBinDirectory: binDirectory,
+        environment: environment
+      )
+    ]
     if FileManager.default.fileExists(atPath: execPath.path) {
-      let inheritedPath =
-        ProcessInfo.processInfo.environment["PATH"]
-        ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-      var runtimeEnvironment: [String: String?] = [
-        "PATH": "\(binDirectory.path):\(inheritedPath)",
+      runtimeEnvironment.merge([
         "GIT_EXEC_PATH": execPath.path,
         "GIT_TEMPLATE_DIR": templatePath.path,
-      ]
+      ]) { _, bundledValue in bundledValue }
       if FileManager.default.fileExists(atPath: systemConfigPath.path) {
         runtimeEnvironment["GIT_CONFIG_SYSTEM"] = systemConfigPath.path
       }
-      self.runtimeEnvironment = runtimeEnvironment
-    } else {
-      self.runtimeEnvironment = [:]
     }
+    self.runtimeEnvironment = runtimeEnvironment
+  }
+
+  private static func executableSearchPath(
+    gitBinDirectory: URL,
+    environment: [String: String]
+  ) -> String {
+    let homeDirectory = environment["HOME"].map {
+      URL(fileURLWithPath: $0, isDirectory: true)
+    }
+    let userToolDirectories =
+      homeDirectory.map { home in
+        [
+          home.appendingPathComponent(".bun/bin", isDirectory: true).path,
+          home.appendingPathComponent(".local/bin", isDirectory: true).path,
+          home.appendingPathComponent(".cargo/bin", isDirectory: true).path,
+          home.appendingPathComponent(".volta/bin", isDirectory: true).path,
+          home.appendingPathComponent(".asdf/shims", isDirectory: true).path,
+          home.appendingPathComponent(".local/share/mise/shims", isDirectory: true).path,
+          home.appendingPathComponent("Library/pnpm", isDirectory: true).path,
+          home.appendingPathComponent(
+            "Library/Application Support/fnm/aliases/default/bin",
+            isDirectory: true
+          ).path,
+        ]
+      } ?? []
+    let inheritedDirectories = (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+      .split(separator: ":")
+      .map(String.init)
+    let candidates =
+      [gitBinDirectory.path]
+      + userToolDirectories
+      + ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin"]
+      + inheritedDirectories
+
+    var seen = Set<String>()
+    return
+      candidates
+      .filter { !$0.isEmpty && seen.insert($0).inserted }
+      .joined(separator: ":")
   }
 
   public func run(_ command: GitCommand) async throws -> GitProcessResult {

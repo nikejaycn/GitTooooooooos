@@ -292,6 +292,52 @@ struct GitEngineTests {
     #expect(restored.effectivePath == root.appendingPathComponent(".git/hooks").path)
   }
 
+  @Test("GUI Git environment finds user-installed hook tools")
+  func gitHooksFindUserInstalledTools() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("current-hook-path-\(UUID().uuidString)", isDirectory: true)
+    let home = root.appendingPathComponent("home", isDirectory: true)
+    let bunBin = home.appendingPathComponent(".bun/bin", isDirectory: true)
+    let marker = root.appendingPathComponent("bunx-ran")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try FileManager.default.createDirectory(at: bunBin, withIntermediateDirectories: true)
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+
+    let bunx = bunBin.appendingPathComponent("bunx")
+    try Data("#!/bin/sh\ntouch \"\(marker.path)\"\n".utf8).write(to: bunx)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: bunx.path
+    )
+
+    let hook = root.appendingPathComponent(".git/hooks/pre-commit")
+    try Data("bunx --bun lint-staged\n".utf8).write(to: hook)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: hook.path
+    )
+
+    let runner = SwiftSubprocessRunner(
+      executableURL: URL(fileURLWithPath: "/usr/bin/git"),
+      environment: [
+        "HOME": home.path,
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      ]
+    )
+    let result = try await runner.run(
+      GitCommand(
+        arguments: ["commit", "--allow-empty", "-m", "hook environment test"],
+        workingDirectory: root
+      )
+    )
+
+    #expect(result.succeeded, Comment(rawValue: result.errorDescription))
+    #expect(FileManager.default.fileExists(atPath: marker.path))
+  }
+
   @Test("Reads Git LFS repository state without installing hooks")
   func lfsRepositoryState() async throws {
     let json = """
