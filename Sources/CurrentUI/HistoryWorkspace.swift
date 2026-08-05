@@ -441,14 +441,6 @@ struct HistoryWorkspace: View {
   private var changedFilesPane: some View {
     VStack(spacing: 0) {
       HStack(spacing: 8) {
-        Image(systemName: "minus.square")
-          .foregroundStyle(.secondary)
-        Text("Changed Files, Sorted by File Status")
-          .font(.callout)
-          .lineLimit(1)
-        Image(systemName: "list.bullet")
-          .foregroundStyle(.secondary)
-        Spacer(minLength: 8)
         HStack(spacing: 5) {
           Image(systemName: "magnifyingglass")
             .foregroundStyle(.secondary)
@@ -471,14 +463,13 @@ struct HistoryWorkspace: View {
           RoundedRectangle(cornerRadius: 7)
             .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
         }
-        .frame(minWidth: 120, idealWidth: 180, maxWidth: 230)
+        .frame(minWidth: 120, maxWidth: .infinity)
         if let comparison = state.comparison {
           Text(comparison.files.count.formatted())
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
+            .accessibilityLabel("\(comparison.files.count) changed files")
         }
-        Image(systemName: "ellipsis.circle")
-          .foregroundStyle(.secondary)
       }
       .padding(.horizontal, 10)
       .frame(height: 38)

@@ -127,14 +127,15 @@ public struct CommitGraphView: NSViewRepresentable {
 
     let graph = NSTableColumn(identifier: .graph)
     graph.title = "Graph"
-    graph.width = Self.graphColumnWidth(
-      for: rows,
-      configuration: displayConfiguration
-    )
     graph.minWidth = 46
     graph.maxWidth = 360
     graph.resizingMask = .userResizingMask
     table.addTableColumn(graph)
+    context.coordinator.applyGraphColumnWidth(
+      for: rows,
+      configuration: displayConfiguration,
+      to: table
+    )
 
     let commit = NSTableColumn(identifier: .commit)
     commit.title = "Commit"
@@ -177,6 +178,11 @@ public struct CommitGraphView: NSViewRepresentable {
       in: table,
       configuration: displayConfiguration
     )
+    context.coordinator.applyGraphColumnWidth(
+      for: rows,
+      configuration: displayConfiguration,
+      to: table
+    )
     context.coordinator.scroll(to: scrollToCommitOID, in: table)
     context.coordinator.selectFirstRowIfNeeded(in: table)
     Self.restoreLeadingColumns(in: scrollView)
@@ -199,7 +205,7 @@ public struct CommitGraphView: NSViewRepresentable {
     scrollView.reflectScrolledClipView(clipView)
   }
 
-  private static func graphColumnWidth(
+  static func graphColumnWidth(
     for rows: [GraphRow],
     configuration: GraphDisplayConfiguration
   ) -> CGFloat {
@@ -253,6 +259,7 @@ public struct CommitGraphView: NSViewRepresentable {
     private var lastScrollOID: String?
     private var hasAppliedDefaultSelection = false
     private var contextMenuActions: [Int: () -> Void] = [:]
+    private var appliedGraphColumnWidth: CGFloat?
     private let dateFormatter: DateFormatter
 
     init(
@@ -293,6 +300,20 @@ public struct CommitGraphView: NSViewRepresentable {
         hasAppliedDefaultSelection = false
       }
       selectFirstRowIfNeeded(in: tableView)
+    }
+
+    func applyGraphColumnWidth(
+      for rows: [GraphRow],
+      configuration: GraphDisplayConfiguration,
+      to tableView: NSTableView
+    ) {
+      let width = CommitGraphView.graphColumnWidth(
+        for: rows,
+        configuration: configuration
+      )
+      guard width != appliedGraphColumnWidth else { return }
+      appliedGraphColumnWidth = width
+      tableView.tableColumn(withIdentifier: .graph)?.width = width
     }
 
     func selectFirstRowIfNeeded(in tableView: NSTableView) {
