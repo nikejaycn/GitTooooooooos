@@ -104,6 +104,7 @@ public struct CurrentRootView: View {
   private var isLoading: Bool { state.repository.isLoading }
   private var isRepositoryOperation: Bool { state.repository.isOperationRunning }
   private var errorMessage: String? { state.repository.errorMessage }
+  private var aiAvailability: AIFeatureAvailability { state.repository.aiAvailability }
 
   private var commits: [CommitSummary] { state.history.commits }
   private var graphRows: [GraphRow] { state.history.graphRows }
@@ -707,6 +708,7 @@ public struct CurrentRootView: View {
         diffState: state.diff,
         commitTemplate: commitTemplate,
         hasRemotes: !remotes.isEmpty,
+        aiAvailability: aiAvailability,
         isLoading: isLoading,
         pendingPaths: state.repository.pendingWorkingCopyPaths,
         selectedPath: $selectedWorkingCopyPath,

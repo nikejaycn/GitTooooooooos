@@ -132,6 +132,10 @@ public protocol GitEngineProtocol: Sendable {
     at location: RepositoryLocation,
     request: CommitRequest
   ) async throws -> RecoveryReference?
+  func composeCommits(
+    at location: RepositoryLocation,
+    plan: CommitCompositionPlan
+  ) async throws -> RecoveryReference?
   func commitTemplate(at location: RepositoryLocation) async throws -> String?
   func createPatch(at location: RepositoryLocation, commit: String) async throws -> [UInt8]
   func createPatch(at location: RepositoryLocation, commits: [String]) async throws -> [UInt8]
@@ -253,6 +257,13 @@ public protocol GitEngineProtocol: Sendable {
 }
 
 extension GitEngineProtocol {
+  public func composeCommits(
+    at location: RepositoryLocation,
+    plan: CommitCompositionPlan
+  ) async throws -> RecoveryReference? {
+    throw GitEngineError.invalidOutput("AI commit composition is not implemented.")
+  }
+
   public func hooksState(at location: RepositoryLocation) async throws -> GitHooksState {
     .unavailable
   }

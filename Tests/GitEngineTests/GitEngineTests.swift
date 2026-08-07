@@ -3495,6 +3495,212 @@ struct GitEngineTests {
     )
     #expect(try Data(contentsOf: file) == beforeDiscard)
   }
+  @Test(
+    "Commit composer creates one commit per reviewed hunk group",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func composeCommits() async throws {
+    let fixture = try await makeCompositionFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+    let plan = CommitCompositionPlan(
+      units: fixture.document.hunks.enumerated().map { index, hunk in
+        CommitCompositionUnit(
+          id: "change-\(index + 1)",
+          path: fixture.path,
+          summary: "Hunk \(index + 1)",
+          patchText: hunk.patchText,
+          analysisText: hunk.patchText
+        )
+      },
+      groups: [
+        CommitCompositionGroup(message: "Update first region", unitIDs: ["change-1"]),
+        CommitCompositionGroup(message: "Update second region", unitIDs: ["change-2"]),
+      ]
+    )
+
+    _ = try await fixture.engine.composeCommits(at: fixture.location, plan: plan)
+
+    let history = try await fixture.engine.history(at: fixture.location, limit: 3)
+    #expect(
+      history.prefix(2).map(\.subject) == [
+        "Update second region", "Update first region",
+      ])
+    let status = try await fixture.engine.status(
+      at: fixture.location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.changes.isEmpty)
+  }
+
+  @Test(
+    "Commit composer stages an untracked whole-file unit",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func composeUntrackedWholeFile() async throws {
+    let fixture = try await makeCompositionFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try runGit(["-C", fixture.root.path, "restore", fixture.path.displayString])
+    let newPath = GitPath("new-file.txt")
+    let newFile = fixture.root.appendingPathComponent(newPath.displayString)
+    try Data("new content\n".utf8).write(to: newFile)
+    let plan = CommitCompositionPlan(
+      units: [
+        CommitCompositionUnit(
+          id: "new-file",
+          path: newPath,
+          summary: "New file",
+          patchText: nil,
+          analysisText: "new content"
+        )
+      ],
+      groups: [
+        CommitCompositionGroup(message: "Add new file", unitIDs: ["new-file"])
+      ]
+    )
+
+    _ = try await fixture.engine.composeCommits(at: fixture.location, plan: plan)
+
+    let history = try await fixture.engine.history(at: fixture.location, limit: 2)
+    #expect(history.first?.subject == "Add new file")
+    let status = try await fixture.engine.status(
+      at: fixture.location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.changes.isEmpty)
+    #expect(try Data(contentsOf: newFile) == Data("new content\n".utf8))
+  }
+
+  @Test(
+    "Commit composer keeps a whole-file rename atomic",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func composeWholeFileRename() async throws {
+    let fixture = try await makeCompositionFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try runGit(["-C", fixture.root.path, "restore", fixture.path.displayString])
+    let renamedPath = GitPath("renamed-composition.txt")
+    try FileManager.default.moveItem(
+      at: fixture.root.appendingPathComponent(fixture.path.displayString),
+      to: fixture.root.appendingPathComponent(renamedPath.displayString)
+    )
+    let plan = CommitCompositionPlan(
+      units: [
+        CommitCompositionUnit(
+          id: "rename",
+          path: renamedPath,
+          originalPath: fixture.path,
+          summary: "Rename file",
+          patchText: nil,
+          analysisText: "Rename composition.txt to renamed-composition.txt"
+        )
+      ],
+      groups: [
+        CommitCompositionGroup(message: "Rename composition file", unitIDs: ["rename"])
+      ]
+    )
+
+    _ = try await fixture.engine.composeCommits(at: fixture.location, plan: plan)
+
+    let status = try await fixture.engine.status(
+      at: fixture.location,
+      generation: RepositoryGeneration(1)
+    )
+    #expect(status.changes.isEmpty)
+    let nameStatus = try runGitOutput([
+      "-C", fixture.root.path, "show", "--format=", "--name-status", "HEAD",
+    ])
+    #expect(nameStatus.contains("composition.txt"))
+    #expect(nameStatus.contains("renamed-composition.txt"))
+  }
+
+  @Test(
+    "Commit composer restores HEAD and the exact index after a later group fails",
+    .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/git")))
+  func composeRollback() async throws {
+    let fixture = try await makeCompositionFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try await fixture.engine.applyHunk(
+      at: fixture.location,
+      hunk: fixture.document.hunks[0],
+      source: .unstaged
+    )
+    let headBefore = try runGitOutput(["-C", fixture.root.path, "rev-parse", "HEAD"])
+    let indexBefore = try runGitOutput(["-C", fixture.root.path, "diff", "--cached"])
+    let invalidPatch = """
+      diff --git a/missing.txt b/missing.txt
+      --- a/missing.txt
+      +++ b/missing.txt
+      @@ -1 +1 @@
+      -missing
+      +still missing
+      """
+    let plan = CommitCompositionPlan(
+      units: [
+        CommitCompositionUnit(
+          id: "valid",
+          path: fixture.path,
+          summary: "Valid hunk",
+          patchText: fixture.document.hunks[0].patchText,
+          analysisText: ""
+        ),
+        CommitCompositionUnit(
+          id: "invalid",
+          path: GitPath("missing.txt"),
+          summary: "Invalid hunk",
+          patchText: invalidPatch,
+          analysisText: ""
+        ),
+      ],
+      groups: [
+        CommitCompositionGroup(message: "Temporary first commit", unitIDs: ["valid"]),
+        CommitCompositionGroup(message: "Failing second commit", unitIDs: ["invalid"]),
+      ]
+    )
+
+    await #expect(throws: GitEngineError.self) {
+      try await fixture.engine.composeCommits(at: fixture.location, plan: plan)
+    }
+
+    #expect(try runGitOutput(["-C", fixture.root.path, "rev-parse", "HEAD"]) == headBefore)
+    #expect(try runGitOutput(["-C", fixture.root.path, "diff", "--cached"]) == indexBefore)
+  }
+
+  private func makeCompositionFixture() async throws -> (
+    root: URL,
+    engine: BundledGitCLIEngine<SwiftSubprocessRunner>,
+    location: RepositoryLocation,
+    path: GitPath,
+    document: DiffDocument
+  ) {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try runGit(["init", "--initial-branch=main", root.path])
+    try runGit(["-C", root.path, "config", "user.name", "Current Test"])
+    try runGit(["-C", root.path, "config", "user.email", "current@example.invalid"])
+    let file = root.appendingPathComponent("composition.txt")
+    var lines = (1...30).map { "line \($0)" }
+    try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: file)
+    try runGit(["-C", root.path, "add", "composition.txt"])
+    try runGit(["-C", root.path, "commit", "-m", "Base"])
+    lines[1] = "changed at start"
+    lines[27] = "changed at end"
+    try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: file)
+
+    let engine = BundledGitCLIEngine(
+      runner: SwiftSubprocessRunner(executableURL: URL(fileURLWithPath: "/usr/bin/git"))
+    )
+    let location = RepositoryLocation(
+      worktreeURL: root,
+      commonGitDirectoryURL: root.appendingPathComponent(".git")
+    )
+    let path = GitPath("composition.txt")
+    let document = try await engine.diff(
+      at: location,
+      path: path,
+      source: .unstaged
+    )
+    #expect(document.hunks.count == 2)
+    return (root, engine, location, path, document)
+  }
 }
 
 private func runGit(_ arguments: [String]) throws {

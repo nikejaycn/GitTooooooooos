@@ -193,7 +193,8 @@ private struct CurrentWorkspaceWindow: View {
         isLoading: model.isLoading,
         pendingWorkingCopyPaths: model.pendingWorkingCopyPaths,
         isOperationRunning: model.isRepositoryOperation,
-        errorMessage: model.errorMessage
+        errorMessage: model.errorMessage,
+        aiAvailability: settingsModel.aiAvailability
       ),
       history: .init(
         commits: model.commits,
@@ -284,6 +285,17 @@ private struct CurrentWorkspaceWindow: View {
         discard: model.discard,
         ignore: model.ignore,
         commit: model.commit,
+        generateCommitMessage: {
+          try await model.generateCommitMessage(
+            configuration: settingsModel.aiConfiguration
+          )
+        },
+        prepareCommitComposition: {
+          try await model.prepareAICommitComposition(
+            configuration: settingsModel.aiConfiguration
+          )
+        },
+        executeCommitComposition: model.executeCommitComposition,
         applyHunk: model.applyHunk,
         applyLine: model.applyLine,
         discardHunk: model.discardHunk,

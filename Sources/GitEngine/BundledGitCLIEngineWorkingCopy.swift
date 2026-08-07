@@ -119,6 +119,176 @@ extension BundledGitCLIEngine {
     return recovery
   }
 
+  @discardableResult
+  public func composeCommits(
+    at location: RepositoryLocation,
+    plan: CommitCompositionPlan
+  ) async throws -> RecoveryReference? {
+    guard location.kind != .bare else {
+      throw GitEngineError.invalidRepository("A bare repository has no working copy.")
+    }
+    if let validationMessage = plan.validationMessage {
+      throw AICommitError.invalidComposition(validationMessage)
+    }
+    guard
+      plan.units.flatMap(\.affectedPaths).allSatisfy({
+        !$0.rawBytes.isEmpty && !$0.rawBytes.contains(0)
+      })
+    else {
+      throw GitEngineError.invalidOutput("A composition path was empty or contained a NUL byte.")
+    }
+
+    let headResult = try await runner.run(
+      GitCommand(
+        arguments: ["rev-parse", "--verify", "--quiet", "HEAD"],
+        workingDirectory: location.worktreeURL
+      )
+    )
+    guard headResult.succeeded || headResult.termination == .exited(1) else {
+      throw GitEngineError.commandFailed(
+        arguments: "rev-parse --verify --quiet HEAD",
+        message: headResult.errorDescription
+      )
+    }
+    let originalHead =
+      headResult.succeeded
+      ? String(decoding: headResult.standardOutput, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      : nil
+    let originalIndexTree = try await execute(
+      GitCommand(
+        arguments: ["write-tree"],
+        workingDirectory: location.worktreeURL
+      )
+    )
+    let originalIndexOID = String(decoding: originalIndexTree.standardOutput, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard isFullObjectID(originalIndexOID) else {
+      throw GitEngineError.invalidOutput("Git returned an invalid index tree ID.")
+    }
+
+    let recovery =
+      originalHead == nil
+      ? nil
+      : try await createRecoveryReference(
+        reason: "AI commit composition",
+        kind: .history,
+        at: location
+      )
+    let unitsByID = Dictionary(uniqueKeysWithValues: plan.units.map { ($0.id, $0) })
+    let paths = Array(Set(plan.units.flatMap(\.affectedPaths)))
+
+    do {
+      let pathsStagedBeforeComposition = try await stagedPaths(
+        among: paths,
+        at: location
+      )
+      if !pathsStagedBeforeComposition.isEmpty {
+        _ = try await mutateWorkingCopy(
+          at: location,
+          mutation: .unstage(pathsStagedBeforeComposition)
+        )
+      }
+      for group in plan.groups {
+        let units = try group.unitIDs.map { id in
+          guard let unit = unitsByID[id] else {
+            throw AICommitError.invalidComposition("The composition contains an unknown change.")
+          }
+          return unit
+        }
+        let wholeFilePaths = units.filter(\.stagesWholeFile).flatMap(\.affectedPaths)
+        if !wholeFilePaths.isEmpty {
+          _ = try await mutateWorkingCopy(
+            at: location,
+            mutation: .stage(wholeFilePaths)
+          )
+        }
+        for unit in units where !unit.stagesWholeFile {
+          guard let patchText = unit.patchText else { continue }
+          try await applyHunk(
+            at: location,
+            hunk: DiffHunk(
+              oldStart: 0,
+              oldCount: 0,
+              newStart: 0,
+              newCount: 0,
+              heading: unit.summary,
+              lines: [],
+              patchText: patchText
+            ),
+            source: .unstaged
+          )
+        }
+        _ = try await commit(
+          at: location,
+          request: CommitRequest(
+            message: group.message,
+            skipHooks: plan.options.skipHooks,
+            sign: plan.options.sign,
+            coAuthors: plan.options.coAuthors
+          )
+        )
+      }
+      return recovery
+    } catch {
+      do {
+        if let originalHead {
+          _ = try await execute(
+            GitCommand(
+              arguments: ["reset", "--mixed", originalHead],
+              workingDirectory: location.worktreeURL
+            )
+          )
+        } else {
+          _ = try await execute(
+            GitCommand(
+              arguments: ["update-ref", "-d", "HEAD"],
+              workingDirectory: location.worktreeURL
+            )
+          )
+        }
+        _ = try await execute(
+          GitCommand(
+            arguments: ["read-tree", originalIndexOID],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      } catch let rollbackError {
+        throw GitEngineError.invalidOutput(
+          "Commit composition failed (\(error.localizedDescription)) and Git could not restore the original index (\(rollbackError.localizedDescription))."
+        )
+      }
+      throw error
+    }
+  }
+
+  private func stagedPaths(
+    among paths: [GitPath],
+    at location: RepositoryLocation
+  ) async throws -> [GitPath] {
+    guard !paths.isEmpty else { return [] }
+    let result = try await execute(
+      GitCommand(
+        rawArguments: [
+          Array("diff".utf8),
+          Array("--cached".utf8),
+          Array("--name-only".utf8),
+          Array("-z".utf8),
+          Array("--".utf8),
+        ] + paths.map(\.rawBytes),
+        workingDirectory: location.worktreeURL,
+        outputLimit: 32 * 1024 * 1024,
+        timeout: .seconds(60)
+      )
+    )
+    let staged = Set(
+      result.standardOutput
+        .split(separator: 0, omittingEmptySubsequences: true)
+        .map(GitPath.init(rawBytes:))
+    )
+    return paths.filter(staged.contains)
+  }
+
   public func commitTemplate(
     at location: RepositoryLocation
   ) async throws -> String? {

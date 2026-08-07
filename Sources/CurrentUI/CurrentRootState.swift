@@ -47,6 +47,7 @@ extension CurrentRootState {
     public let pendingWorkingCopyPaths: Set<GitPath>
     public let isOperationRunning: Bool
     public let errorMessage: String?
+    public let aiAvailability: AIFeatureAvailability
 
     public init(
       name: String?,
@@ -65,7 +66,8 @@ extension CurrentRootState {
       isLoading: Bool,
       pendingWorkingCopyPaths: Set<GitPath>,
       isOperationRunning: Bool,
-      errorMessage: String?
+      errorMessage: String?,
+      aiAvailability: AIFeatureAvailability = .unavailable(reason: "AI is unavailable")
     ) {
       self.name = name
       self.gitVersion = gitVersion
@@ -84,6 +86,7 @@ extension CurrentRootState {
       self.pendingWorkingCopyPaths = pendingWorkingCopyPaths
       self.isOperationRunning = isOperationRunning
       self.errorMessage = errorMessage
+      self.aiAvailability = aiAvailability
     }
   }
 

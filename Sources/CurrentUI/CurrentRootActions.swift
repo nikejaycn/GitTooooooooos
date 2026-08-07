@@ -171,6 +171,9 @@ extension CurrentRootActions {
     public let discard: (GitPath) -> Void
     public let ignore: (GitPath) -> Void
     public let commit: (CommitRequest) async throws -> Void
+    public let generateCommitMessage: () async throws -> String
+    public let prepareCommitComposition: () async throws -> CommitCompositionPlan
+    public let executeCommitComposition: (CommitCompositionPlan) async throws -> Void
     public let applyHunk: (DiffDocument, DiffHunk) -> Void
     public let applyLine: (DiffDocument, DiffHunk, Int) -> Void
     public let discardHunk: (DiffDocument, DiffHunk) -> Void
@@ -184,6 +187,9 @@ extension CurrentRootActions {
       discard: @escaping (GitPath) -> Void,
       ignore: @escaping (GitPath) -> Void,
       commit: @escaping (CommitRequest) async throws -> Void,
+      generateCommitMessage: @escaping () async throws -> String,
+      prepareCommitComposition: @escaping () async throws -> CommitCompositionPlan,
+      executeCommitComposition: @escaping (CommitCompositionPlan) async throws -> Void,
       applyHunk: @escaping (DiffDocument, DiffHunk) -> Void,
       applyLine: @escaping (DiffDocument, DiffHunk, Int) -> Void,
       discardHunk: @escaping (DiffDocument, DiffHunk) -> Void,
@@ -196,6 +202,9 @@ extension CurrentRootActions {
       self.discard = discard
       self.ignore = ignore
       self.commit = commit
+      self.generateCommitMessage = generateCommitMessage
+      self.prepareCommitComposition = prepareCommitComposition
+      self.executeCommitComposition = executeCommitComposition
       self.applyHunk = applyHunk
       self.applyLine = applyLine
       self.discardHunk = discardHunk

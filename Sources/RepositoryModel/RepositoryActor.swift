@@ -397,6 +397,61 @@ public actor RepositoryActor {
     return result
   }
 
+  @discardableResult
+  public func composeCommits(
+    _ plan: CommitCompositionPlan,
+    historyLimit: Int = 200
+  ) async throws -> HistoryMutationResult {
+    let requestedGeneration = generation.next()
+    generation = requestedGeneration
+    lastPlan = try OperationPlanner.commitComposition(
+      plan,
+      generation: requestedGeneration,
+      at: location
+    )
+    let predecessor = mutationTail
+    let engine = self.engine
+    let location = self.location
+
+    let operation = Task {
+      await predecessor?.value
+      try Task.checkCancellation()
+      let recovery = try await engine.composeCommits(at: location, plan: plan)
+      async let status = engine.status(at: location, generation: requestedGeneration)
+      async let commits = engine.history(at: location, limit: historyLimit)
+      async let references = engine.references(at: location)
+      async let stashes = engine.stashes(at: location)
+      async let remotes = engine.remotes(at: location)
+      async let worktrees = engine.worktrees(at: location)
+      async let submodules = engine.submodules(at: location)
+      async let gitLFS = engine.lfsRepositoryState(at: location)
+      let loaded = try await (
+        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
+      )
+      return HistoryMutationResult(
+        snapshot: RepositorySnapshot(
+          generation: requestedGeneration,
+          status: loaded.0,
+          commits: loaded.1,
+          references: loaded.2,
+          stashes: loaded.3,
+          remotes: loaded.4,
+          worktrees: loaded.5,
+          submodules: loaded.6,
+          gitLFS: loaded.7
+        ),
+        recoveryReference: recovery
+      )
+    }
+    mutationTail = Task { _ = try? await operation.value }
+
+    let result = try await operation.value
+    guard requestedGeneration == generation else { return result }
+    cachedStatus = result.snapshot.status
+    cachedSnapshot = result.snapshot
+    return result
+  }
+
   public func commitTemplate() async throws -> String? {
     try await engine.commitTemplate(at: location)
   }

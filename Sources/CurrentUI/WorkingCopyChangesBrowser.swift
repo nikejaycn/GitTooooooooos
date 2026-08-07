@@ -2,6 +2,11 @@ import CurrentDomain
 import DiffKit
 import SwiftUI
 
+private enum ChangedFilesLayout {
+  static let horizontalInset: CGFloat = 14
+  static let rowVerticalInset: CGFloat = 6
+}
+
 enum ChangedFilesBulkSelection: Equatable {
   case none
   case mixed
@@ -231,7 +236,7 @@ struct WorkingCopyChangesBrowser: View {
       .fixedSize()
       .help("Working copy options")
     }
-    .padding(.leading, 14)
+    .padding(.leading, ChangedFilesLayout.horizontalInset)
     .padding(.trailing, 10)
     .frame(height: 38)
     .background(.bar)
@@ -289,7 +294,7 @@ struct WorkingCopyChangesBrowser: View {
               changedFileRow(change)
             }
           }
-          .padding(6)
+          .padding(.vertical, ChangedFilesLayout.rowVerticalInset)
         }
       }
     }
@@ -345,7 +350,7 @@ struct WorkingCopyChangesBrowser: View {
 
       fileActionsMenu(change)
     }
-    .padding(.horizontal, 8)
+    .padding(.horizontal, ChangedFilesLayout.horizontalInset)
     .frame(height: 32)
     .background(
       isSelected ? Color.accentColor.opacity(0.16) : Color.clear,

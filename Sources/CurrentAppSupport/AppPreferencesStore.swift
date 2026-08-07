@@ -31,6 +31,12 @@ public struct AppPreferencesStore {
     static let soloGraphReference = "Current.soloGraphReference.v1"
     static let pinnedGraphReferences = "Current.pinnedGraphReferences.v1"
     static let visibleSidebarSections = "Current.visibleSidebarSections.v1"
+    static let aiProvider = "Current.ai.provider.v1"
+    static let aiModel = "Current.ai.model.v1"
+    static let aiBaseURL = "Current.ai.baseURL.v1"
+    static let aiGlobalInstructions = "Current.ai.globalInstructions.v1"
+    static let aiCommitMessageInstructions = "Current.ai.commitMessageInstructions.v1"
+    static let aiCommitComposerInstructions = "Current.ai.commitComposerInstructions.v1"
   }
 
   private let defaults: UserDefaults
@@ -207,6 +213,41 @@ public struct AppPreferencesStore {
       defaults.set(
         SidebarSection.allCases.filter(newValue.contains).map(\.rawValue),
         forKey: Key.visibleSidebarSections
+      )
+    }
+  }
+
+  public var aiConfiguration: AIConfiguration {
+    get {
+      let defaults = AIConfiguration()
+      let provider = self.defaults.string(forKey: Key.aiProvider)
+        .flatMap(AIProvider.init(rawValue:)) ?? defaults.provider
+      return AIConfiguration(
+        provider: provider,
+        model: self.defaults.string(forKey: Key.aiModel) ?? provider.defaultModel,
+        baseURL: self.defaults.string(forKey: Key.aiBaseURL) ?? provider.defaultBaseURL,
+        globalInstructions: self.defaults.string(forKey: Key.aiGlobalInstructions)
+          ?? defaults.globalInstructions,
+        commitMessageInstructions: self.defaults.string(
+          forKey: Key.aiCommitMessageInstructions
+        ) ?? defaults.commitMessageInstructions,
+        commitComposerInstructions: self.defaults.string(
+          forKey: Key.aiCommitComposerInstructions
+        ) ?? defaults.commitComposerInstructions
+      )
+    }
+    nonmutating set {
+      defaults.set(newValue.provider.rawValue, forKey: Key.aiProvider)
+      defaults.set(newValue.model, forKey: Key.aiModel)
+      defaults.set(newValue.baseURL, forKey: Key.aiBaseURL)
+      defaults.set(newValue.globalInstructions, forKey: Key.aiGlobalInstructions)
+      defaults.set(
+        newValue.commitMessageInstructions,
+        forKey: Key.aiCommitMessageInstructions
+      )
+      defaults.set(
+        newValue.commitComposerInstructions,
+        forKey: Key.aiCommitComposerInstructions
       )
     }
   }

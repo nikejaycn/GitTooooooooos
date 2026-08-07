@@ -17,6 +17,14 @@ extension AppAppearance {
   }
 }
 
+private enum SettingsTab: Hashable {
+  case general
+  case ai
+  case workspace
+  case git
+  case privacy
+}
+
 struct CurrentSettingsView: View {
   @Bindable var model: AppModel
   let updater: CurrentUpdateController
@@ -24,331 +32,489 @@ struct CurrentSettingsView: View {
   @State private var draftCustomGitPath = ""
   @State private var draftCustomDiffToolPath = ""
   @State private var draftCustomMergeToolPath = ""
+  @State private var draftAIAPIKey = ""
+  @State private var aiCredentialMessage: String?
+  @State private var aiCredentialError: String?
   @State private var isShowingDiagnosticPreview = false
+  @State private var selectedTab = SettingsTab.general
 
   var body: some View {
-    Form {
-      Section("Appearance") {
-        Picker(
-          "Theme",
-          selection: Binding(
-            get: { model.appearance },
-            set: { model.setAppearance($0) }
-          )
-        ) {
-          ForEach(AppAppearance.allCases) { appearance in
-            Text(appearance.title)
-              .tag(appearance)
-          }
-        }
-        .pickerStyle(.segmented)
-      }
-
-      Section("Code Viewer") {
-        Picker(
-          "Font",
-          selection: Binding(
-            get: { model.diffTextConfiguration.fontName },
-            set: { model.setDiffTextFont($0) }
-          )
-        ) {
-          Text("System Monospaced").tag(String?.none)
-          ForEach(CodeFontCatalog.availableFonts) { option in
-            Text(option.title).tag(Optional(option.name))
-          }
-        }
-        .accessibilityLabel("Code font")
-
-        LabeledContent("Size") {
-          HStack(spacing: 10) {
-            Stepper(
-              value: Binding(
-                get: { model.diffTextConfiguration.fontSize },
-                set: { model.setDiffTextFontSize($0) }
-              ),
-              in: DiffTextConfiguration.minimumFontSize...DiffTextConfiguration.maximumFontSize,
-              step: 1
-            ) {
-              Text("\(model.diffTextConfiguration.fontSize, specifier: "%.0f") pt")
-                .monospacedDigit()
-                .frame(width: 46, alignment: .trailing)
-            }
-            Button("Reset") {
-              model.setDiffTextFont(nil)
-              model.setDiffTextFontSize(12)
-            }
-            .disabled(model.diffTextConfiguration == DiffTextConfiguration())
-          }
-        }
-
-        Text("let branch = \"main\"  // Diff preview")
-          .font(codePreviewFont)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(10)
-          .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-
-        Text("Used independently by Unified, Side-by-Side, and Working Copy code views.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Section("Views") {
-        ForEach(SidebarSection.allCases) { section in
-          Toggle(
-            section.title,
-            isOn: Binding(
-              get: { model.visibleSidebarSections.contains(section) },
-              set: { _ in model.toggleSidebarSection(section) }
+    TabView(selection: $selectedTab) {
+      Form {
+        Section("Appearance") {
+          Picker(
+            "Theme",
+            selection: Binding(
+              get: { model.appearance },
+              set: { model.setAppearance($0) }
             )
-          )
-          .toggleStyle(.checkbox)
-        }
-        Text("Choose which sections appear in every repository sidebar.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Section("Git Toolchain") {
-        SettingsValueRow(title: "Git", value: model.gitVersion ?? "Checking…")
-        SettingsValueRow(title: "Git LFS", value: model.gitLFSVersion ?? "Unavailable")
-        SettingsValueRow(
-          title: "Active source",
-          value: model.gitSourceDescription ?? "Unavailable"
-        )
-
-        Toggle("Use a custom Git executable", isOn: $draftUseCustomGit)
-        HStack {
-          TextField("/absolute/path/to/git", text: $draftCustomGitPath)
-            .textFieldStyle(.roundedBorder)
-            .disabled(!draftUseCustomGit)
-            .accessibilityLabel("Custom Git executable path")
-          Button("Choose…", action: chooseCustomGit)
-            .disabled(!draftUseCustomGit)
-        }
-        HStack {
-          Spacer()
-          Button("Use Bundled Git") {
-            draftUseCustomGit = false
-            model.applyGitToolchain(useCustom: false, path: draftCustomGitPath)
+          ) {
+            ForEach(AppAppearance.allCases) { appearance in
+              Text(appearance.title)
+                .tag(appearance)
+            }
           }
-          .disabled(!model.useCustomGit || model.isLoading || model.isRepositoryOperation)
-          Button("Apply") {
-            model.applyGitToolchain(
-              useCustom: draftUseCustomGit,
-              path: draftCustomGitPath
+          .pickerStyle(.segmented)
+        }
+
+        Section("Code Viewer") {
+          Picker(
+            "Font",
+            selection: Binding(
+              get: { model.diffTextConfiguration.fontName },
+              set: { model.setDiffTextFont($0) }
             )
+          ) {
+            Text("System Monospaced").tag(String?.none)
+            ForEach(CodeFontCatalog.availableFonts) { option in
+              Text(option.title).tag(Optional(option.name))
+            }
           }
-          .keyboardShortcut(.defaultAction)
-          .disabled(
-            !hasDraftChanges
-              || model.isLoading
-              || model.isRepositoryOperation
-              || (draftUseCustomGit
-                && draftCustomGitPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-          )
-        }
-        if let reason = model.gitFallbackReason {
-          Label(reason, systemImage: "exclamationmark.triangle.fill")
+          .accessibilityLabel("Code font")
+
+          LabeledContent("Size") {
+            HStack(spacing: 10) {
+              Stepper(
+                value: Binding(
+                  get: { model.diffTextConfiguration.fontSize },
+                  set: { model.setDiffTextFontSize($0) }
+                ),
+                in: DiffTextConfiguration.minimumFontSize...DiffTextConfiguration.maximumFontSize,
+                step: 1
+              ) {
+                Text("\(model.diffTextConfiguration.fontSize, specifier: "%.0f") pt")
+                  .monospacedDigit()
+                  .frame(width: 46, alignment: .trailing)
+              }
+              Button("Reset") {
+                model.setDiffTextFont(nil)
+                model.setDiffTextFontSize(12)
+              }
+              .disabled(model.diffTextConfiguration == DiffTextConfiguration())
+            }
+          }
+
+          Text("let branch = \"main\"  // Diff preview")
+            .font(codePreviewFont)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+
+          Text("Used independently by Unified, Side-by-Side, and Working Copy code views.")
             .font(.caption)
-            .foregroundStyle(.orange)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .formStyle(.grouped)
+      .tabItem {
+        Label("General", systemImage: "gearshape")
+      }
+      .tag(SettingsTab.general)
+
+      Form {
+        Section("AI") {
+          Picker(
+            "Provider",
+            selection: Binding(
+              get: { model.aiConfiguration.provider },
+              set: { provider in
+                model.setAIProvider(provider)
+                draftAIAPIKey = ""
+                aiCredentialMessage = nil
+                aiCredentialError = nil
+              }
+            )
+          ) {
+            ForEach(AIProvider.allCases) { provider in
+              Text(provider.title).tag(provider)
+            }
+          }
+
+          if model.aiConfiguration.provider != .appleIntelligence {
+            LabeledContent("Model") {
+              TextField(
+                "",
+                text: Binding(
+                  get: { model.aiConfiguration.model },
+                  set: { model.setAIModel($0) }
+                ),
+                prompt: Text("Model name")
+              )
+              .textFieldStyle(.roundedBorder)
+              .frame(width: 280)
+              .accessibilityLabel("AI model name")
+            }
+
+            if model.aiConfiguration.provider == .openAICompatible {
+              LabeledContent("Base URL") {
+                TextField(
+                  "",
+                  text: Binding(
+                    get: { model.aiConfiguration.baseURL },
+                    set: { model.setAIBaseURL($0) }
+                  ),
+                  prompt: Text("https://api.example.com/v1")
+                )
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 280)
+                .accessibilityLabel("AI API base URL")
+              }
+            }
+
+            LabeledContent("API Key") {
+              HStack(spacing: 8) {
+                SecureField(
+                  "",
+                  text: $draftAIAPIKey,
+                  prompt: Text(model.hasConfiguredAIAPIKey ? "Stored in Keychain" : "Required")
+                )
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 180)
+                .accessibilityLabel("AI provider API key")
+                .onSubmit(saveAIAPIKey)
+
+                Button(model.hasConfiguredAIAPIKey ? "Update" : "Save") {
+                  saveAIAPIKey()
+                }
+                .disabled(
+                  draftAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+
+                Button("Remove", role: .destructive) {
+                  removeAIAPIKey()
+                }
+                .disabled(!model.hasConfiguredAIAPIKey)
+              }
+            }
+          }
+
+          Label(
+            aiCredentialError ?? aiCredentialMessage ?? model.aiAvailability.statusText,
+            systemImage: aiCredentialError == nil && model.aiAvailability.isAvailable
+              ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+          )
+          .font(.caption)
+          .foregroundStyle(
+            aiCredentialError == nil && model.aiAvailability.isAvailable
+              ? Color.green : Color.orange
+          )
+
+          SettingsInstructionEditor(
+            title: "Global Instructions",
+            description: "Applied to every AI feature.",
+            text: Binding(
+              get: { model.aiConfiguration.globalInstructions },
+              set: { model.setAIGlobalInstructions($0) }
+            )
+          )
+
+          SettingsInstructionEditor(
+            title: "Commit Message Generation",
+            description: "Controls messages generated from staged changes.",
+            text: Binding(
+              get: { model.aiConfiguration.commitMessageInstructions },
+              set: { model.setAICommitMessageInstructions($0) }
+            )
+          )
+
+          SettingsInstructionEditor(
+            title: "Commit Composer",
+            description: "Controls how working-copy hunks are grouped into atomic commits.",
+            text: Binding(
+              get: { model.aiConfiguration.commitComposerInstructions },
+              set: { model.setAICommitComposerInstructions($0) }
+            )
+          )
+
+          Label(aiPrivacyDescription, systemImage: "lock.shield")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .formStyle(.grouped)
+      .tabItem {
+        Label("AI", systemImage: "sparkles")
+      }
+      .tag(SettingsTab.ai)
+
+      Form {
+        Section("Views") {
+          ForEach(SidebarSection.allCases) { section in
+            Toggle(
+              section.title,
+              isOn: Binding(
+                get: { model.visibleSidebarSections.contains(section) },
+                set: { _ in model.toggleSidebarSection(section) }
+              )
+            )
+            .toggleStyle(.checkbox)
+          }
+          Text("Choose which sections appear in every repository sidebar.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .formStyle(.grouped)
+      .tabItem {
+        Label("Workspace", systemImage: "sidebar.left")
+      }
+      .tag(SettingsTab.workspace)
+
+      Form {
+        Section("Git Toolchain") {
+          SettingsValueRow(title: "Git", value: model.gitVersion ?? "Checking…")
+          SettingsValueRow(title: "Git LFS", value: model.gitLFSVersion ?? "Unavailable")
+          SettingsValueRow(
+            title: "Active source",
+            value: model.gitSourceDescription ?? "Unavailable"
+          )
+
+          Toggle("Use a custom Git executable", isOn: $draftUseCustomGit)
+          HStack {
+            TextField("/absolute/path/to/git", text: $draftCustomGitPath)
+              .textFieldStyle(.roundedBorder)
+              .disabled(!draftUseCustomGit)
+              .accessibilityLabel("Custom Git executable path")
+            Button("Choose…", action: chooseCustomGit)
+              .disabled(!draftUseCustomGit)
+          }
+          HStack {
+            Spacer()
+            Button("Use Bundled Git") {
+              draftUseCustomGit = false
+              model.applyGitToolchain(useCustom: false, path: draftCustomGitPath)
+            }
+            .disabled(!model.useCustomGit || model.isLoading || model.isRepositoryOperation)
+            Button("Apply") {
+              model.applyGitToolchain(
+                useCustom: draftUseCustomGit,
+                path: draftCustomGitPath
+              )
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(
+              !hasDraftChanges
+                || model.isLoading
+                || model.isRepositoryOperation
+                || (draftUseCustomGit
+                  && draftCustomGitPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            )
+          }
+          if let reason = model.gitFallbackReason {
+            Label(reason, systemImage: "exclamationmark.triangle.fill")
+              .font(.caption)
+              .foregroundStyle(.orange)
+              .lineLimit(3)
+              .truncationMode(.tail)
+              .help(reason)
+          }
+          Text(
+            "GitCurrent validates the selected executable and falls back to its bundled arm64 Git when the custom path is unusable."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+
+        Section("History") {
+          Picker(
+            "Maximum graph commits",
+            selection: Binding(
+              get: { model.maximumLoadedCommitCount },
+              set: { model.setMaximumLoadedCommitCount($0) }
+            )
+          ) {
+            ForEach(AppModel.supportedCommitLimits, id: \.self) { limit in
+              Text(limit.formatted())
+                .tag(limit)
+            }
+          }
+          Text("History is loaded in 200-commit pages up to this in-memory limit.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+          Picker(
+            "Row density",
+            selection: Binding(
+              get: { model.graphDisplayConfiguration.density },
+              set: { model.setGraphDensity($0) }
+            )
+          ) {
+            ForEach(GraphRowDensity.allCases) { density in
+              Text(density.title).tag(density)
+            }
+          }
+
+          LabeledContent("Graph scale") {
+            HStack {
+              Slider(
+                value: Binding(
+                  get: { model.graphDisplayConfiguration.scale },
+                  set: { model.setGraphScale($0) }
+                ),
+                in: 0.75...1.5,
+                step: 0.05
+              )
+              .frame(width: 180)
+              Text(
+                model.graphDisplayConfiguration.scale,
+                format: .percent.precision(.fractionLength(0))
+              )
+              .monospacedDigit()
+              .frame(width: 48, alignment: .trailing)
+            }
+          }
+
+          LabeledContent("Visible columns") {
+            HStack {
+              ForEach(GraphOptionalColumn.allCases) { column in
+                Toggle(
+                  column.title,
+                  isOn: Binding(
+                    get: {
+                      model.graphDisplayConfiguration.visibleOptionalColumns.contains(column)
+                    },
+                    set: { _ in model.toggleGraphColumn(column) }
+                  )
+                )
+                .toggleStyle(.checkbox)
+              }
+            }
+          }
+          Text("Column widths and order are restored automatically.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+
+        Section("External Tools") {
+          Picker(
+            "Diff tool",
+            selection: Binding(
+              get: { model.externalDiffTool },
+              set: { model.setExternalDiffTool($0) }
+            )
+          ) {
+            ForEach(ExternalTool.allCases) { tool in
+              Text(tool.title).tag(tool)
+            }
+          }
+          if model.externalDiffTool == .custom {
+            HStack {
+              TextField("Custom diff executable", text: $draftCustomDiffToolPath)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Custom diff executable path")
+              Button("Choose…") {
+                chooseExternalTool(
+                  title: "Choose Diff Tool",
+                  path: $draftCustomDiffToolPath
+                )
+              }
+            }
+          }
+
+          Picker(
+            "Merge tool",
+            selection: Binding(
+              get: { model.externalMergeTool },
+              set: { model.setExternalMergeTool($0) }
+            )
+          ) {
+            ForEach(ExternalTool.allCases) { tool in
+              Text(tool.title).tag(tool)
+            }
+          }
+          if model.externalMergeTool == .custom {
+            HStack {
+              TextField("Custom merge executable", text: $draftCustomMergeToolPath)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Custom merge executable path")
+              Button("Choose…") {
+                chooseExternalTool(
+                  title: "Choose Merge Tool",
+                  path: $draftCustomMergeToolPath
+                )
+              }
+            }
+          }
+
+          HStack {
+            Spacer()
+            Button("Apply Paths") {
+              model.setCustomDiffToolPath(draftCustomDiffToolPath)
+              model.setCustomMergeToolPath(draftCustomMergeToolPath)
+            }
+            .disabled(!hasExternalToolPathChanges)
+          }
+          Text(
+            "FileMerge, Kaleidoscope, and Beyond Compare use their standard command-line interfaces. A custom diff tool receives before and after paths; a custom merge tool receives base, ours, theirs, and writable result paths."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+
+        Section("Working Copy Protection") {
+          Toggle(
+            "Automatically stash before checkout, merge, and rebase",
+            isOn: Binding(
+              get: { model.autoStashEnabled },
+              set: { model.setAutoStashEnabled($0) }
+            )
+          )
+          Text(
+            "GitCurrent restores protected changes after a successful operation and keeps the stash when restoration conflicts. Checkout protection also includes untracked files."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+      }
+      .formStyle(.grouped)
+      .tabItem {
+        Label("Git", systemImage: "arrow.triangle.branch")
+      }
+      .tag(SettingsTab.git)
+
+      Form {
+        Section("Privacy") {
+          LabeledContent("Analytics", value: "Not collected")
+          LabeledContent("Crash reports", value: "Not uploaded")
+          Button("Preview Diagnostic Bundle…") {
+            isShowingDiagnosticPreview = true
+          }
+          Text(
+            "Core Git workflows stay local. GitCurrent never collects or uploads diagnostics automatically. Export is always manual."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+
+        Section("Updates") {
+          Toggle(
+            "Automatically check for updates",
+            isOn: Binding(
+              get: { updater.automaticallyChecksForUpdates },
+              set: { updater.automaticallyChecksForUpdates = $0 }
+            )
+          )
+          .disabled(!updater.configuration.isReadyForSignedUpdates)
+          Button("Check for Updates…") {
+            updater.checkForUpdates()
+          }
+          .disabled(!updater.canCheckForUpdates)
+          Text(updater.statusDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
             .lineLimit(3)
             .truncationMode(.tail)
-            .help(reason)
+            .help(updater.statusDescription)
         }
-        Text(
-          "GitCurrent validates the selected executable and falls back to its bundled arm64 Git when the custom path is unusable."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
       }
-
-      Section("History") {
-        Picker(
-          "Maximum graph commits",
-          selection: Binding(
-            get: { model.maximumLoadedCommitCount },
-            set: { model.setMaximumLoadedCommitCount($0) }
-          )
-        ) {
-          ForEach(AppModel.supportedCommitLimits, id: \.self) { limit in
-            Text(limit.formatted())
-              .tag(limit)
-          }
-        }
-        Text("History is loaded in 200-commit pages up to this in-memory limit.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
-        Picker(
-          "Row density",
-          selection: Binding(
-            get: { model.graphDisplayConfiguration.density },
-            set: { model.setGraphDensity($0) }
-          )
-        ) {
-          ForEach(GraphRowDensity.allCases) { density in
-            Text(density.title).tag(density)
-          }
-        }
-
-        LabeledContent("Graph scale") {
-          HStack {
-            Slider(
-              value: Binding(
-                get: { model.graphDisplayConfiguration.scale },
-                set: { model.setGraphScale($0) }
-              ),
-              in: 0.75...1.5,
-              step: 0.05
-            )
-            .frame(width: 180)
-            Text(
-              model.graphDisplayConfiguration.scale, format: .percent.precision(.fractionLength(0))
-            )
-            .monospacedDigit()
-            .frame(width: 48, alignment: .trailing)
-          }
-        }
-
-        LabeledContent("Visible columns") {
-          HStack {
-            ForEach(GraphOptionalColumn.allCases) { column in
-              Toggle(
-                column.title,
-                isOn: Binding(
-                  get: {
-                    model.graphDisplayConfiguration.visibleOptionalColumns.contains(column)
-                  },
-                  set: { _ in model.toggleGraphColumn(column) }
-                )
-              )
-              .toggleStyle(.checkbox)
-            }
-          }
-        }
-        Text("Column widths and order are restored automatically.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      .formStyle(.grouped)
+      .tabItem {
+        Label("Privacy", systemImage: "hand.raised")
       }
-
-      Section("External Tools") {
-        Picker(
-          "Diff tool",
-          selection: Binding(
-            get: { model.externalDiffTool },
-            set: { model.setExternalDiffTool($0) }
-          )
-        ) {
-          ForEach(ExternalTool.allCases) { tool in
-            Text(tool.title).tag(tool)
-          }
-        }
-        if model.externalDiffTool == .custom {
-          HStack {
-            TextField("Custom diff executable", text: $draftCustomDiffToolPath)
-              .textFieldStyle(.roundedBorder)
-              .accessibilityLabel("Custom diff executable path")
-            Button("Choose…") {
-              chooseExternalTool(
-                title: "Choose Diff Tool",
-                path: $draftCustomDiffToolPath
-              )
-            }
-          }
-        }
-
-        Picker(
-          "Merge tool",
-          selection: Binding(
-            get: { model.externalMergeTool },
-            set: { model.setExternalMergeTool($0) }
-          )
-        ) {
-          ForEach(ExternalTool.allCases) { tool in
-            Text(tool.title).tag(tool)
-          }
-        }
-        if model.externalMergeTool == .custom {
-          HStack {
-            TextField("Custom merge executable", text: $draftCustomMergeToolPath)
-              .textFieldStyle(.roundedBorder)
-              .accessibilityLabel("Custom merge executable path")
-            Button("Choose…") {
-              chooseExternalTool(
-                title: "Choose Merge Tool",
-                path: $draftCustomMergeToolPath
-              )
-            }
-          }
-        }
-
-        HStack {
-          Spacer()
-          Button("Apply Paths") {
-            model.setCustomDiffToolPath(draftCustomDiffToolPath)
-            model.setCustomMergeToolPath(draftCustomMergeToolPath)
-          }
-          .disabled(!hasExternalToolPathChanges)
-        }
-        Text(
-          "FileMerge, Kaleidoscope, and Beyond Compare use their standard command-line interfaces. A custom diff tool receives before and after paths; a custom merge tool receives base, ours, theirs, and writable result paths."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      Section("Working Copy Protection") {
-        Toggle(
-          "Automatically stash before checkout, merge, and rebase",
-          isOn: Binding(
-            get: { model.autoStashEnabled },
-            set: { model.setAutoStashEnabled($0) }
-          )
-        )
-        Text(
-          "GitCurrent restores protected changes after a successful operation and keeps the stash when restoration conflicts. Checkout protection also includes untracked files."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      Section("Privacy") {
-        LabeledContent("Analytics", value: "Not collected")
-        LabeledContent("Crash reports", value: "Not uploaded")
-        Button("Preview Diagnostic Bundle…") {
-          isShowingDiagnosticPreview = true
-        }
-        Text(
-          "Core Git workflows stay local. GitCurrent never collects or uploads diagnostics automatically. Export is always manual."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      Section("Updates") {
-        Toggle(
-          "Automatically check for updates",
-          isOn: Binding(
-            get: { updater.automaticallyChecksForUpdates },
-            set: { updater.automaticallyChecksForUpdates = $0 }
-          )
-        )
-        .disabled(!updater.configuration.isReadyForSignedUpdates)
-        Button("Check for Updates…") {
-          updater.checkForUpdates()
-        }
-        .disabled(!updater.canCheckForUpdates)
-        Text(updater.statusDescription)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(3)
-          .truncationMode(.tail)
-          .help(updater.statusDescription)
-      }
+      .tag(SettingsTab.privacy)
     }
-    .formStyle(.grouped)
-    .frame(width: 600, height: 720)
+    .frame(width: 640, height: 680)
     .onAppear {
       draftUseCustomGit = model.useCustomGit
       draftCustomGitPath = model.customGitPath
@@ -372,6 +538,30 @@ struct CurrentSettingsView: View {
     }
     if panel.runModal() == .OK, let url = panel.url {
       draftCustomGitPath = url.standardizedFileURL.path
+    }
+  }
+
+  private func saveAIAPIKey() {
+    do {
+      try model.saveAIAPIKey(draftAIAPIKey)
+      draftAIAPIKey = ""
+      aiCredentialError = nil
+      aiCredentialMessage = "API key saved securely in Keychain"
+    } catch {
+      aiCredentialMessage = nil
+      aiCredentialError = error.localizedDescription
+    }
+  }
+
+  private func removeAIAPIKey() {
+    do {
+      try model.removeAIAPIKey()
+      draftAIAPIKey = ""
+      aiCredentialError = nil
+      aiCredentialMessage = "API key removed from Keychain"
+    } catch {
+      aiCredentialMessage = nil
+      aiCredentialError = error.localizedDescription
     }
   }
 
@@ -414,6 +604,41 @@ struct CurrentSettingsView: View {
       size: model.diffTextConfiguration.fontSize,
       design: .monospaced
     )
+  }
+
+  private var aiPrivacyDescription: String {
+    if model.aiConfiguration.provider == .appleIntelligence {
+      return
+        "Repository diffs stay on this Mac. Repository content is treated as untrusted input, and every generated result is reviewed before execution."
+    }
+    return
+      "Repository diffs are sent only when you invoke an AI feature, to \(model.aiConfiguration.provider.title). The API key stays in macOS Keychain, and every generated result is reviewed before execution."
+  }
+}
+
+private struct SettingsInstructionEditor: View {
+  let title: String
+  let description: String
+  @Binding var text: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(title)
+        .font(.callout.weight(.medium))
+      TextEditor(text: $text)
+        .font(.body)
+        .frame(minHeight: 64)
+        .padding(4)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+        .overlay {
+          RoundedRectangle(cornerRadius: 7)
+            .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
+        }
+        .accessibilityLabel(title)
+      Text(description)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
   }
 }
 

@@ -169,7 +169,8 @@ let package = Package(
     ),
     .target(
       name: "CurrentAppSupport",
-      dependencies: ["CurrentDomain", "CurrentUI", "DiffKit", "GraphKit"]
+      dependencies: ["CurrentDomain", "CurrentUI", "DiffKit", "GraphKit"],
+      linkerSettings: [.linkedFramework("Security")]
     ),
     .testTarget(
       name: "GitParsersTests",

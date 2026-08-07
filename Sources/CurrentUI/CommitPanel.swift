@@ -36,6 +36,17 @@ struct CommitDraftState: Equatable {
     )
   }
 
+  var compositionOptions: CommitCompositionOptions? {
+    guard coAuthorFieldsValid else { return nil }
+    return CommitCompositionOptions(
+      skipHooks: skipHooks,
+      sign: sign,
+      coAuthors: trimmedCoAuthorName.isEmpty
+        ? []
+        : [CommitCoAuthor(name: trimmedCoAuthorName, email: trimmedCoAuthorEmail)]
+    )
+  }
+
   mutating func resetAfterCommit() {
     message = ""
     amend = false
@@ -64,11 +75,18 @@ struct CommitPanel: View {
   let status: RepositoryStatus
   let commitTemplate: String?
   let hasRemotes: Bool
+  let aiAvailability: AIFeatureAvailability
   let isLoading: Bool
   let commit: (CommitRequest) async throws -> Void
+  let generateCommitMessage: () async throws -> String
+  let prepareCommitComposition: () async throws -> CommitCompositionPlan
+  let executeCommitComposition: (CommitCompositionPlan) async throws -> Void
   let push: () -> Void
 
   @State private var pendingAmend: PendingAmend?
+  @State private var isGeneratingCommitMessage = false
+  @State private var isShowingCommitComposer = false
+  @State private var aiErrorMessage: String?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -78,6 +96,18 @@ struct CommitPanel: View {
             TextField("Commit message", text: $draft.message, axis: .vertical)
               .lineLimit(2...7)
               .textFieldStyle(.roundedBorder)
+            Button(action: generateMessage) {
+              if isGeneratingCommitMessage {
+                ProgressView()
+                  .controlSize(.small)
+              } else {
+                Image(systemName: "sparkles")
+              }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!canGenerateMessage)
+            .help(aiButtonHelp(defaultText: "Generate commit message from staged changes"))
+            .accessibilityLabel("Generate Commit Message with AI")
             if let commitTemplate,
               !commitTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             {
@@ -87,25 +117,44 @@ struct CommitPanel: View {
             }
           }
 
-          DisclosureGroup("Commit Options", isExpanded: $draft.showsOptions) {
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
-              GridRow {
-                Toggle("Amend HEAD", isOn: $draft.amend)
-                Toggle("Sign commit", isOn: $draft.sign)
-                Toggle("Skip hooks", isOn: $draft.skipHooks)
+          HStack(alignment: .top, spacing: 12) {
+            DisclosureGroup("Commit Options", isExpanded: $draft.showsOptions) {
+              Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+                GridRow {
+                  Toggle("Amend HEAD", isOn: $draft.amend)
+                  Toggle("Sign commit", isOn: $draft.sign)
+                  Toggle("Skip hooks", isOn: $draft.skipHooks)
+                }
+                GridRow {
+                  Text("Co-author")
+                    .foregroundStyle(.secondary)
+                  TextField("Name", text: $draft.coAuthorName)
+                    .textFieldStyle(.roundedBorder)
+                  TextField("Email", text: $draft.coAuthorEmail)
+                    .textFieldStyle(.roundedBorder)
+                }
               }
-              GridRow {
-                Text("Co-author")
-                  .foregroundStyle(.secondary)
-                TextField("Name", text: $draft.coAuthorName)
-                  .textFieldStyle(.roundedBorder)
-                TextField("Email", text: $draft.coAuthorEmail)
-                  .textFieldStyle(.roundedBorder)
-              }
+              .padding(.top, 4)
             }
-            .padding(.top, 4)
+            .frame(maxWidth: .infinity)
+
+            Button {
+              aiErrorMessage = nil
+              isShowingCommitComposer = true
+            } label: {
+              Label("Compose commits with AI", systemImage: "sparkles")
+            }
+            .disabled(!canComposeCommits)
+            .help(aiButtonHelp(defaultText: "Split working-copy changes into atomic commits"))
           }
           .font(.caption)
+
+          if let aiErrorMessage {
+            Label(aiErrorMessage, systemImage: "exclamationmark.triangle.fill")
+              .font(.caption)
+              .foregroundStyle(.orange)
+              .textSelection(.enabled)
+          }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -163,6 +212,54 @@ struct CommitPanel: View {
       Text(
         "This rewrites local history. GitCurrent creates an undo reference to the existing HEAD before running git commit --amend."
       )
+    }
+    .sheet(isPresented: $isShowingCommitComposer) {
+      AICommitComposerView(
+        options: draft.compositionOptions ?? CommitCompositionOptions(),
+        load: prepareCommitComposition,
+        execute: executeCommitComposition,
+        completed: {
+          draft.resetAfterCommit()
+          isShowingCommitComposer = false
+        },
+        dismiss: { isShowingCommitComposer = false }
+      )
+    }
+  }
+
+  private var canGenerateMessage: Bool {
+    aiAvailability.isAvailable
+      && status.changes.contains(where: \.isStaged)
+      && !isLoading
+      && !isGeneratingCommitMessage
+  }
+
+  private var canComposeCommits: Bool {
+    aiAvailability.isAvailable
+      && !status.changes.isEmpty
+      && !status.operation.isInProgress
+      && !draft.amend
+      && draft.coAuthorFieldsValid
+      && !isLoading
+  }
+
+  private func aiButtonHelp(defaultText: String) -> String {
+    switch aiAvailability {
+    case .available: defaultText
+    case .unavailable(let reason): reason
+    }
+  }
+
+  private func generateMessage() {
+    isGeneratingCommitMessage = true
+    aiErrorMessage = nil
+    Task {
+      defer { isGeneratingCommitMessage = false }
+      do {
+        draft.message = try await generateCommitMessage()
+      } catch {
+        aiErrorMessage = error.localizedDescription
+      }
     }
   }
 

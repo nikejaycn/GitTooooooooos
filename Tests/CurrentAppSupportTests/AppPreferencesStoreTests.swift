@@ -24,6 +24,7 @@ struct AppPreferencesStoreTests {
     #expect(store.diffOptions == DiffOptions())
     #expect(store.diffTextConfiguration == DiffTextConfiguration())
     #expect(store.visibleSidebarSections == Set(SidebarSection.allCases))
+    #expect(store.aiConfiguration == AIConfiguration())
   }
 
   @Test("All feature preference groups round-trip through one store")
@@ -65,6 +66,15 @@ struct AppPreferencesStoreTests {
     store.soloGraphReference = "refs/heads/main"
     store.pinnedGraphReferences = ["refs/heads/main"]
     store.visibleSidebarSections = [.workspace, .localBranches]
+    let aiConfiguration = AIConfiguration(
+      provider: .deepSeek,
+      model: "deepseek-v4-flash",
+      baseURL: "https://api.deepseek.com",
+      globalInstructions: "Respond in Chinese",
+      commitMessageInstructions: "Use Conventional Commits",
+      commitComposerInstructions: "Keep tests with implementations"
+    )
+    store.aiConfiguration = aiConfiguration
 
     let reloaded = AppPreferencesStore(defaults: defaults)
     #expect(reloaded.recentRepositories == [recent])
@@ -84,6 +94,7 @@ struct AppPreferencesStoreTests {
     #expect(reloaded.soloGraphReference == "refs/heads/main")
     #expect(reloaded.pinnedGraphReferences == ["refs/heads/main"])
     #expect(reloaded.visibleSidebarSections == [.workspace, .localBranches])
+    #expect(reloaded.aiConfiguration == aiConfiguration)
   }
 
   @Test("Ignores removed sidebar sections saved by an older version")

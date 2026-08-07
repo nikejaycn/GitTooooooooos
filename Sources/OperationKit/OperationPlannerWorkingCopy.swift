@@ -2,6 +2,37 @@ import CurrentDomain
 import GitEngine
 
 extension OperationPlanner {
+  public static func commitComposition(
+    _ plan: CommitCompositionPlan,
+    generation: RepositoryGeneration,
+    at location: RepositoryLocation
+  ) throws -> OperationPlan {
+    if let validationMessage = plan.validationMessage {
+      throw AICommitError.invalidComposition(validationMessage)
+    }
+    return try OperationPlan(
+      kind: "commit.compose",
+      title: "Compose \(plan.groups.count) commits",
+      repositoryGeneration: generation,
+      preconditions: [
+        "Every working-copy change is assigned exactly once",
+        "The original HEAD and index tree are captured before staging",
+      ],
+      commands: plan.groups.map { group in
+        .git(
+          GitCommand(
+            arguments: ["commit", "-m", "<commit-message>"],
+            workingDirectory: location.worktreeURL
+          )
+        )
+      },
+      affectedRefs: ["HEAD"],
+      workingTreeImpact: .indexOnly,
+      risk: .localSafe,
+      recoveryStrategy: .gitReference
+    )
+  }
+
   public static func commit(
     _ request: CommitRequest,
     generation: RepositoryGeneration,

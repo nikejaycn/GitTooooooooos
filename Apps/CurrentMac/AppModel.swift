@@ -54,6 +54,12 @@ final class AppModel {
   private(set) var soloGraphReference: String?
   private(set) var pinnedGraphReferences = Set<String>()
   private(set) var visibleSidebarSections = Set(SidebarSection.allCases)
+  private(set) var aiConfiguration = AIConfiguration()
+  private(set) var hasConfiguredAIAPIKey = false
+  var aiAvailability: AIFeatureAvailability {
+    _ = hasConfiguredAIAPIKey
+    return aiService.availability(for: aiConfiguration)
+  }
   var commitComparison: CommitComparison? { historySession.comparison }
   var isCommitComparisonLoading: Bool { historySession.isComparisonLoading }
   private(set) var references: [GitReference] = []
@@ -96,6 +102,8 @@ final class AppModel {
 
   private let preferences: AppPreferencesStore
   private let externalTools: ExternalToolService
+  private let aiService: any AIService
+  private let aiCredentialStore: any AIAPIKeyStore
   private var activityLog = OperationActivityLog()
   private var recentRepositoryCatalog: RecentRepositoryCatalog
   private var historySession = RepositoryHistorySessionState()
@@ -118,10 +126,14 @@ final class AppModel {
   init(
     initialRepositoryPath: String? = nil,
     preferences: AppPreferencesStore = AppPreferencesStore(),
-    externalTools: ExternalToolService = ExternalToolService()
+    externalTools: ExternalToolService = ExternalToolService(),
+    aiService: (any AIService)? = nil,
+    aiCredentialStore: any AIAPIKeyStore = KeychainAIAPIKeyStore()
   ) {
     self.preferences = preferences
     self.externalTools = externalTools
+    self.aiCredentialStore = aiCredentialStore
+    self.aiService = aiService ?? ProviderAIService(keyStore: aiCredentialStore)
     recentRepositoryCatalog = RecentRepositoryCatalog(
       repositories: preferences.recentRepositories
     )
@@ -138,6 +150,9 @@ final class AppModel {
     soloGraphReference = preferences.soloGraphReference
     pinnedGraphReferences = preferences.pinnedGraphReferences
     visibleSidebarSections = preferences.visibleSidebarSections
+    aiConfiguration = preferences.aiConfiguration
+    hasConfiguredAIAPIKey =
+      (try? aiCredentialStore.containsAPIKey(for: aiConfiguration.provider)) ?? false
     diffOptions = preferences.diffOptions
     appearance = preferences.appearance
     let savedCommitLimit = preferences.maximumLoadedCommitCount
@@ -386,6 +401,51 @@ final class AppModel {
     guard newAppearance != appearance else { return }
     appearance = newAppearance
     preferences.appearance = newAppearance
+  }
+
+  func setAIGlobalInstructions(_ instructions: String) {
+    aiConfiguration.globalInstructions = instructions
+    preferences.aiConfiguration = aiConfiguration
+  }
+
+  func setAIProvider(_ provider: AIProvider) {
+    guard provider != aiConfiguration.provider else { return }
+    aiConfiguration.provider = provider
+    aiConfiguration.model = provider.defaultModel
+    aiConfiguration.baseURL = provider.defaultBaseURL
+    hasConfiguredAIAPIKey =
+      (try? aiCredentialStore.containsAPIKey(for: provider)) ?? false
+    preferences.aiConfiguration = aiConfiguration
+  }
+
+  func setAIModel(_ model: String) {
+    aiConfiguration.model = model
+    preferences.aiConfiguration = aiConfiguration
+  }
+
+  func setAIBaseURL(_ baseURL: String) {
+    aiConfiguration.baseURL = baseURL
+    preferences.aiConfiguration = aiConfiguration
+  }
+
+  func saveAIAPIKey(_ apiKey: String) throws {
+    try aiCredentialStore.setAPIKey(apiKey, for: aiConfiguration.provider)
+    hasConfiguredAIAPIKey = true
+  }
+
+  func removeAIAPIKey() throws {
+    try aiCredentialStore.removeAPIKey(for: aiConfiguration.provider)
+    hasConfiguredAIAPIKey = false
+  }
+
+  func setAICommitMessageInstructions(_ instructions: String) {
+    aiConfiguration.commitMessageInstructions = instructions
+    preferences.aiConfiguration = aiConfiguration
+  }
+
+  func setAICommitComposerInstructions(_ instructions: String) {
+    aiConfiguration.commitComposerInstructions = instructions
+    preferences.aiConfiguration = aiConfiguration
   }
 
   func setDiffTextFont(_ fontName: String?) {
@@ -782,6 +842,163 @@ final class AppModel {
       if let recovery = result.recoveryReference {
         lastRecoveryReference = recovery
       }
+      finishActivity(activityID, state: .succeeded)
+    } catch {
+      errorMessage = error.localizedDescription
+      finishActivity(activityID, error: error)
+      throw error
+    }
+  }
+
+  func generateCommitMessage(
+    configuration: AIConfiguration
+  ) async throws -> String {
+    guard let repository, let status = repositoryStatus else {
+      throw GitEngineError.invalidRepository("No repository is open.")
+    }
+    let stagedChanges = status.changes.filter(\.isStaged)
+    guard !stagedChanges.isEmpty else { throw AICommitError.noStagedChanges }
+
+    do {
+      var sections: [String] = []
+      for change in stagedChanges {
+        let document = try await repository.diff(
+          for: change.path,
+          source: .staged,
+          options: DiffOptions()
+        )
+        sections.append(
+          """
+          Path: \(change.path.displayString)
+          Status: \(change.kind.rawValue)
+          \(document.rawText)
+          """
+        )
+      }
+      return try await aiService.generateCommitMessage(
+        repositoryName: repositoryName ?? "Repository",
+        context: sections.joined(separator: "\n\n---\n\n"),
+        configuration: configuration
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+      throw error
+    }
+  }
+
+  func prepareAICommitComposition(
+    configuration: AIConfiguration
+  ) async throws -> CommitCompositionPlan {
+    guard let repository, let status = repositoryStatus else {
+      throw GitEngineError.invalidRepository("No repository is open.")
+    }
+    guard !status.changes.isEmpty else { throw AICommitError.noWorkingCopyChanges }
+    guard !status.operation.isInProgress,
+      !status.changes.contains(where: { $0.kind == .unmerged })
+    else {
+      throw AICommitError.invalidComposition(
+        "Resolve the current Git operation and all conflicts before composing commits."
+      )
+    }
+
+    do {
+      var units: [CommitCompositionUnit] = []
+      var nextID = 1
+      for change in status.changes.sorted(by: {
+        $0.path.displayString.localizedStandardCompare($1.path.displayString) == .orderedAscending
+      }) {
+        let document: DiffDocument?
+        if change.kind == .untracked {
+          document = try await repository.diff(
+            for: change.path,
+            source: .untracked,
+            options: DiffOptions()
+          )
+        } else {
+          document = try await repository.commitDiff(
+            base: "HEAD",
+            target: CommitComparisonRevision.workingCopy,
+            path: change.path,
+            oldPath: change.originalPath,
+            options: DiffOptions(),
+            generation: status.generation
+          )
+        }
+
+        guard let document else {
+          units.append(
+            CommitCompositionUnit(
+              id: "change-\(nextID)",
+              path: change.path,
+              originalPath: change.originalPath,
+              summary: change.kind.rawValue.capitalized,
+              patchText: nil,
+              analysisText: "\(change.kind.rawValue) \(change.path.displayString)"
+            )
+          )
+          nextID += 1
+          continue
+        }
+
+        if change.kind == .untracked || document.isBinary || document.hunks.isEmpty {
+          units.append(
+            CommitCompositionUnit(
+              id: "change-\(nextID)",
+              path: change.path,
+              originalPath: change.originalPath,
+              summary: document.isBinary ? "Binary file" : change.kind.rawValue.capitalized,
+              patchText: nil,
+              analysisText: document.rawText
+            )
+          )
+          nextID += 1
+        } else {
+          for hunk in document.hunks {
+            let summary =
+              hunk.heading.isEmpty
+              ? "Lines \(hunk.newStart)–\(max(hunk.newStart, hunk.newStart + hunk.newCount - 1))"
+              : hunk.heading
+            units.append(
+              CommitCompositionUnit(
+                id: "change-\(nextID)",
+                path: change.path,
+                originalPath: change.originalPath,
+                summary: summary,
+                patchText: hunk.patchText,
+                analysisText: hunk.patchText
+              )
+            )
+            nextID += 1
+          }
+        }
+      }
+
+      let groups = try await aiService.composeCommits(
+        repositoryName: repositoryName ?? "Repository",
+        units: units,
+        configuration: configuration
+      )
+      return CommitCompositionPlan(units: units, groups: groups)
+    } catch {
+      errorMessage = error.localizedDescription
+      throw error
+    }
+  }
+
+  func executeCommitComposition(_ plan: CommitCompositionPlan) async throws {
+    guard let repository else {
+      throw GitEngineError.invalidRepository("No repository is open.")
+    }
+    if let validationMessage = plan.validationMessage {
+      throw AICommitError.invalidComposition(validationMessage)
+    }
+    let activityID = beginActivity("Compose \(plan.groups.count) commits with AI")
+    isLoading = true
+    errorMessage = nil
+    defer { isLoading = false }
+    do {
+      let result = try await repository.composeCommits(plan)
+      apply(result.snapshot)
       finishActivity(activityID, state: .succeeded)
     } catch {
       errorMessage = error.localizedDescription
