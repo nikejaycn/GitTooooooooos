@@ -75,6 +75,10 @@ final class AppModel {
   var recentRepositories: [RecentRepository] {
     recentRepositoryCatalog.repositories
   }
+  private(set) var repositoryScanRoots: [RepositoryScanRoot] = []
+  private(set) var scannedRepositories: [ScannedRepository] = []
+  private(set) var unavailableRepositoryScanRootPaths: [String] = []
+  private(set) var isScanningRepositoryDirectories = false
   private(set) var lastRecoveryReference: RecoveryReference?
   var selectedDiff: DiffDocument? { inspectionSession.selectedDiff }
   var selectedCommitDiff: DiffDocument? { inspectionSession.selectedCommitDiff }
@@ -104,14 +108,19 @@ final class AppModel {
   private let externalTools: ExternalToolService
   private let aiService: any AIService
   private let aiCredentialStore: any AIAPIKeyStore
+  private let repositoryDirectoryScanner: RepositoryDirectoryScanner
   private var activityLog = OperationActivityLog()
   private var recentRepositoryCatalog: RecentRepositoryCatalog
   private var historySession = RepositoryHistorySessionState()
+  private var graphBuildSession = GraphRowBuildSession()
+  private var graphLayoutRevision = UUID()
   private var inspectionSession = RepositoryInspectionSessionState()
   private var engine: (any GitEngineProtocol)?
   private var repository: RepositoryActor?
   private let repositoryWatchLifecycle = RepositoryWatchLifecycle()
+  private let repositoryCatalogWatchLifecycle = RepositoryCatalogWatchLifecycle()
   private let repositoryRefreshRequest = LatestTaskCoordinator()
+  private var pendingRepositoryRefreshScope = RepositoryWatchRefreshScope.none
   private var repositorySessionID = UUID()
   private let graphLayoutRequest = LatestTaskCoordinator()
   private let repositorySearchRequest = LatestTaskCoordinator()
@@ -122,21 +131,30 @@ final class AppModel {
   private let fileHistoryRequest = LatestTaskCoordinator()
   private let blameRequest = LatestTaskCoordinator()
   private var repositoryOperationTask: Task<Void, Never>?
+  private var repositoryScanTask: Task<Void, Never>?
+  private var repositoryScanID = UUID()
 
   init(
     initialRepositoryPath: String? = nil,
     preferences: AppPreferencesStore = AppPreferencesStore(),
     externalTools: ExternalToolService = ExternalToolService(),
     aiService: (any AIService)? = nil,
-    aiCredentialStore: any AIAPIKeyStore = KeychainAIAPIKeyStore()
+    aiCredentialStore: any AIAPIKeyStore = KeychainAIAPIKeyStore(),
+    repositoryDirectoryScanner: RepositoryDirectoryScanner = RepositoryDirectoryScanner(),
+    managesRepositoryCatalog: Bool = false
   ) {
     self.preferences = preferences
     self.externalTools = externalTools
     self.aiCredentialStore = aiCredentialStore
     self.aiService = aiService ?? ProviderAIService(keyStore: aiCredentialStore)
+    self.repositoryDirectoryScanner = repositoryDirectoryScanner
     recentRepositoryCatalog = RecentRepositoryCatalog(
       repositories: preferences.recentRepositories
     )
+    repositoryScanRoots = preferences.repositoryScanRoots
+    if managesRepositoryCatalog {
+      scannedRepositories = preferences.scannedRepositories
+    }
     useCustomGit = preferences.useCustomGit
     customGitPath = preferences.customGitPath
     autoStashEnabled = preferences.autoStashEnabled
@@ -178,6 +196,10 @@ final class AppModel {
     } catch {
       errorMessage = error.localizedDescription
     }
+    if managesRepositoryCatalog {
+      restartRepositoryCatalogWatcher()
+      scanConfiguredRepositoryDirectories()
+    }
   }
 
   func chooseRepository() {
@@ -192,6 +214,106 @@ final class AppModel {
     guard panel.runModal() == .OK, let url = panel.url else { return }
     Task {
       await openRepository(at: url)
+    }
+  }
+
+  func chooseRepositoryScanRoots() {
+    let panel = NSOpenPanel()
+    panel.title = "Add Project Folders"
+    panel.message = "GitCurrent will automatically find Git repositories in these folders."
+    panel.prompt = "Add"
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.allowsMultipleSelection = true
+    panel.resolvesAliases = true
+
+    guard panel.runModal() == .OK else { return }
+    addRepositoryScanRoots(panel.urls)
+  }
+
+  func addRepositoryScanRoots(_ urls: [URL]) {
+    var seen = Set(repositoryScanRoots.map(\.path))
+    let additions =
+      urls
+      .map { RepositoryScanRoot(path: $0.standardizedFileURL.path) }
+      .filter { seen.insert($0.path).inserted }
+    guard !additions.isEmpty else { return }
+    repositoryScanRoots.append(contentsOf: additions)
+    preferences.repositoryScanRoots = repositoryScanRoots
+    restartRepositoryCatalogWatcher()
+    scanConfiguredRepositoryDirectories()
+  }
+
+  func removeRepositoryScanRoot(_ root: RepositoryScanRoot) {
+    guard repositoryScanRoots.contains(where: { $0.id == root.id }) else { return }
+    repositoryScanRoots.removeAll { $0.id == root.id }
+    preferences.repositoryScanRoots = repositoryScanRoots
+    restartRepositoryCatalogWatcher()
+    scanConfiguredRepositoryDirectories()
+  }
+
+  func scanConfiguredRepositoryDirectories(changedRootPaths: Set<String>? = nil) {
+    repositoryScanTask?.cancel()
+    let roots = repositoryScanRoots
+    guard !roots.isEmpty else {
+      scannedRepositories = []
+      unavailableRepositoryScanRootPaths = []
+      isScanningRepositoryDirectories = false
+      return
+    }
+
+    let scanID = UUID()
+    repositoryScanID = scanID
+    isScanningRepositoryDirectories = true
+    let scanner = repositoryDirectoryScanner
+    let rootsToScan = changedRootPaths.map { paths in
+      roots.filter { paths.contains($0.path) }
+    } ?? roots
+    let retainedRepositories = changedRootPaths.map { paths in
+      scannedRepositories.filter { repository in
+        !paths.contains(where: { affectedRoot in
+          repository.rootPath == affectedRoot
+            || repository.rootPath.hasPrefix(affectedRoot + "/")
+        })
+      }
+    } ?? []
+    let retainedUnavailableRootPaths = changedRootPaths.map { paths in
+      unavailableRepositoryScanRootPaths.filter { !paths.contains($0) }
+    } ?? []
+    repositoryScanTask = Task { [weak self] in
+      let result = await scanner.scan(roots: rootsToScan)
+      guard !Task.isCancelled, let self, repositoryScanID == scanID else { return }
+      let repositories = (retainedRepositories + result.repositories).sorted {
+        if $0.rootPath != $1.rootPath {
+          return $0.rootPath.localizedStandardCompare($1.rootPath) == .orderedAscending
+        }
+        return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+      }
+      scannedRepositories = repositories
+      preferences.scannedRepositories = repositories
+      unavailableRepositoryScanRootPaths = Array(
+        Set(retainedUnavailableRootPaths + result.unavailableRootPaths)
+      ).sorted()
+      isScanningRepositoryDirectories = false
+      repositoryScanTask = nil
+    }
+  }
+
+  private func restartRepositoryCatalogWatcher() {
+    repositoryCatalogWatchLifecycle.start(
+      rootPaths: repositoryScanRoots.map(\.path),
+      onChange: { [weak self] roots in
+        self?.scanConfiguredRepositoryDirectories(changedRootPaths: roots)
+      },
+      onFailure: { [weak self] message in
+        self?.errorMessage = message
+      }
+    )
+  }
+
+  func openRepositoryPath(_ path: String) {
+    Task {
+      await openRepository(at: URL(fileURLWithPath: path, isDirectory: true))
     }
   }
 
@@ -360,7 +482,7 @@ final class AppModel {
           page: page,
           maximumCount: maximumLoadedCommitCount
         ) {
-          rebuildGraphRows(generation: generation)
+          await appendGraphRows(generation: generation)
         }
       } catch is CancellationError {
         return
@@ -1922,6 +2044,7 @@ final class AppModel {
 
   private func clearRepository() {
     repositoryRefreshRequest.cancel()
+    pendingRepositoryRefreshScope = .none
     repositoryWatchLifecycle.stop()
     repositorySessionID = UUID()
     repository = nil
@@ -1931,6 +2054,8 @@ final class AppModel {
     pendingWorkingCopyPaths.removeAll()
     commitTemplate = nil
     graphLayoutRequest.cancel()
+    graphBuildSession = GraphRowBuildSession()
+    graphLayoutRevision = UUID()
     historyPageTask?.cancel()
     historyPageTask = nil
     historySession.clear()
@@ -1994,6 +2119,20 @@ final class AppModel {
     }
     if showsLoadingIndicator, repositorySessionID == sessionID {
       isLoading = false
+    }
+  }
+
+  private func refreshRepositoryStatus() async {
+    guard let repository else { return }
+    let sessionID = repositorySessionID
+    do {
+      let status = try await repository.refresh()
+      guard repositorySessionID == sessionID else { return }
+      apply(status)
+    } catch {
+      if !(error is CancellationError), repositorySessionID == sessionID {
+        errorMessage = error.localizedDescription
+      }
     }
   }
 
@@ -2514,10 +2653,12 @@ final class AppModel {
     clearCommitComparison()
     clearFileInsights()
     repositoryStatus = status
-    rebuildGraphRows(generation: status.generation)
+    updateWorkingCopyGraphRowOrRebuild(generation: status.generation)
   }
 
   private func rebuildGraphRows(generation: RepositoryGeneration) {
+    let revision = UUID()
+    graphLayoutRevision = revision
     let visibleReferences = self.references.filter {
       !hiddenGraphReferences.contains($0.shortName)
     }
@@ -2536,23 +2677,94 @@ final class AppModel {
     let workingCopyChangeCount = repositoryStatus?.changes.count ?? 0
     graphLayoutRequest.start { [weak self] requestID in
       guard let self else { return }
-      let rows = await Task.detached(priority: .userInitiated) {
-        GraphRowBuilder().build(
+      let result = await Task.detached(priority: .userInitiated) {
+        var session = GraphRowBuildSession()
+        let rows = session.reset(
           commits: commits,
           references: references,
           pinnedReferenceNames: pinnedReferenceNames,
           workingCopyChangeCount: workingCopyChangeCount,
           generation: generation
         )
+        return (session, rows)
       }.value
       guard
         !Task.isCancelled,
         graphLayoutRequest.isCurrent(requestID),
+        graphLayoutRevision == revision,
         repositoryStatus?.generation == generation
       else {
         return
       }
-      historySession.replaceGraphRows(rows)
+      graphBuildSession = result.0
+      historySession.replaceGraphRows(result.1)
+    }
+  }
+
+  private func appendGraphRows(generation: RepositoryGeneration) async {
+    let revision = graphLayoutRevision
+    let allCommits = commits
+    let visibleReferences = references.filter {
+      !hiddenGraphReferences.contains($0.shortName)
+    }
+    let scopedReferences =
+      if let soloGraphReference {
+        visibleReferences.filter { $0.shortName == soloGraphReference }
+      } else {
+        visibleReferences
+      }
+    let isSolo = soloGraphReference != nil
+    var session = graphBuildSession
+    let baseCommitCount = session.commitCount
+    let result = await Task.detached(priority: .userInitiated) {
+      let startingOIDs = scopedReferences.map(\.targetOID)
+      let filteredCommits =
+        if startingOIDs.isEmpty {
+          isSolo ? [] : allCommits
+        } else {
+          GraphCommitFilter.reachableCommits(from: startingOIDs, in: allCommits)
+        }
+      guard filteredCommits.count >= baseCommitCount else {
+        return (session, Optional<[GraphRow]>.none)
+      }
+      let rows = session.append(commits: filteredCommits.dropFirst(baseCommitCount))
+      return (session, Optional(rows))
+    }.value
+    guard
+      !Task.isCancelled,
+      repositoryStatus?.generation == generation,
+      graphLayoutRevision == revision,
+      graphBuildSession.commitCount == baseCommitCount,
+      let rows = result.1
+    else {
+      if repositoryStatus?.generation == generation, graphLayoutRevision == revision {
+        rebuildGraphRows(generation: generation)
+      }
+      return
+    }
+    graphBuildSession = result.0
+    historySession.appendGraphRows(rows)
+  }
+
+  private func updateWorkingCopyGraphRowOrRebuild(
+    generation: RepositoryGeneration
+  ) {
+    let changeCount = repositoryStatus?.changes.count ?? 0
+    let shouldHaveWorkingCopyRow = changeCount > 0
+    guard
+      !graphLayoutRequest.isRunning,
+      graphBuildSession.hasWorkingCopyRow == shouldHaveWorkingCopyRow
+    else {
+      rebuildGraphRows(generation: generation)
+      return
+    }
+    guard shouldHaveWorkingCopyRow else { return }
+    guard
+      let row = graphBuildSession.updateWorkingCopy(changeCount: changeCount),
+      historySession.replaceWorkingCopyGraphRow(row)
+    else {
+      rebuildGraphRows(generation: generation)
+      return
     }
   }
 
@@ -2669,10 +2881,11 @@ final class AppModel {
       return
     }
 
-    let requiresRefresh = events.contains { $0.requiresSnapshotRefresh }
+    let refreshScope = RepositoryWatchRefreshScope.required(for: events)
     Task {
       await repository.invalidate()
-      guard sessionID == repositorySessionID, requiresRefresh else { return }
+      guard sessionID == repositorySessionID, refreshScope != .none else { return }
+      pendingRepositoryRefreshScope = max(pendingRepositoryRefreshScope, refreshScope)
       scheduleRepositoryRefresh(sessionID: sessionID)
     }
   }
@@ -2689,7 +2902,16 @@ final class AppModel {
         else {
           return
         }
-        await refreshRepository(showsLoadingIndicator: false)
+        let scope = pendingRepositoryRefreshScope
+        pendingRepositoryRefreshScope = .none
+        switch scope {
+        case .none:
+          return
+        case .status:
+          await refreshRepositoryStatus()
+        case .snapshot:
+          await refreshRepository(showsLoadingIndicator: false)
+        }
       } catch {
         // A newer filesystem event superseded this refresh.
       }

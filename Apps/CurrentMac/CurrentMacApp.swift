@@ -68,7 +68,7 @@ private final class WindowCloseObservationView: NSView {
 
 @main
 struct CurrentMacApp: App {
-  @State private var settingsModel = AppModel()
+  @State private var settingsModel = AppModel(managesRepositoryCatalog: true)
   @State private var workspaceHistory = WorkspaceHistoryStore()
   @State private var updater = CurrentUpdateController()
 
@@ -194,7 +194,11 @@ private struct CurrentWorkspaceWindow: View {
         pendingWorkingCopyPaths: model.pendingWorkingCopyPaths,
         isOperationRunning: model.isRepositoryOperation,
         errorMessage: model.errorMessage,
-        aiAvailability: settingsModel.aiAvailability
+        aiAvailability: settingsModel.aiAvailability,
+        currentRepositoryPath: model.repositoryPath,
+        repositoryScanRoots: settingsModel.repositoryScanRoots,
+        scannedRepositories: settingsModel.scannedRepositories,
+        isScanningRepositoryDirectories: settingsModel.isScanningRepositoryDirectories
       ),
       history: .init(
         commits: model.commits,
@@ -253,7 +257,8 @@ private struct CurrentWorkspaceWindow: View {
         openInTerminal: model.openRepositoryInTerminal,
         chooseExternalApplication: model.chooseExternalApplication,
         cancelOperation: model.cancelRepositoryOperation,
-        refresh: model.refresh
+        refresh: model.refresh,
+        openRepositoryPath: model.openRepositoryPath
       ),
       history: .init(
         loadNextPage: model.loadNextHistoryPage,

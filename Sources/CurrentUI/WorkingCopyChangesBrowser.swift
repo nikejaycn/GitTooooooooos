@@ -22,6 +22,8 @@ enum ChangedFilesBulkSelection: Equatable {
 }
 
 enum ChangedFilesPresentation {
+  typealias Catalog = WorkingCopyChangeCatalog
+
   static func bulkSelection(for changes: [FileChange]) -> ChangedFilesBulkSelection {
     let stagedCount = changes.count(where: \.isStaged)
     if stagedCount == 0 { return .none }
@@ -38,15 +40,7 @@ enum ChangedFilesPresentation {
   }
 
   static func sortedWorkingCopyChanges(_ changes: [FileChange]) -> [FileChange] {
-    changes.sorted { lhs, rhs in
-      let lhsRank = statusRank(lhs)
-      let rhsRank = statusRank(rhs)
-      if lhsRank != rhsRank {
-        return lhsRank < rhsRank
-      }
-      return lhs.path.displayString.localizedStandardCompare(rhs.path.displayString)
-        == .orderedAscending
-    }
+    Catalog(changes: changes).changes
   }
 
   static func fileIcon(for kind: FileChangeKind) -> String {
@@ -57,11 +51,6 @@ enum ChangedFilesPresentation {
     kind == .untracked ? .purple : .orange
   }
 
-  private static func statusRank(_ change: FileChange) -> Int {
-    if change.isStaged { return 0 }
-    if change.kind == .untracked { return 2 }
-    return 1
-  }
 }
 
 /// The reusable changed-files browser shown as the primary Working Copy workspace
@@ -82,13 +71,42 @@ struct WorkingCopyChangesBrowser: View {
   @State private var statusFilter: WorkingCopyStatusFilter = .all
   @State private var pendingDiscard: GitPath?
   @State private var pendingPartialDiscard: PartialDiscardRequest?
+  @State private var changeCatalog: ChangedFilesPresentation.Catalog
+
+  init(
+    status: RepositoryStatus,
+    diffState: CurrentRootState.DiffState,
+    isLoading: Bool,
+    pendingPaths: Set<GitPath>,
+    selectedPath: Binding<GitPath?>,
+    diffPresentation: Binding<DiffPresentation>,
+    actions: CurrentRootActions.WorkingCopyActions,
+    diffActions: CurrentRootActions.DiffActions,
+    createStash: @escaping ([GitPath]) -> Void,
+    openFileInsights: @escaping (GitPath) -> Void
+  ) {
+    self.status = status
+    self.diffState = diffState
+    self.isLoading = isLoading
+    self.pendingPaths = pendingPaths
+    _selectedPath = selectedPath
+    _diffPresentation = diffPresentation
+    self.actions = actions
+    self.diffActions = diffActions
+    self.createStash = createStash
+    self.openFileInsights = openFileInsights
+    _changeCatalog = State(
+      initialValue: ChangedFilesPresentation.Catalog(changes: status.changes)
+    )
+  }
 
   var body: some View {
+    let visibleChanges = visibleChanges(in: changeCatalog)
     VStack(spacing: 0) {
-      toolbar
+      toolbar(visibleChanges: visibleChanges)
       Divider()
       HSplitView {
-        changedFilesPane
+        changedFilesPane(visibleChanges: visibleChanges)
           .frame(
             minWidth: CurrentUILayout.workingCopyListMinimumWidth,
             idealWidth: CurrentUILayout.workingCopyListIdealWidth,
@@ -105,10 +123,10 @@ struct WorkingCopyChangesBrowser: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear {
-      synchronizeSelection()
+      synchronizeSelection(in: changeCatalog.changes)
     }
     .onChange(of: status.changes) {
-      synchronizeSelection()
+      refreshSortedChanges()
     }
     .confirmationDialog(
       "Discard changes to \(pendingDiscard?.displayString ?? "this file")?",
@@ -141,9 +159,9 @@ struct WorkingCopyChangesBrowser: View {
     )
   }
 
-  private var toolbar: some View {
+  private func toolbar(visibleChanges: [FileChange]) -> some View {
     HStack(spacing: 8) {
-      bulkSelectionButton
+      bulkSelectionButton(visibleChanges: visibleChanges)
       Menu {
         ForEach(WorkingCopyStatusFilter.allCases) { filter in
           Button {
@@ -242,7 +260,7 @@ struct WorkingCopyChangesBrowser: View {
     .background(.bar)
   }
 
-  private var bulkSelectionButton: some View {
+  private func bulkSelectionButton(visibleChanges: [FileChange]) -> some View {
     let selection = ChangedFilesPresentation.bulkSelection(for: visibleChanges)
     let paths = visibleChanges.map(\.path)
     let isPending = !pendingPaths.isDisjoint(with: paths)
@@ -279,7 +297,7 @@ struct WorkingCopyChangesBrowser: View {
     return "\(statusFilter.title) Files, Sorted by File Status"
   }
 
-  private var changedFilesPane: some View {
+  private func changedFilesPane(visibleChanges: [FileChange]) -> some View {
     Group {
       if visibleChanges.isEmpty {
         ContentUnavailableView(
@@ -304,6 +322,7 @@ struct WorkingCopyChangesBrowser: View {
   private func changedFileRow(_ change: FileChange) -> some View {
     let isSelected = selectedPath == change.path
     let isPending = pendingPaths.contains(change.path)
+    let displayPath = changeCatalog.displayPath(for: change.path)
     return HStack(spacing: 8) {
       Button {
         if change.isStaged {
@@ -339,14 +358,14 @@ struct WorkingCopyChangesBrowser: View {
       Button {
         select(change)
       } label: {
-        Text(change.path.displayString)
+        Text(displayPath)
           .lineLimit(1)
           .truncationMode(.middle)
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .help(change.path.displayString)
+      .help(displayPath)
 
       fileActionsMenu(change)
     }
@@ -485,12 +504,14 @@ struct WorkingCopyChangesBrowser: View {
     .background(.bar)
   }
 
-  private var visibleChanges: [FileChange] {
-    let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
-    return ChangedFilesPresentation.sortedWorkingCopyChanges(status.changes).filter { change in
+  private func visibleChanges(
+    in catalog: ChangedFilesPresentation.Catalog
+  ) -> [FileChange] {
+    let tokens = WorkingCopyChangeCatalog.searchTokens(filterText)
+    return catalog.changes.filter { change in
       statusFilter.includes(change)
-        && (query.isEmpty
-          || change.path.displayString.localizedCaseInsensitiveContains(query))
+        && (tokens.isEmpty
+          || tokens.allSatisfy(catalog.searchPath(for: change.path).contains))
     }
   }
 
@@ -506,8 +527,13 @@ struct WorkingCopyChangesBrowser: View {
     diffActions.load(change)
   }
 
-  private func synchronizeSelection() {
-    let changes = ChangedFilesPresentation.sortedWorkingCopyChanges(status.changes)
+  private func refreshSortedChanges() {
+    let catalog = ChangedFilesPresentation.Catalog(changes: status.changes)
+    changeCatalog = catalog
+    synchronizeSelection(in: catalog.changes)
+  }
+
+  private func synchronizeSelection(in changes: [FileChange]) {
     guard !changes.isEmpty else {
       selectedPath = nil
       return

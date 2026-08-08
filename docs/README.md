@@ -3,6 +3,7 @@
 - [`Current-v1开发计划.md`](Current-v1开发计划.md)：v1 从立项到生产发布的完整执行计划。
 - [`Current-v1开发看板.csv`](Current-v1开发看板.csv)：可直接导入项目管理工具的工作包清单。
 - [`Current-v1技术选型与框架决策.md`](Current-v1技术选型与框架决策.md)：核心框架、备选方案、优缺点、拍板项与 W1–W4 验证 Gate。
+- [`Current-v1性能优化实施方案.md`](Current-v1性能优化实施方案.md)：性能基线、优化工作包、实施顺序与验收门槛。
 
 产品基线：
 

@@ -1002,8 +1002,9 @@ struct HistoryWorkspace: View {
   }
 
   private var graphSearchMatchCount: Int {
-    state.graphRows.lazy.filter {
-      !$0.isWorkingCopy && $0.matches(searchQuery: searchText)
+    let tokens = GraphRow.searchTokens(searchText)
+    return state.graphRows.lazy.filter {
+      !$0.isWorkingCopy && $0.matches(searchTokens: tokens)
     }.count
   }
 

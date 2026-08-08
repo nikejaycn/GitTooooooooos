@@ -190,7 +190,7 @@ public struct CommitGraphView: NSViewRepresentable {
       guard let scrollView else { return }
       Self.restoreLeadingColumns(in: scrollView)
     }
-    scrollView.toolTip = "\(rows.filter { !$0.isWorkingCopy }.count) commits"
+    scrollView.toolTip = "\(rows.count(where: { !$0.isWorkingCopy })) commits"
   }
 
   static func restoreLeadingColumns(in scrollView: NSScrollView) {
@@ -210,8 +210,18 @@ public struct CommitGraphView: NSViewRepresentable {
     configuration: GraphDisplayConfiguration
   ) -> CGFloat {
     let lanes = rows.lazy.map(\.layout.laneCount).max() ?? 1
+    return graphColumnWidth(
+      maximumLaneCount: lanes,
+      configuration: configuration
+    )
+  }
+
+  static func graphColumnWidth(
+    maximumLaneCount: Int,
+    configuration: GraphDisplayConfiguration
+  ) -> CGFloat {
     let laneSpacing = configuration.density.laneSpacing * CGFloat(configuration.scale)
-    return min(max(CGFloat(lanes) * laneSpacing + 18, 46), 360)
+    return min(max(CGFloat(max(1, maximumLaneCount)) * laneSpacing + 18, 46), 360)
   }
 
   private static func synchronizeOptionalColumns(
@@ -247,6 +257,13 @@ public struct CommitGraphView: NSViewRepresentable {
 
   @MainActor
   public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    enum RowUpdateKind: Equatable {
+      case none
+      case appended
+      case workingCopy
+      case reloaded
+    }
+
     var rows: [GraphRow]
     var selectsFirstRowByDefault: Bool
     var onSelection: ([GraphRow]) -> Void
@@ -255,12 +272,15 @@ public struct CommitGraphView: NSViewRepresentable {
     var displayConfiguration = GraphDisplayConfiguration()
     private var requestedEndForRowCount: Int?
     private var searchQuery = ""
+    private var searchTokens: [String] = []
     private var searchedRowCount = 0
     private var lastScrollOID: String?
     private var hasAppliedDefaultSelection = false
     private var contextMenuActions: [Int: () -> Void] = [:]
     private var appliedGraphColumnWidth: CGFloat?
+    private var maximumLaneCount: Int
     private let dateFormatter: DateFormatter
+    private(set) var lastRowUpdateKind = RowUpdateKind.none
 
     init(
       rows: [GraphRow],
@@ -274,13 +294,18 @@ public struct CommitGraphView: NSViewRepresentable {
       self.onSelection = onSelection
       self.onApproachingEnd = onApproachingEnd
       self.contextMenuItems = contextMenuItems
+      maximumLaneCount = rows.lazy.map(\.layout.laneCount).max() ?? 1
       dateFormatter = DateFormatter()
       dateFormatter.dateStyle = .medium
       dateFormatter.timeStyle = .short
     }
 
     func apply(rows newRows: [GraphRow], to tableView: NSTableView) {
-      guard newRows != rows else { return }
+      guard newRows != rows else {
+        lastRowUpdateKind = .none
+        return
+      }
+      let previousRows = rows
       let hadRows = !rows.isEmpty
       let selectedIDs = tableView.selectedRowIndexes.compactMap { index in
         rows.indices.contains(index) ? rows[index].id : nil
@@ -288,8 +313,39 @@ public struct CommitGraphView: NSViewRepresentable {
       if newRows.count != rows.count {
         requestedEndForRowCount = nil
       }
+
+      if newRows.count > previousRows.count,
+        newRows.prefix(previousRows.count).elementsEqual(previousRows)
+      {
+        let insertedIndexes = IndexSet(previousRows.count..<newRows.count)
+        rows = newRows
+        maximumLaneCount = max(
+          maximumLaneCount,
+          newRows[previousRows.count...].lazy.map(\.layout.laneCount).max() ?? 1
+        )
+        tableView.insertRows(at: insertedIndexes, withAnimation: [])
+        lastRowUpdateKind = .appended
+        return
+      }
+
+      if newRows.count == previousRows.count,
+        newRows.first?.isWorkingCopy == true,
+        previousRows.first?.isWorkingCopy == true,
+        newRows.dropFirst().elementsEqual(previousRows.dropFirst())
+      {
+        rows = newRows
+        tableView.reloadData(
+          forRowIndexes: IndexSet(integer: 0),
+          columnIndexes: IndexSet(integersIn: tableView.tableColumns.indices)
+        )
+        lastRowUpdateKind = .workingCopy
+        return
+      }
+
       rows = newRows
+      maximumLaneCount = newRows.lazy.map(\.layout.laneCount).max() ?? 1
       tableView.reloadData()
+      lastRowUpdateKind = .reloaded
       let indexes = IndexSet(
         newRows.indices.filter { selectedIDs.contains(newRows[$0].id) }
       )
@@ -307,8 +363,11 @@ public struct CommitGraphView: NSViewRepresentable {
       configuration: GraphDisplayConfiguration,
       to tableView: NSTableView
     ) {
+      if rows != self.rows {
+        maximumLaneCount = rows.lazy.map(\.layout.laneCount).max() ?? 1
+      }
       let width = CommitGraphView.graphColumnWidth(
-        for: rows,
+        maximumLaneCount: maximumLaneCount,
         configuration: configuration
       )
       guard width != appliedGraphColumnWidth else { return }
@@ -354,7 +413,7 @@ public struct CommitGraphView: NSViewRepresentable {
         view.identifier = identifier
         view.layout = item.layout
         view.isWorkingCopy = item.isWorkingCopy
-        view.isSearchMatch = item.matches(searchQuery: searchQuery)
+        view.isSearchMatch = item.matches(searchTokens: searchTokens)
         view.laneSpacing =
           displayConfiguration.density.laneSpacing * CGFloat(displayConfiguration.scale)
         return view
@@ -366,7 +425,7 @@ public struct CommitGraphView: NSViewRepresentable {
         ?? makeTextCell(identifier: identifier)
       let text = text(for: item, column: identifier)
       cell.textField?.stringValue = text
-      let isSearchMatch = item.matches(searchQuery: searchQuery)
+      let isSearchMatch = item.matches(searchTokens: searchTokens)
       cell.textField?.font =
         identifier == .sha
         ? NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
@@ -455,6 +514,7 @@ public struct CommitGraphView: NSViewRepresentable {
       let queryChanged = normalizedQuery != searchQuery
       guard queryChanged || searchedRowCount != rows.count else { return }
       searchQuery = normalizedQuery
+      searchTokens = GraphRow.searchTokens(normalizedQuery)
       searchedRowCount = rows.count
       let visibleRows = tableView.rows(in: tableView.visibleRect)
       if visibleRows.length > 0 {
@@ -469,7 +529,7 @@ public struct CommitGraphView: NSViewRepresentable {
         !normalizedQuery.isEmpty,
         queryChanged || tableView.selectedRowIndexes.isEmpty,
         let firstMatch = rows.firstIndex(where: {
-          $0.matches(searchQuery: normalizedQuery)
+          $0.matches(searchTokens: searchTokens)
         })
       else {
         return

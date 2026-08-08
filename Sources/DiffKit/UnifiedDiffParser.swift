@@ -15,13 +15,14 @@ public struct UnifiedDiffParser: Sendable {
     source: DiffSource
   ) throws -> DiffDocument {
     let text = String(decoding: bytes, as: UTF8.self)
-    let rows = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    let rows = text.split(separator: "\n", omittingEmptySubsequences: false)
     var hunks: [DiffHunk] = []
     var current: HunkBuilder?
     var binary = false
     var fileHeader: [String] = []
 
-    for row in rows {
+    for rowSlice in rows {
+      let row = rowSlice
       if row.hasPrefix("Binary files ") || row == "GIT binary patch" {
         binary = true
       }
@@ -29,11 +30,11 @@ public struct UnifiedDiffParser: Sendable {
         if let current {
           hunks.append(current.build())
         }
-        current = try parseHeader(row, fileHeader: fileHeader)
+        current = try parseHeader(String(row), fileHeader: fileHeader)
         continue
       }
       guard var builder = current else {
-        fileHeader.append(row)
+        fileHeader.append(String(row))
         continue
       }
       if row.hasPrefix("+") && !row.hasPrefix("+++") {
@@ -43,9 +44,9 @@ public struct UnifiedDiffParser: Sendable {
       } else if row.hasPrefix(" ") {
         builder.append(.context, text: String(row.dropFirst()))
       } else if row.hasPrefix("\\ No newline at end of file") {
-        builder.append(.noNewlineMarker, text: row)
+        builder.append(.noNewlineMarker, text: String(row))
       } else if !row.isEmpty {
-        throw UnifiedDiffParserError.contentOutsideHunk(row)
+        throw UnifiedDiffParserError.contentOutsideHunk(String(row))
       }
       current = builder
     }
@@ -111,7 +112,7 @@ private struct HunkBuilder {
   let fileHeader: [String]
   let rawHeader: String
   var lines: [DiffLine] = []
-  var rawLines: [String] = []
+  var patchBody = ""
   var oldLine: Int
   var newLine: Int
 
@@ -164,11 +165,11 @@ private struct HunkBuilder {
         text: text
       )
     )
-    rawLines.append(
-      kind == .noNewlineMarker
-        ? text
-        : "\(kind == .addition ? "+" : kind == .deletion ? "-" : " ")\(text)"
-    )
+    if kind != .noNewlineMarker {
+      patchBody.append(kind == .addition ? "+" : kind == .deletion ? "-" : " ")
+    }
+    patchBody.append(text)
+    patchBody.append("\n")
   }
 
   func build() -> DiffHunk {
@@ -179,7 +180,7 @@ private struct HunkBuilder {
       newCount: newCount,
       heading: heading,
       lines: lines,
-      patchText: (fileHeader + [rawHeader] + rawLines).joined(separator: "\n") + "\n",
+      patchText: (fileHeader + [rawHeader]).joined(separator: "\n") + "\n" + patchBody,
       fileHeaderText: fileHeader.joined(separator: "\n") + "\n"
     )
   }

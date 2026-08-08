@@ -8,6 +8,7 @@ import GraphKit
 /// rows, and commit comparison state.
 public struct RepositoryHistorySessionState: Equatable {
   public private(set) var commits: [CommitSummary] = []
+  private var commitOIDs: Set<String> = []
   public private(set) var graphRows: [GraphRow] = []
   public private(set) var searchRows: [GraphRow] = []
   public private(set) var isSearchLoading = false
@@ -26,6 +27,7 @@ public struct RepositoryHistorySessionState: Equatable {
   ) {
     let boundedMaximum = max(0, maximumCount)
     self.commits = Array(commits.prefix(boundedMaximum))
+    commitOIDs = Set(self.commits.map(\.oid))
     nextCursor =
       self.commits.count == max(1, pageSize) && self.commits.count < boundedMaximum
       ? HistoryCursor(offset: self.commits.count)
@@ -39,6 +41,7 @@ public struct RepositoryHistorySessionState: Equatable {
 
   public mutating func clear() {
     commits = []
+    commitOIDs = []
     graphRows = []
     nextCursor = nil
     hasMore = false
@@ -75,10 +78,13 @@ public struct RepositoryHistorySessionState: Equatable {
       return false
     }
 
-    let existingOIDs = Set(commits.map(\.oid))
-    let newCommits = page.commits
-      .filter { !existingOIDs.contains($0.oid) }
-      .prefix(remainingCapacity)
+    var newCommits: [CommitSummary] = []
+    newCommits.reserveCapacity(min(remainingCapacity, page.commits.count))
+    for commit in page.commits where newCommits.count < remainingCapacity {
+      if commitOIDs.insert(commit.oid).inserted {
+        newCommits.append(commit)
+      }
+    }
     guard !newCommits.isEmpty else {
       nextCursor = page.nextCursor
       hasMore = nextCursor != nil
@@ -101,6 +107,7 @@ public struct RepositoryHistorySessionState: Equatable {
   ) -> Bool {
     if commits.count > newLimit {
       commits = Array(commits.prefix(max(0, newLimit)))
+      commitOIDs = Set(commits.map(\.oid))
       nextCursor = nil
       hasMore = false
       return true
@@ -117,6 +124,17 @@ public struct RepositoryHistorySessionState: Equatable {
 
   public mutating func replaceGraphRows(_ rows: [GraphRow]) {
     graphRows = rows
+  }
+
+  public mutating func appendGraphRows(_ rows: [GraphRow]) {
+    graphRows.append(contentsOf: rows)
+  }
+
+  @discardableResult
+  public mutating func replaceWorkingCopyGraphRow(_ row: GraphRow) -> Bool {
+    guard graphRows.first?.isWorkingCopy == true else { return false }
+    graphRows[graphRows.startIndex] = row
+    return true
   }
 
   public mutating func beginSearch() {

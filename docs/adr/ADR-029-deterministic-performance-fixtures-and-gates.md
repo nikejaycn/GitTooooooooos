@@ -11,9 +11,12 @@ Current 用 `current-benchmark` 生成确定性的 S/M/L Git 仓库。规模严�
 5k WIP files。生成器使用固定身份、时间、路径和内容，并把 profile、Git 版本与稳定
 fixture ID 写入 `.git/current-benchmark.json`。
 
+fixture schema v2 将 tracked files 按每 1,000 个文件一个目录分片，避免 250k 文件全部
+落在同一个 Git tree 的非真实极端结构；文件总数、提交数、引用数和 WIP 规模保持不变。
+
 基准报告记录机型、OS、Git 版本、fixture ID、迭代次数、原始样本、p50 和 p95。当前首批
-指标覆盖首批 200 条历史的 CLI + parser + lane layout、Working Copy status，以及 10k
-行 Diff 解析。
+指标覆盖首批 200 条历史的 CLI + parser + lane layout、Working Copy status CLI + parser，
+以及 10k 行 Diff 解析。Working Copy 领域映射、排序和 UI 更新继续由端到端测量覆盖。
 
 10% 回归比较只接受机型、OS、Git、fixture 和迭代次数完全相同的报告。环境不同不是“无
 回归”，而是不可比较并返回失败，防止用共享 GitHub runner 的噪声产生虚假门禁结果。

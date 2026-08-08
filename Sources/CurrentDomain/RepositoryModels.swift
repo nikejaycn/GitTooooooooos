@@ -263,3 +263,31 @@ public struct RecentRepository: Hashable, Sendable, Codable, Identifiable {
     )
   }
 }
+
+public struct RepositoryScanRoot: Hashable, Sendable, Codable, Identifiable {
+  public let path: String
+  public let displayName: String
+
+  public init(path: String, displayName: String? = nil) {
+    let standardizedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+    self.path = standardizedURL.path
+    self.displayName = displayName ?? standardizedURL.lastPathComponent
+  }
+
+  public var id: String { path }
+}
+
+public struct ScannedRepository: Hashable, Sendable, Codable, Identifiable {
+  public let path: String
+  public let displayName: String
+  public let rootPath: String
+
+  public init(path: String, displayName: String? = nil, rootPath: String) {
+    let standardizedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+    self.path = standardizedURL.path
+    self.displayName = displayName ?? standardizedURL.lastPathComponent
+    self.rootPath = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL.path
+  }
+
+  public var id: String { path }
+}

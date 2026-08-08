@@ -45,7 +45,7 @@ public struct FixtureProfile: Codable, Equatable, Sendable {
   }
 
   public var fixtureID: String {
-    let input = "\(scale.rawValue):\(commits):\(references):\(files):\(wipFiles):v1"
+    let input = "\(scale.rawValue):\(commits):\(references):\(files):\(wipFiles):v2"
     var hash: UInt64 = 14_695_981_039_346_656_037
     for byte in input.utf8 {
       hash ^= UInt64(byte)
@@ -62,7 +62,7 @@ public struct FixtureManifest: Codable, Equatable, Sendable {
   public let gitVersion: String
 
   public init(profile: FixtureProfile, gitVersion: String) {
-    schemaVersion = 1
+    schemaVersion = 2
     fixtureID = profile.fixtureID
     self.profile = profile
     self.gitVersion = gitVersion

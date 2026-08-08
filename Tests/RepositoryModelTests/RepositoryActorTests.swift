@@ -73,6 +73,7 @@ struct RepositoryActorTests {
       engine: engine
     )
     let snapshot = try await repository.refreshSnapshot(historyLimit: 2)
+    await engine.clearReadCalls()
 
     let firstPage = try #require(
       try await repository.historyPage(
@@ -93,6 +94,7 @@ struct RepositoryActorTests {
     )
     #expect(lastPage.commits.map(\.oid) == ["c4"])
     #expect(lastPage.nextCursor == nil)
+    #expect(await engine.readCalls().filter { $0 == "history" }.count == 1)
 
     await repository.invalidate()
     #expect(
@@ -558,6 +560,22 @@ struct RepositoryActorTests {
     #expect(plan.risk == .localSafe)
   }
 
+  @Test("Commit refresh reuses unaffected repository components")
+  func commitRefreshScope() async throws {
+    let engine = StubGitEngine()
+    let repository = try await RepositoryActor.open(
+      at: URL(fileURLWithPath: "/tmp/repo"),
+      engine: engine
+    )
+    _ = try await repository.refreshSnapshot()
+    await engine.clearReadCalls()
+
+    _ = try await repository.createCommit(CommitRequest(message: "Scoped refresh"))
+
+    let calls = await engine.readCalls()
+    #expect(Set(calls) == Set(["status", "history", "references"]))
+  }
+
   @Test("Amend plan requires confirmation and Git reference recovery")
   func amendOperationPlan() async throws {
     let engine = StubGitEngine()
@@ -750,6 +768,7 @@ private actor StubGitEngine: GitEngineProtocol {
   private var receivedLFSMutations: [GitLFSMutation] = []
   private var receivedTagMutations: [TagMutation] = []
   private var receivedCommits: [CommitRequest] = []
+  private var receivedReadCalls: [String] = []
   private let statusDelays: [UInt64: Duration]
   private let historyCommits: [CommitSummary]
   private let comparisonFiles: [CommitFileChange]
@@ -794,6 +813,7 @@ private actor StubGitEngine: GitEngineProtocol {
     at location: RepositoryLocation,
     generation: RepositoryGeneration
   ) async throws -> RepositoryStatus {
+    receivedReadCalls.append("status")
     if let delay = statusDelays[generation.rawValue] {
       try await Task.sleep(for: delay)
     }
@@ -811,7 +831,8 @@ private actor StubGitEngine: GitEngineProtocol {
     at location: RepositoryLocation,
     limit: Int
   ) async throws -> [CommitSummary] {
-    Array(historyCommits.prefix(limit))
+    receivedReadCalls.append("history")
+    return Array(historyCommits.prefix(limit))
   }
 
   func searchHistory(
@@ -823,7 +844,8 @@ private actor StubGitEngine: GitEngineProtocol {
   }
 
   func references(at location: RepositoryLocation) async throws -> [GitReference] {
-    []
+    receivedReadCalls.append("references")
+    return []
   }
 
   func compareCommits(
@@ -876,7 +898,8 @@ private actor StubGitEngine: GitEngineProtocol {
   }
 
   func worktrees(at location: RepositoryLocation) async throws -> [GitWorktree] {
-    repositoryWorktrees
+    receivedReadCalls.append("worktrees")
+    return repositoryWorktrees
   }
 
   func mutateWorktree(
@@ -887,7 +910,8 @@ private actor StubGitEngine: GitEngineProtocol {
   }
 
   func submodules(at location: RepositoryLocation) async throws -> [GitSubmodule] {
-    repositorySubmodules
+    receivedReadCalls.append("submodules")
+    return repositorySubmodules
   }
 
   func mutateSubmodule(
@@ -900,7 +924,8 @@ private actor StubGitEngine: GitEngineProtocol {
   func lfsRepositoryState(
     at location: RepositoryLocation
   ) async throws -> GitLFSRepositoryState {
-    repositoryGitLFS
+    receivedReadCalls.append("gitLFS")
+    return repositoryGitLFS
   }
 
   func mutateLFS(
@@ -954,7 +979,8 @@ private actor StubGitEngine: GitEngineProtocol {
   }
 
   func stashes(at location: RepositoryLocation) async throws -> [StashEntry] {
-    []
+    receivedReadCalls.append("stashes")
+    return []
   }
 
   func mutateStash(
@@ -965,7 +991,8 @@ private actor StubGitEngine: GitEngineProtocol {
   }
 
   func remotes(at location: RepositoryLocation) async throws -> [GitRemote] {
-    []
+    receivedReadCalls.append("remotes")
+    return []
   }
 
   func mutateRemote(
@@ -1034,5 +1061,13 @@ private actor StubGitEngine: GitEngineProtocol {
 
   func commits() -> [CommitRequest] {
     receivedCommits
+  }
+
+  func readCalls() -> [String] {
+    receivedReadCalls
+  }
+
+  func clearReadCalls() {
+    receivedReadCalls = []
   }
 }

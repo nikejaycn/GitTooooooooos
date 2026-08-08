@@ -14,6 +14,8 @@ struct AppPreferencesStoreTests {
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     #expect(store.recentRepositories.isEmpty)
+    #expect(store.repositoryScanRoots.isEmpty)
+    #expect(store.scannedRepositories.isEmpty)
     #expect(store.maximumLoadedCommitCount == 0)
     #expect(store.useCustomGit == false)
     #expect(store.customGitPath.isEmpty)
@@ -50,6 +52,15 @@ struct AppPreferencesStoreTests {
     let diffText = DiffTextConfiguration(fontName: "Menlo-Regular", fontSize: 15)
 
     store.recentRepositories = [recent]
+    let repositoryScanRoots = [
+      RepositoryScanRoot(path: "/tmp/projects"),
+      RepositoryScanRoot(path: "/tmp/work", displayName: "Work"),
+    ]
+    store.repositoryScanRoots = repositoryScanRoots
+    let scannedRepositories = [
+      ScannedRepository(path: "/tmp/projects/Current", rootPath: "/tmp/projects")
+    ]
+    store.scannedRepositories = scannedRepositories
     store.maximumLoadedCommitCount = 25_000
     store.useCustomGit = true
     store.customGitPath = "/opt/homebrew/bin/git"
@@ -78,6 +89,8 @@ struct AppPreferencesStoreTests {
 
     let reloaded = AppPreferencesStore(defaults: defaults)
     #expect(reloaded.recentRepositories == [recent])
+    #expect(reloaded.repositoryScanRoots == repositoryScanRoots)
+    #expect(reloaded.scannedRepositories == scannedRepositories)
     #expect(reloaded.maximumLoadedCommitCount == 25_000)
     #expect(reloaded.useCustomGit)
     #expect(reloaded.customGitPath == "/opt/homebrew/bin/git")

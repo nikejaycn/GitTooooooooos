@@ -103,14 +103,17 @@ public actor SyntaxHighlightService {
     let language: SyntaxLanguage
     let text: String
     let tree: MutableTree
+    let byteCount: Int
   }
 
   public static let shared = SyntaxHighlightService()
   public static let maximumUTF16Length = 512 * 1024
   public static let maximumCaptureCount = 100_000
+  public static let maximumCachedDocumentBytes = 2 * 1024 * 1024
 
   private var configurations: [SyntaxLanguage: LanguageConfiguration] = [:]
   private var parsedDocuments: [ParsedDocument] = []
+  private var cachedDocumentBytes = 0
 
   public init() {}
 
@@ -187,11 +190,19 @@ public actor SyntaxHighlightService {
     parser.timeout = 0.25
     try parser.setLanguage(configuration.language)
     guard let tree = parser.parse(text) else { return nil }
-    parsedDocuments.append(
-      ParsedDocument(language: language, text: text, tree: tree)
+    let document = ParsedDocument(
+      language: language,
+      text: text,
+      tree: tree,
+      byteCount: text.utf8.count
     )
-    if parsedDocuments.count > 4 {
-      parsedDocuments.removeFirst(parsedDocuments.count - 4)
+    parsedDocuments.append(document)
+    cachedDocumentBytes += document.byteCount
+    while parsedDocuments.count > 4
+      || cachedDocumentBytes > Self.maximumCachedDocumentBytes
+    {
+      let removed = parsedDocuments.removeFirst()
+      cachedDocumentBytes -= removed.byteCount
     }
     return tree
   }

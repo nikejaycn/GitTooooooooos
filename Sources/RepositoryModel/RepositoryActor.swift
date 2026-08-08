@@ -5,12 +5,27 @@ import GitEngine
 import OperationKit
 
 public actor RepositoryActor {
+  private static let historyPrefetchCount = 2_000
+
+  private struct MutationRefreshComponents: OptionSet, Sendable {
+    let rawValue: UInt8
+
+    static let stashes = Self(rawValue: 1 << 0)
+    static let remotes = Self(rawValue: 1 << 1)
+    static let worktrees = Self(rawValue: 1 << 2)
+    static let submodules = Self(rawValue: 1 << 3)
+    static let gitLFS = Self(rawValue: 1 << 4)
+    static let all: Self = [.stashes, .remotes, .worktrees, .submodules, .gitLFS]
+  }
+
   public nonisolated let location: RepositoryLocation
 
   private let engine: any GitEngineProtocol
   private var generation = RepositoryGeneration(0)
   private var cachedStatus: RepositoryStatus?
   private var cachedSnapshot: RepositorySnapshot?
+  private var historyCache: [CommitSummary] = []
+  private var historyCacheReachedEnd = false
   private var mutationTail: Task<Void, Never>?
   private var lastPlan: OperationPlan?
 
@@ -90,6 +105,7 @@ public actor RepositoryActor {
     }
     cachedStatus = snapshot.status
     cachedSnapshot = snapshot
+    resetHistoryCache(snapshot.commits, requestedLimit: historyLimit)
     return snapshot
   }
 
@@ -108,17 +124,32 @@ public actor RepositoryActor {
   ) async throws -> HistoryPage? {
     guard requestedGeneration == generation else { return nil }
     let boundedLimit = min(max(limit, 1), 1_000)
-    let loaded = try await engine.history(
-      at: location,
-      offset: cursor.offset,
-      limit: boundedLimit + 1
-    )
-    guard requestedGeneration == generation else { return nil }
+    let requiredCount = cursor.offset + boundedLimit + 1
+    while historyCache.count < requiredCount, !historyCacheReachedEnd {
+      let fetchLimit = min(
+        10_000,
+        max(Self.historyPrefetchCount, requiredCount - historyCache.count)
+      )
+      let loaded = try await engine.history(
+        at: location,
+        offset: historyCache.count,
+        limit: fetchLimit
+      )
+      guard requestedGeneration == generation else { return nil }
+      historyCache.append(contentsOf: loaded)
+      if loaded.count < fetchLimit {
+        historyCacheReachedEnd = true
+      }
+      if loaded.isEmpty { break }
+    }
 
-    let commits = Array(loaded.prefix(boundedLimit))
-    let nextCursor =
-      loaded.count > boundedLimit
-      ? HistoryCursor(offset: cursor.offset + commits.count)
+    guard cursor.offset <= historyCache.count else { return nil }
+    let commits = Array(
+      historyCache.dropFirst(cursor.offset).prefix(boundedLimit)
+    )
+    let consumedCount = cursor.offset + commits.count
+    let nextCursor = consumedCount < historyCache.count || !historyCacheReachedEnd
+      ? HistoryCursor(offset: consumedCount)
       : nil
     return HistoryPage(
       generation: requestedGeneration,
@@ -348,35 +379,19 @@ public actor RepositoryActor {
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
+    let baseSnapshot = cachedSnapshot
 
     let operation = Task {
       await predecessor?.value
       try Task.checkCancellation()
       let recovery = try await engine.commit(at: location, request: request)
-      async let status = engine.status(
-        at: location,
-        generation: requestedGeneration
-      )
-      async let commits = engine.history(at: location, limit: historyLimit)
-      async let references = engine.references(at: location)
-      async let stashes = engine.stashes(at: location)
-      async let remotes = engine.remotes(at: location)
-      async let worktrees = engine.worktrees(at: location)
-      async let submodules = engine.submodules(at: location)
-      async let gitLFS = engine.lfsRepositoryState(at: location)
-      let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
-      )
-      let snapshot = RepositorySnapshot(
+      let snapshot = try await Self.loadMutationSnapshot(
+        engine: engine,
+        location: location,
         generation: requestedGeneration,
-        status: loaded.0,
-        commits: loaded.1,
-        references: loaded.2,
-        stashes: loaded.3,
-        remotes: loaded.4,
-        worktrees: loaded.5,
-        submodules: loaded.6,
-        gitLFS: loaded.7
+        historyLimit: historyLimit,
+        baseSnapshot: baseSnapshot,
+        refreshComponents: []
       )
       return HistoryMutationResult(
         snapshot: snapshot,
@@ -394,6 +409,7 @@ public actor RepositoryActor {
     }
     cachedStatus = snapshot.status
     cachedSnapshot = snapshot
+    resetHistoryCache(snapshot.commits, requestedLimit: historyLimit)
     return result
   }
 
@@ -412,33 +428,20 @@ public actor RepositoryActor {
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
+    let baseSnapshot = cachedSnapshot
 
     let operation = Task {
       await predecessor?.value
       try Task.checkCancellation()
       let recovery = try await engine.composeCommits(at: location, plan: plan)
-      async let status = engine.status(at: location, generation: requestedGeneration)
-      async let commits = engine.history(at: location, limit: historyLimit)
-      async let references = engine.references(at: location)
-      async let stashes = engine.stashes(at: location)
-      async let remotes = engine.remotes(at: location)
-      async let worktrees = engine.worktrees(at: location)
-      async let submodules = engine.submodules(at: location)
-      async let gitLFS = engine.lfsRepositoryState(at: location)
-      let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
-      )
       return HistoryMutationResult(
-        snapshot: RepositorySnapshot(
+        snapshot: try await Self.loadMutationSnapshot(
+          engine: engine,
+          location: location,
           generation: requestedGeneration,
-          status: loaded.0,
-          commits: loaded.1,
-          references: loaded.2,
-          stashes: loaded.3,
-          remotes: loaded.4,
-          worktrees: loaded.5,
-          submodules: loaded.6,
-          gitLFS: loaded.7
+          historyLimit: historyLimit,
+          baseSnapshot: baseSnapshot,
+          refreshComponents: []
         ),
         recoveryReference: recovery
       )
@@ -449,6 +452,7 @@ public actor RepositoryActor {
     guard requestedGeneration == generation else { return result }
     cachedStatus = result.snapshot.status
     cachedSnapshot = result.snapshot
+    resetHistoryCache(result.snapshot.commits, requestedLimit: historyLimit)
     return result
   }
 
@@ -499,35 +503,19 @@ public actor RepositoryActor {
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
+    let baseSnapshot = cachedSnapshot
 
     let operation = Task {
       await predecessor?.value
       try Task.checkCancellation()
       try await engine.mutateBranch(at: location, mutation: mutation)
-      async let status = engine.status(
-        at: location,
-        generation: requestedGeneration
-      )
-      async let commits = engine.history(at: location, limit: historyLimit)
-      async let references = engine.references(at: location)
-      async let stashes = engine.stashes(at: location)
-      async let remotes = engine.remotes(at: location)
-      async let worktrees = engine.worktrees(at: location)
-      async let submodules = engine.submodules(at: location)
-      async let gitLFS = engine.lfsRepositoryState(at: location)
-      let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
-      )
-      return RepositorySnapshot(
+      return try await Self.loadMutationSnapshot(
+        engine: engine,
+        location: location,
         generation: requestedGeneration,
-        status: loaded.0,
-        commits: loaded.1,
-        references: loaded.2,
-        stashes: loaded.3,
-        remotes: loaded.4,
-        worktrees: loaded.5,
-        submodules: loaded.6,
-        gitLFS: loaded.7
+        historyLimit: historyLimit,
+        baseSnapshot: baseSnapshot,
+        refreshComponents: [.stashes]
       )
     }
     mutationTail = Task {
@@ -540,6 +528,7 @@ public actor RepositoryActor {
     }
     cachedStatus = snapshot.status
     cachedSnapshot = snapshot
+    resetHistoryCache(snapshot.commits, requestedLimit: historyLimit)
     return snapshot
   }
 
@@ -570,6 +559,7 @@ public actor RepositoryActor {
   ) async throws -> HistoryMutationResult {
     try await applyRecoverableRepositoryMutation(
       historyLimit: historyLimit,
+      refreshComponents: [.stashes],
       operationPlan: { generation, location in
         try OperationPlanner.stash(
           mutation,
@@ -590,6 +580,7 @@ public actor RepositoryActor {
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(
       historyLimit: historyLimit,
+      refreshComponents: [.worktrees],
       operationPlan: { generation, location in
         try OperationPlanner.worktree(
           mutation,
@@ -610,6 +601,7 @@ public actor RepositoryActor {
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(
       historyLimit: historyLimit,
+      refreshComponents: [.submodules],
       operationPlan: { generation, location in
         try OperationPlanner.submodule(
           mutation,
@@ -630,6 +622,7 @@ public actor RepositoryActor {
   ) async throws -> RepositorySnapshot {
     try await applyRepositoryMutation(
       historyLimit: historyLimit,
+      refreshComponents: [.gitLFS],
       operationPlan: { generation, location in
         try OperationPlanner.lfs(
           mutation,
@@ -648,7 +641,10 @@ public actor RepositoryActor {
     _ mutation: RemoteMutation,
     historyLimit: Int = 200
   ) async throws -> RepositorySnapshot {
-    try await applyRepositoryMutation(historyLimit: historyLimit) { engine, location in
+    try await applyRepositoryMutation(
+      historyLimit: historyLimit,
+      refreshComponents: [.remotes]
+    ) { engine, location in
       try await engine.mutateRemote(at: location, mutation: mutation)
     }
   }
@@ -660,6 +656,7 @@ public actor RepositoryActor {
   ) async throws -> HistoryMutationResult {
     try await applyRecoverableRepositoryMutation(
       historyLimit: historyLimit,
+      refreshComponents: [.stashes],
       operationPlan: { generation, location in
         try OperationPlanner.merge(
           mutation,
@@ -688,6 +685,7 @@ public actor RepositoryActor {
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
+    let baseSnapshot = cachedSnapshot
 
     let operation = Task {
       await predecessor?.value
@@ -696,30 +694,13 @@ public actor RepositoryActor {
         at: location,
         mutation: mutation
       )
-      async let status = engine.status(
-        at: location,
-        generation: requestedGeneration
-      )
-      async let commits = engine.history(at: location, limit: historyLimit)
-      async let references = engine.references(at: location)
-      async let stashes = engine.stashes(at: location)
-      async let remotes = engine.remotes(at: location)
-      async let worktrees = engine.worktrees(at: location)
-      async let submodules = engine.submodules(at: location)
-      async let gitLFS = engine.lfsRepositoryState(at: location)
-      let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
-      )
-      let snapshot = RepositorySnapshot(
+      let snapshot = try await Self.loadMutationSnapshot(
+        engine: engine,
+        location: location,
         generation: requestedGeneration,
-        status: loaded.0,
-        commits: loaded.1,
-        references: loaded.2,
-        stashes: loaded.3,
-        remotes: loaded.4,
-        worktrees: loaded.5,
-        submodules: loaded.6,
-        gitLFS: loaded.7
+        historyLimit: historyLimit,
+        baseSnapshot: baseSnapshot,
+        refreshComponents: [.stashes]
       )
       return HistoryMutationResult(
         snapshot: snapshot,
@@ -733,6 +714,7 @@ public actor RepositoryActor {
     guard requestedGeneration == generation else { return result }
     cachedStatus = result.snapshot.status
     cachedSnapshot = result.snapshot
+    resetHistoryCache(result.snapshot.commits, requestedLimit: historyLimit)
     return result
   }
 
@@ -833,6 +815,7 @@ public actor RepositoryActor {
   ) async throws -> HistoryMutationResult {
     try await applyRecoverableRepositoryMutation(
       historyLimit: historyLimit,
+      refreshComponents: [.stashes],
       operationPlan: { generation, location in
         try OperationPlanner.discardHunk(
           path: path,
@@ -852,6 +835,7 @@ public actor RepositoryActor {
 
   private func applyRepositoryMutation(
     historyLimit: Int,
+    refreshComponents: MutationRefreshComponents = [],
     operationPlan:
       (@Sendable (RepositoryGeneration, RepositoryLocation) throws -> OperationPlan)? = nil,
     operation mutation:
@@ -862,6 +846,7 @@ public actor RepositoryActor {
   ) async throws -> RepositorySnapshot {
     let result = try await applyRecoverableRepositoryMutation(
       historyLimit: historyLimit,
+      refreshComponents: refreshComponents,
       operationPlan: operationPlan
     ) { engine, location in
       try await mutation(engine, location)
@@ -872,6 +857,7 @@ public actor RepositoryActor {
 
   private func applyRecoverableRepositoryMutation(
     historyLimit: Int,
+    refreshComponents: MutationRefreshComponents = [],
     operationPlan:
       (@Sendable (RepositoryGeneration, RepositoryLocation) throws -> OperationPlan)? = nil,
     operation mutation:
@@ -887,36 +873,20 @@ public actor RepositoryActor {
     let predecessor = mutationTail
     let engine = self.engine
     let location = self.location
+    let baseSnapshot = cachedSnapshot
 
     let operation = Task {
       await predecessor?.value
       try Task.checkCancellation()
       let recovery = try await mutation(engine, location)
-      async let status = engine.status(
-        at: location,
-        generation: requestedGeneration
-      )
-      async let commits = engine.history(at: location, limit: historyLimit)
-      async let references = engine.references(at: location)
-      async let stashes = engine.stashes(at: location)
-      async let remotes = engine.remotes(at: location)
-      async let worktrees = engine.worktrees(at: location)
-      async let submodules = engine.submodules(at: location)
-      async let gitLFS = engine.lfsRepositoryState(at: location)
-      let loaded = try await (
-        status, commits, references, stashes, remotes, worktrees, submodules, gitLFS
-      )
       return HistoryMutationResult(
-        snapshot: RepositorySnapshot(
+        snapshot: try await Self.loadMutationSnapshot(
+          engine: engine,
+          location: location,
           generation: requestedGeneration,
-          status: loaded.0,
-          commits: loaded.1,
-          references: loaded.2,
-          stashes: loaded.3,
-          remotes: loaded.4,
-          worktrees: loaded.5,
-          submodules: loaded.6,
-          gitLFS: loaded.7
+          historyLimit: historyLimit,
+          baseSnapshot: baseSnapshot,
+          refreshComponents: refreshComponents
         ),
         recoveryReference: recovery
       )
@@ -928,7 +898,59 @@ public actor RepositoryActor {
     guard requestedGeneration == generation else { return result }
     cachedStatus = result.snapshot.status
     cachedSnapshot = result.snapshot
+    resetHistoryCache(result.snapshot.commits, requestedLimit: historyLimit)
     return result
+  }
+
+  nonisolated private static func loadMutationSnapshot(
+    engine: any GitEngineProtocol,
+    location: RepositoryLocation,
+    generation: RepositoryGeneration,
+    historyLimit: Int,
+    baseSnapshot: RepositorySnapshot?,
+    refreshComponents: MutationRefreshComponents
+  ) async throws -> RepositorySnapshot {
+    let effectiveRefreshComponents = baseSnapshot == nil
+      ? MutationRefreshComponents.all
+      : refreshComponents
+    async let status = engine.status(at: location, generation: generation)
+    async let commits = engine.history(at: location, limit: historyLimit)
+    async let references = engine.references(at: location)
+    let core = try await (status, commits, references)
+    let stashes = effectiveRefreshComponents.contains(.stashes)
+      ? try await engine.stashes(at: location)
+      : baseSnapshot?.stashes ?? []
+    let remotes = effectiveRefreshComponents.contains(.remotes)
+      ? try await engine.remotes(at: location)
+      : baseSnapshot?.remotes ?? []
+    let worktrees = effectiveRefreshComponents.contains(.worktrees)
+      ? try await engine.worktrees(at: location)
+      : baseSnapshot?.worktrees ?? []
+    let submodules = effectiveRefreshComponents.contains(.submodules)
+      ? try await engine.submodules(at: location)
+      : baseSnapshot?.submodules ?? []
+    let gitLFS = effectiveRefreshComponents.contains(.gitLFS)
+      ? try await engine.lfsRepositoryState(at: location)
+      : baseSnapshot?.gitLFS ?? .unavailable
+    return RepositorySnapshot(
+      generation: generation,
+      status: core.0,
+      commits: core.1,
+      references: core.2,
+      stashes: stashes,
+      remotes: remotes,
+      worktrees: worktrees,
+      submodules: submodules,
+      gitLFS: gitLFS
+    )
+  }
+
+  private func resetHistoryCache(
+    _ commits: [CommitSummary],
+    requestedLimit: Int
+  ) {
+    historyCache = commits
+    historyCacheReachedEnd = commits.count < max(1, requestedLimit)
   }
 
   public func invalidate() {

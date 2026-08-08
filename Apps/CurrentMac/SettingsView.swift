@@ -239,6 +239,75 @@ struct CurrentSettingsView: View {
       .tag(SettingsTab.ai)
 
       Form {
+        Section("Project Folders") {
+          if model.repositoryScanRoots.isEmpty {
+            Label("No project folders configured", systemImage: "folder.badge.plus")
+              .foregroundStyle(.secondary)
+          } else {
+            ForEach(model.repositoryScanRoots) { root in
+              LabeledContent {
+                Button(role: .destructive) {
+                  model.removeRepositoryScanRoot(root)
+                } label: {
+                  Label("Remove", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("Stop scanning this folder")
+                .accessibilityLabel("Remove \(root.displayName)")
+              } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                  Text(root.displayName)
+                  Text(root.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                }
+              }
+            }
+          }
+
+          HStack {
+            Button("Add Folder…", systemImage: "folder.badge.plus") {
+              model.chooseRepositoryScanRoots()
+            }
+            Button("Scan Now", systemImage: "arrow.clockwise") {
+              model.scanConfiguredRepositoryDirectories()
+            }
+            .disabled(
+              model.repositoryScanRoots.isEmpty || model.isScanningRepositoryDirectories
+            )
+
+            Spacer()
+            if model.isScanningRepositoryDirectories {
+              ProgressView()
+                .controlSize(.small)
+              Text("Scanning…")
+                .foregroundStyle(.secondary)
+            } else {
+              Text("\(model.scannedRepositories.count) projects found")
+                .foregroundStyle(.secondary)
+            }
+          }
+
+          if !model.unavailableRepositoryScanRootPaths.isEmpty {
+            Label(
+              "Some folders are unavailable. Remove them or restore access, then scan again.",
+              systemImage: "exclamationmark.triangle"
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+          }
+
+          Text(
+            "GitCurrent recursively finds Git repositories in these folders. "
+              + "Overlapping folders and repositories reached through symbolic links are ignored."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+
         Section("Views") {
           ForEach(SidebarSection.allCases) { section in
             Toggle(

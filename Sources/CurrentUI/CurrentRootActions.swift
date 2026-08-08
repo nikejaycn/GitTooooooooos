@@ -64,6 +64,7 @@ extension CurrentRootActions {
     public let chooseExternalApplication: () -> Void
     public let cancelOperation: () -> Void
     public let refresh: () -> Void
+    public let openRepositoryPath: (String) -> Void
 
     public init(
       open: @escaping () -> Void,
@@ -78,7 +79,8 @@ extension CurrentRootActions {
       openInTerminal: @escaping () -> Void,
       chooseExternalApplication: @escaping () -> Void,
       cancelOperation: @escaping () -> Void,
-      refresh: @escaping () -> Void
+      refresh: @escaping () -> Void,
+      openRepositoryPath: @escaping (String) -> Void = { _ in }
     ) {
       self.open = open
       self.openNewWindow = openNewWindow
@@ -93,6 +95,7 @@ extension CurrentRootActions {
       self.chooseExternalApplication = chooseExternalApplication
       self.cancelOperation = cancelOperation
       self.refresh = refresh
+      self.openRepositoryPath = openRepositoryPath
     }
   }
 

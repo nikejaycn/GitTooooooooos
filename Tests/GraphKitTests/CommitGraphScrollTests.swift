@@ -136,6 +136,31 @@ struct CommitGraphScrollTests {
     #expect(graphColumn.width == 102)
   }
 
+  @Test("Appending graph rows uses an incremental table update")
+  func appendsRowsIncrementally() {
+    let initialRows = [makeRow(id: "first"), makeRow(id: "second")]
+    let coordinator = CommitGraphView.Coordinator(
+      rows: initialRows,
+      selectsFirstRowByDefault: false,
+      onSelection: { _ in },
+      onApproachingEnd: {}
+    )
+    let table = NSTableView()
+    table.delegate = coordinator
+    table.dataSource = coordinator
+    table.reloadData()
+    table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+
+    coordinator.apply(
+      rows: initialRows + [makeRow(id: "third")],
+      to: table
+    )
+
+    #expect(coordinator.lastRowUpdateKind == .appended)
+    #expect(table.numberOfRows == 3)
+    #expect(table.selectedRowIndexes == IndexSet(integer: 1))
+  }
+
   private func makeScrollView() -> NSScrollView {
     let scrollView = NSScrollView(
       frame: NSRect(x: 0, y: 0, width: 300, height: 180)

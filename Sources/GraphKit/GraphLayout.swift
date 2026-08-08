@@ -217,6 +217,7 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
   public let decorations: [GraphDecoration]
   public let layout: GraphRowLayout
   public let isWorkingCopy: Bool
+  public let searchableText: String
 
   public init(
     id: String,
@@ -240,15 +241,40 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
     self.decorations = decorations
     self.layout = layout
     self.isWorkingCopy = isWorkingCopy
+    self.searchableText = Self.makeSearchableText(
+      subject: subject,
+      author: author,
+      authorEmail: authorEmail,
+      commitOID: commitOID,
+      parentOIDs: parentOIDs,
+      decorations: decorations,
+      authoredAt: authoredAt
+    )
   }
 
   public func matches(searchQuery: String) -> Bool {
-    let tokens =
-      searchQuery
-      .lowercased()
-      .split(whereSeparator: \.isWhitespace)
-    guard !tokens.isEmpty else { return true }
-    let searchableText = [
+    matches(searchTokens: Self.searchTokens(searchQuery))
+  }
+
+  public func matches(searchTokens: [String]) -> Bool {
+    guard !searchTokens.isEmpty else { return true }
+    return searchTokens.allSatisfy(searchableText.contains)
+  }
+
+  public static func searchTokens(_ query: String) -> [String] {
+    query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+  }
+
+  private static func makeSearchableText(
+    subject: String,
+    author: String,
+    authorEmail: String,
+    commitOID: String?,
+    parentOIDs: [String],
+    decorations: [GraphDecoration],
+    authoredAt: Date?
+  ) -> String {
+    [
       subject,
       author,
       authorEmail,
@@ -259,7 +285,6 @@ public struct GraphRow: Identifiable, Hashable, Sendable {
     ]
     .joined(separator: "\n")
     .lowercased()
-    return tokens.allSatisfy(searchableText.contains)
   }
 }
 
@@ -273,67 +298,17 @@ public struct GraphRowBuilder: Sendable {
     workingCopyChangeCount: Int,
     generation: RepositoryGeneration
   ) -> [GraphRow] {
-    let referencesByOID = Dictionary(grouping: references, by: \.targetOID)
-    var graphCommits = commits
-    var workingCopyOID: String?
-    if workingCopyChangeCount > 0 {
-      let headOID = references.first(where: \.isHEAD)?.targetOID
-      let syntheticOID = "current-wip-\(generation.rawValue)"
-      workingCopyOID = syntheticOID
-      graphCommits.insert(
-        CommitSummary(
-          oid: syntheticOID,
-          parentOIDs: headOID.map { [$0] } ?? [],
-          authorName: "Working Copy",
-          authorEmail: "",
-          authoredAt: Date.distantFuture,
-          subject: "\(workingCopyChangeCount) uncommitted change"
-            + (workingCopyChangeCount == 1 ? "" : "s")
-        ),
-        at: 0
-      )
-    }
-
-    var allocator = GraphLaneAllocator(
-      preferredLaneByOID: Self.preferredLanes(
-        commits: commits,
-        references: references,
-        pinnedReferenceNames: pinnedReferenceNames
-      )
+    var session = GraphRowBuildSession()
+    return session.reset(
+      commits: commits,
+      references: references,
+      pinnedReferenceNames: pinnedReferenceNames,
+      workingCopyChangeCount: workingCopyChangeCount,
+      generation: generation
     )
-    return graphCommits.map { commit in
-      let isWorkingCopy = commit.oid == workingCopyOID
-      let decorations: [GraphDecoration]
-      if isWorkingCopy {
-        decorations = [
-          GraphDecoration(label: "WIP", kind: .workingCopy)
-        ]
-      } else {
-        decorations = (referencesByOID[commit.oid] ?? [])
-          .map(Self.decoration)
-          .sorted {
-            if $0.kind.rawValue != $1.kind.rawValue {
-              return $0.kind.rawValue < $1.kind.rawValue
-            }
-            return $0.label.localizedStandardCompare($1.label) == .orderedAscending
-          }
-      }
-      return GraphRow(
-        id: commit.oid,
-        commitOID: isWorkingCopy ? nil : commit.oid,
-        subject: commit.subject,
-        author: commit.authorName,
-        authorEmail: commit.authorEmail,
-        authoredAt: isWorkingCopy ? nil : commit.authoredAt,
-        parentOIDs: isWorkingCopy ? [] : commit.parentOIDs,
-        decorations: decorations,
-        layout: allocator.append(commit),
-        isWorkingCopy: isWorkingCopy
-      )
-    }
   }
 
-  private static func decoration(_ reference: GitReference) -> GraphDecoration {
+  fileprivate static func decoration(_ reference: GitReference) -> GraphDecoration {
     if reference.isHEAD {
       return GraphDecoration(label: reference.shortName, kind: .head)
     }
@@ -348,7 +323,7 @@ public struct GraphRowBuilder: Sendable {
     return GraphDecoration(label: reference.shortName, kind: kind)
   }
 
-  private static func preferredLanes(
+  fileprivate static func preferredLanes(
     commits: [CommitSummary],
     references: [GitReference],
     pinnedReferenceNames: Set<String>
@@ -375,6 +350,142 @@ public struct GraphRowBuilder: Sendable {
       }
     }
     return preferredLaneByOID
+  }
+}
+
+/// Retains lane allocation state across history pages.
+///
+/// The session intentionally owns no copy of previously emitted rows. Callers append the
+/// returned suffix to their existing row storage, keeping the hot path proportional to the
+/// new page rather than all loaded history.
+public struct GraphRowBuildSession: Sendable {
+  public private(set) var commitCount = 0
+  public private(set) var hasWorkingCopyRow = false
+
+  private var allocator = GraphLaneAllocator()
+  private var referencesByOID: [String: [GitReference]] = [:]
+  private var workingCopyLayout: GraphRowLayout?
+
+  public init() {}
+
+  public mutating func reset(
+    commits: [CommitSummary],
+    references: [GitReference],
+    pinnedReferenceNames: Set<String> = [],
+    workingCopyChangeCount: Int,
+    generation: RepositoryGeneration
+  ) -> [GraphRow] {
+    _ = generation
+    referencesByOID = Dictionary(grouping: references, by: \.targetOID)
+    allocator = GraphLaneAllocator(
+      preferredLaneByOID: GraphRowBuilder.preferredLanes(
+        commits: commits,
+        references: references,
+        pinnedReferenceNames: pinnedReferenceNames
+      )
+    )
+    commitCount = 0
+    hasWorkingCopyRow = workingCopyChangeCount > 0
+    workingCopyLayout = nil
+
+    var rows: [GraphRow] = []
+    rows.reserveCapacity(commits.count + (hasWorkingCopyRow ? 1 : 0))
+    if hasWorkingCopyRow {
+      let row = makeWorkingCopyRow(
+        changeCount: workingCopyChangeCount,
+        headOID: references.first(where: \.isHEAD)?.targetOID
+      )
+      workingCopyLayout = row.layout
+      rows.append(row)
+    }
+    rows.append(contentsOf: append(commits: commits))
+    return rows
+  }
+
+  public mutating func append(commits: ArraySlice<CommitSummary>) -> [GraphRow] {
+    var rows: [GraphRow] = []
+    rows.reserveCapacity(commits.count)
+    for commit in commits {
+      rows.append(makeCommitRow(commit))
+    }
+    commitCount += commits.count
+    return rows
+  }
+
+  public mutating func append(commits: [CommitSummary]) -> [GraphRow] {
+    append(commits: commits[...])
+  }
+
+  /// Returns an updated WIP row when its presence has not changed.
+  /// A nil result with a changed presence tells the caller to perform a bounded full reset.
+  public mutating func updateWorkingCopy(changeCount: Int) -> GraphRow? {
+    let shouldHaveWorkingCopyRow = changeCount > 0
+    guard shouldHaveWorkingCopyRow == hasWorkingCopyRow else { return nil }
+    guard shouldHaveWorkingCopyRow, let workingCopyLayout else { return nil }
+    return workingCopyRow(changeCount: changeCount, layout: workingCopyLayout)
+  }
+
+  private mutating func makeWorkingCopyRow(
+    changeCount: Int,
+    headOID: String?
+  ) -> GraphRow {
+    let syntheticCommit = CommitSummary(
+      oid: "current-wip",
+      parentOIDs: headOID.map { [$0] } ?? [],
+      authorName: "Working Copy",
+      authorEmail: "",
+      authoredAt: Date.distantFuture,
+      subject: Self.workingCopySubject(changeCount)
+    )
+    return workingCopyRow(
+      changeCount: changeCount,
+      layout: allocator.append(syntheticCommit)
+    )
+  }
+
+  private func workingCopyRow(
+    changeCount: Int,
+    layout: GraphRowLayout
+  ) -> GraphRow {
+    GraphRow(
+      id: "current-wip",
+      commitOID: nil,
+      subject: Self.workingCopySubject(changeCount),
+      author: "Working Copy",
+      authorEmail: "",
+      authoredAt: nil,
+      parentOIDs: [],
+      decorations: [GraphDecoration(label: "WIP", kind: .workingCopy)],
+      layout: layout,
+      isWorkingCopy: true
+    )
+  }
+
+  private mutating func makeCommitRow(_ commit: CommitSummary) -> GraphRow {
+    let decorations = (referencesByOID[commit.oid] ?? [])
+      .map(GraphRowBuilder.decoration)
+      .sorted {
+        if $0.kind.rawValue != $1.kind.rawValue {
+          return $0.kind.rawValue < $1.kind.rawValue
+        }
+        return $0.label.localizedStandardCompare($1.label) == .orderedAscending
+      }
+    return GraphRow(
+      id: commit.oid,
+      commitOID: commit.oid,
+      subject: commit.subject,
+      author: commit.authorName,
+      authorEmail: commit.authorEmail,
+      authoredAt: commit.authoredAt,
+      parentOIDs: commit.parentOIDs,
+      decorations: decorations,
+      layout: allocator.append(commit),
+      isWorkingCopy: false
+    )
+  }
+
+  private static func workingCopySubject(_ count: Int) -> String {
+    "\(count) uncommitted change" + (count == 1 ? "" : "s")
   }
 }
 

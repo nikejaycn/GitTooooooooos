@@ -55,7 +55,7 @@ public struct FixtureGenerator: Sendable {
     try process.run()
 
     do {
-      let writer = input.fileHandleForWriting
+      let writer = BufferedFastImportWriter(handle: input.fileHandleForWriting)
       try write("blob\nmark :1\ndata 24\nCurrent benchmark data\n\n", to: writer)
       var previousMark: Int?
       let baseTimestamp = 1_700_000_000
@@ -80,14 +80,14 @@ public struct FixtureGenerator: Sendable {
         if commitIndex == 0 {
           for fileIndex in 0..<profile.files {
             try write(
-              "M 100644 :1 benchmark/file-\(padded(fileIndex, width: 7)).txt\n",
+              "M 100644 :1 benchmark/batch-\(padded(fileIndex / 1_000, width: 3))/file-\(padded(fileIndex, width: 7)).txt\n",
               to: writer
             )
           }
         } else {
           let fileIndex = commitIndex % profile.files
           try write(
-            "M 100644 :1 benchmark/file-\(padded(fileIndex, width: 7)).txt\n",
+            "M 100644 :1 benchmark/batch-\(padded(fileIndex / 1_000, width: 3))/file-\(padded(fileIndex, width: 7)).txt\n",
             to: writer
           )
         }
@@ -169,11 +169,41 @@ public struct FixtureGenerator: Sendable {
     return text
   }
 
-  private func write(_ string: String, to handle: FileHandle) throws {
-    try handle.write(contentsOf: Data(string.utf8))
+  private func write(_ string: String, to writer: BufferedFastImportWriter) throws {
+    try writer.write(string)
   }
 
   private func padded(_ value: Int, width: Int) -> String {
     String(format: "%0\(width)d", value)
+  }
+}
+
+private final class BufferedFastImportWriter {
+  private static let flushThreshold = 1_048_576
+  private let handle: FileHandle
+  private var buffer = Data()
+  private var isClosed = false
+
+  init(handle: FileHandle) {
+    self.handle = handle
+    buffer.reserveCapacity(Self.flushThreshold + 1_024)
+  }
+
+  func write(_ string: String) throws {
+    buffer.append(contentsOf: string.utf8)
+    if buffer.count >= Self.flushThreshold { try flush() }
+  }
+
+  func close() throws {
+    guard !isClosed else { return }
+    try flush()
+    try handle.close()
+    isClosed = true
+  }
+
+  private func flush() throws {
+    guard !buffer.isEmpty else { return }
+    try handle.write(contentsOf: buffer)
+    buffer.removeAll(keepingCapacity: true)
   }
 }

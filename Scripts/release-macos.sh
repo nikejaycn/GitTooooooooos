@@ -46,7 +46,8 @@ Modes:
 
 Options:
   --dry-run       Show the next version/tag without changing files or publishing.
-  --validate-only Build and verify the next package, then roll back version files.
+  --validate-only Build, sign, notarize, and verify the current working tree
+                  without changing version files or publishing.
   --no-notarize   Create a signed but non-notarized package (test-only recommended).
   --help          Show this help.
 
@@ -127,17 +128,18 @@ if [ "$current_branch" != "$release_branch" ]; then
   exit 1
 fi
 
-if [ -n "$(git -C "$project_dir" status --porcelain)" ]; then
+if [ "$validate_only" -eq 0 ] && [ -n "$(git -C "$project_dir" status --porcelain)" ]; then
   echo "error: working tree is not clean; commit or stash changes before releasing." >&2
   exit 1
 fi
 
-if ! gh auth status >/dev/null 2>&1; then
-  echo "error: GitHub CLI is not authenticated; run gh auth login first." >&2
-  exit 1
+if [ "$validate_only" -eq 0 ]; then
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "error: GitHub CLI is not authenticated; run gh auth login first." >&2
+    exit 1
+  fi
+  git -C "$project_dir" fetch --tags "$release_remote"
 fi
-
-git -C "$project_dir" fetch --tags "$release_remote"
 
 marketing_version=$(awk '/MARKETING_VERSION = [0-9]+\.[0-9]+\.[0-9]+;/ { gsub(";", "", $3); print $3; exit }' "$project_file")
 current_build=$(awk '/CURRENT_PROJECT_VERSION = [0-9]+;/ { gsub(";", "", $3); print $3; exit }' "$project_file")
@@ -150,42 +152,50 @@ case "$current_build" in
   ''|*[!0-9]*) echo "error: unsupported CURRENT_PROJECT_VERSION: $current_build" >&2; exit 1 ;;
 esac
 
-next_marketing_version=$marketing_version
-if [ "$release_mode" = "test" ]; then
-  max_test=0
-  for existing_tag in $(git -C "$project_dir" tag --list "v${marketing_version}-test.*"); do
-    counter=$(printf '%s\n' "$existing_tag" | sed "s/^v${marketing_version}-test\.//")
-    case "$counter" in
-      ''|*[!0-9]*) continue ;;
-    esac
-    if [ "$counter" -gt "$max_test" ]; then
-      max_test=$counter
-    fi
-  done
-  next_test=$((max_test + 1))
-  release_tag="v${marketing_version}-test.${next_test}"
+if [ "$validate_only" -eq 1 ]; then
+  next_marketing_version=$marketing_version
+  next_build=$current_build
+  release_tag="validation-${marketing_version}-${current_build}"
 else
-  if git -C "$project_dir" tag --list "v${marketing_version}" | grep -Fqx "v${marketing_version}"; then
-    major=$(printf '%s' "$marketing_version" | cut -d. -f1)
-    minor=$(printf '%s' "$marketing_version" | cut -d. -f2)
-    patch=$(printf '%s' "$marketing_version" | cut -d. -f3)
-    next_marketing_version="${major}.${minor}.$((patch + 1))"
+  next_marketing_version=$marketing_version
+  if [ "$release_mode" = "test" ]; then
+    max_test=0
+    for existing_tag in $(git -C "$project_dir" tag --list "v${marketing_version}-test.*"); do
+      counter=$(printf '%s\n' "$existing_tag" | sed "s/^v${marketing_version}-test\.//")
+      case "$counter" in
+        ''|*[!0-9]*) continue ;;
+      esac
+      if [ "$counter" -gt "$max_test" ]; then
+        max_test=$counter
+      fi
+    done
+    next_test=$((max_test + 1))
+    release_tag="v${marketing_version}-test.${next_test}"
+  else
+    if git -C "$project_dir" tag --list "v${marketing_version}" | grep -Fqx "v${marketing_version}"; then
+      major=$(printf '%s' "$marketing_version" | cut -d. -f1)
+      minor=$(printf '%s' "$marketing_version" | cut -d. -f2)
+      patch=$(printf '%s' "$marketing_version" | cut -d. -f3)
+      next_marketing_version="${major}.${minor}.$((patch + 1))"
+    fi
+    release_tag="v${next_marketing_version}"
   fi
-  release_tag="v${next_marketing_version}"
+  next_build=$((current_build + 1))
 fi
 
-next_build=$((current_build + 1))
-if git -C "$project_dir" tag --list "$release_tag" | grep -Fqx "$release_tag"; then
-  echo "error: tag already exists locally: $release_tag" >&2
-  exit 1
-fi
-if git -C "$project_dir" ls-remote --exit-code --tags "$release_remote" "refs/tags/$release_tag" >/dev/null 2>&1; then
-  echo "error: tag already exists on $release_remote: $release_tag" >&2
-  exit 1
-fi
-if gh release view "$release_tag" >/dev/null 2>&1; then
-  echo "error: GitHub Release already exists: $release_tag" >&2
-  exit 1
+if [ "$validate_only" -eq 0 ]; then
+  if git -C "$project_dir" tag --list "$release_tag" | grep -Fqx "$release_tag"; then
+    echo "error: tag already exists locally: $release_tag" >&2
+    exit 1
+  fi
+  if git -C "$project_dir" ls-remote --exit-code --tags "$release_remote" "refs/tags/$release_tag" >/dev/null 2>&1; then
+    echo "error: tag already exists on $release_remote: $release_tag" >&2
+    exit 1
+  fi
+  if gh release view "$release_tag" >/dev/null 2>&1; then
+    echo "error: GitHub Release already exists: $release_tag" >&2
+    exit 1
+  fi
 fi
 
 echo "Release mode: $release_mode"
@@ -198,19 +208,20 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-if [ "$next_marketing_version" != "$marketing_version" ]; then
-  sed -i '' "s/MARKETING_VERSION = ${marketing_version};/MARKETING_VERSION = ${next_marketing_version};/g" "$project_file"
-fi
-sed -i '' "s/CURRENT_PROJECT_VERSION = ${current_build};/CURRENT_PROJECT_VERSION = ${next_build};/g" "$project_file"
-version_updated=1
+if [ "$validate_only" -eq 0 ]; then
+  if [ "$next_marketing_version" != "$marketing_version" ]; then
+    sed -i '' "s/MARKETING_VERSION = ${marketing_version};/MARKETING_VERSION = ${next_marketing_version};/g" "$project_file"
+  fi
+  sed -i '' "s/CURRENT_PROJECT_VERSION = ${current_build};/CURRENT_PROJECT_VERSION = ${next_build};/g" "$project_file"
+  version_updated=1
 
-notes_path="$project_dir/docs/releases/${release_tag}.md"
-if [ -e "$notes_path" ]; then
-  echo "error: release notes already exist: $notes_path" >&2
-  exit 1
-fi
-mkdir -p "$(dirname "$notes_path")"
-{
+  notes_path="$project_dir/docs/releases/${release_tag}.md"
+  if [ -e "$notes_path" ]; then
+    echo "error: release notes already exist: $notes_path" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$notes_path")"
+  {
   printf '# GitCurrent %s\n\n' "$release_tag"
   printf '这是 GitCurrent 的自动发布版本，发布类型为 **%s**。\n\n' "$release_mode"
   printf '%s\n' "## 版本" "" "- 应用版本：\`$next_marketing_version ($next_build)\`" "- Bundle ID：\`com.fun2ex.Current\`" "- 架构：arm64" "- 最低系统：macOS 14 Sonoma" ""
@@ -221,8 +232,9 @@ mkdir -p "$(dirname "$notes_path")"
     printf '%s\n' '- 本次仅签名，未执行 Apple Notarization。'
   fi
   printf '%s\n' "" "本说明由 \`Scripts/release-macos.sh\` 自动生成。"
-} > "$notes_path"
-notes_created=1
+  } > "$notes_path"
+  notes_created=1
+fi
 
 if [ "$development_team" != "7QSPARVZYS" ]; then
   echo "warning: DEVELOPMENT_TEAM is $development_team; project is configured for 7QSPARVZYS." >&2

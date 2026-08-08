@@ -42,6 +42,10 @@ extension CurrentRootState {
     public let gitLFS: GitLFSRepositoryState
     public let activities: [OperationActivity]
     public let recentRepositories: [RecentRepository]
+    public let currentRepositoryPath: String?
+    public let repositoryScanRoots: [RepositoryScanRoot]
+    public let scannedRepositories: [ScannedRepository]
+    public let isScanningRepositoryDirectories: Bool
     public let lastRecoveryReference: RecoveryReference?
     public let isLoading: Bool
     public let pendingWorkingCopyPaths: Set<GitPath>
@@ -67,7 +71,11 @@ extension CurrentRootState {
       pendingWorkingCopyPaths: Set<GitPath>,
       isOperationRunning: Bool,
       errorMessage: String?,
-      aiAvailability: AIFeatureAvailability = .unavailable(reason: "AI is unavailable")
+      aiAvailability: AIFeatureAvailability = .unavailable(reason: "AI is unavailable"),
+      currentRepositoryPath: String? = nil,
+      repositoryScanRoots: [RepositoryScanRoot] = [],
+      scannedRepositories: [ScannedRepository] = [],
+      isScanningRepositoryDirectories: Bool = false
     ) {
       self.name = name
       self.gitVersion = gitVersion
@@ -81,6 +89,10 @@ extension CurrentRootState {
       self.gitLFS = gitLFS
       self.activities = activities
       self.recentRepositories = recentRepositories
+      self.currentRepositoryPath = currentRepositoryPath
+      self.repositoryScanRoots = repositoryScanRoots
+      self.scannedRepositories = scannedRepositories
+      self.isScanningRepositoryDirectories = isScanningRepositoryDirectories
       self.lastRecoveryReference = lastRecoveryReference
       self.isLoading = isLoading
       self.pendingWorkingCopyPaths = pendingWorkingCopyPaths

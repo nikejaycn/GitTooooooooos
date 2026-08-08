@@ -28,17 +28,84 @@ public struct BenchmarkRunner: Sendable {
       )
     }
 
+    let loadedHistory = try history(
+      repositoryURL,
+      gitExecutable,
+      offset: 0,
+      limit: min(manifest.profile.commits, 50_000)
+    )
+    let workingCopyFixture = syntheticWorkingCopyChanges(count: 5_000)
+    let workingCopyCatalog = WorkingCopyChangeCatalog(changes: workingCopyFixture)
+
     _ = try graph(repositoryURL, gitExecutable)
     _ = try status(repositoryURL, gitExecutable)
     _ = try diff()
 
+    let graphDepths = [2, 10, 50, 250]
+    let historyOffsets = [
+      0,
+      max(0, manifest.profile.commits / 2 - 100),
+      max(0, manifest.profile.commits - 200),
+    ]
+
     var graphSamples: [Double] = []
     var statusSamples: [Double] = []
     var diffSamples: [Double] = []
+    var graphAppendSamples = Dictionary(
+      uniqueKeysWithValues: graphDepths.map { ($0, [Double]()) }
+    )
+    var historyPageSamples = Dictionary(
+      uniqueKeysWithValues: historyOffsets.indices.map { ($0, [Double]()) }
+    )
+    var workingCopyBuildSamples: [Double] = []
+    var workingCopySearchSamples: [Double] = []
     for _ in 0..<iterations {
       graphSamples.append(try elapsedMilliseconds { try graph(repositoryURL, gitExecutable) })
       statusSamples.append(try elapsedMilliseconds { try status(repositoryURL, gitExecutable) })
       diffSamples.append(try elapsedMilliseconds { try diff() })
+      for depth in graphDepths {
+        graphAppendSamples[depth, default: []].append(
+          graphPageAppendMilliseconds(loadedHistory, page: depth)
+        )
+      }
+      for (index, offset) in historyOffsets.enumerated() {
+        historyPageSamples[index, default: []].append(
+          try elapsedMilliseconds {
+            _ = try history(repositoryURL, gitExecutable, offset: offset, limit: 200)
+          }
+        )
+      }
+      workingCopyBuildSamples.append(
+        elapsedMilliseconds {
+          _ = WorkingCopyChangeCatalog(changes: workingCopyFixture)
+        }
+      )
+      workingCopySearchSamples.append(
+        elapsedMilliseconds {
+          _ = workingCopyCatalog.filtered(query: "module42 file")
+        }
+      )
+    }
+
+    var metrics = [
+      BenchmarkMetric(name: "graph-first-200-cli-parse-layout", samples: graphSamples),
+      BenchmarkMetric(name: "working-copy-status-cli-parse-map-sort", samples: statusSamples),
+      BenchmarkMetric(name: "working-copy-5k-catalog-build", samples: workingCopyBuildSamples),
+      BenchmarkMetric(name: "working-copy-5k-cached-search", samples: workingCopySearchSamples),
+      BenchmarkMetric(name: "diff-10k-parse", samples: diffSamples),
+    ]
+    metrics += graphDepths.map { depth in
+      BenchmarkMetric(
+        name: "graph-page-\(depth)-append-layout",
+        samples: graphAppendSamples[depth] ?? []
+      )
+    }
+    let historyPageNames = ["first", "middle", "deep"]
+    metrics += historyOffsets.indices.map { index in
+      BenchmarkMetric(
+        name: "history-page-200-\(historyPageNames[index])-cli-parse",
+        samples: historyPageSamples[index] ?? []
+      )
     }
 
     return BenchmarkReport(
@@ -49,11 +116,7 @@ public struct BenchmarkRunner: Sendable {
         fixtureID: manifest.fixtureID,
         iterations: iterations
       ),
-      metrics: [
-        BenchmarkMetric(name: "graph-first-200-cli-parse-layout", samples: graphSamples),
-        BenchmarkMetric(name: "working-copy-status", samples: statusSamples),
-        BenchmarkMetric(name: "diff-10k-parse", samples: diffSamples),
-      ]
+      metrics: metrics
     )
   }
 
@@ -68,6 +131,7 @@ public struct BenchmarkRunner: Sendable {
       && baseline.environment.gitVersion == candidate.environment.gitVersion
       && baseline.environment.fixtureID == candidate.environment.fixtureID
       && baseline.environment.iterations == candidate.environment.iterations
+      && Set(baseline.metrics.map(\.name)) == Set(candidate.metrics.map(\.name))
     guard compatible else {
       return BenchmarkComparison(
         compatibleEnvironment: false,
@@ -98,16 +162,27 @@ public struct BenchmarkRunner: Sendable {
   }
 
   private func graph(_ repositoryURL: URL, _ git: URL) throws {
+    let commits = try history(repositoryURL, git, offset: 0, limit: 200)
+    var allocator = GraphLaneAllocator()
+    _ = allocator.append(commits)
+  }
+
+  private func history(
+    _ repositoryURL: URL,
+    _ git: URL,
+    offset: Int,
+    limit: Int
+  ) throws -> [CommitSummary] {
+    guard limit > 0 else { return [] }
     let format = "%x1e%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00"
     let result = try command(
       git,
       [
-        "-C", repositoryURL.path, "log", "--date-order", "--all", "-n", "200",
-        "--format=\(format)",
+        "-C", repositoryURL.path, "log", "--topo-order", "--date-order", "--all",
+        "--skip=\(max(0, offset))", "--max-count=\(limit)", "--format=\(format)",
       ]
     )
-    let parsed = try HistoryParser().parse(Array(result.data))
-    let commits = parsed.map {
+    return try HistoryParser().parse(Array(result.data)).map {
       CommitSummary(
         oid: $0.oid,
         parentOIDs: $0.parentOIDs,
@@ -117,18 +192,102 @@ public struct BenchmarkRunner: Sendable {
         subject: $0.subject
       )
     }
-    var allocator = GraphLaneAllocator()
-    _ = allocator.append(commits)
+  }
+
+  private func graphPageAppendMilliseconds(
+    _ commits: [CommitSummary],
+    page: Int
+  ) -> Double {
+    let pageSize = 200
+    let prefixCount = min(max(0, (page - 1) * pageSize), commits.count)
+    var session = GraphRowBuildSession()
+    _ = session.reset(
+      commits: Array(commits.prefix(prefixCount)),
+      references: [],
+      pinnedReferenceNames: [],
+      workingCopyChangeCount: 0,
+      generation: RepositoryGeneration(1)
+    )
+    let suffix = commits.dropFirst(prefixCount).prefix(pageSize)
+    return elapsedMilliseconds {
+      _ = session.append(commits: suffix)
+    }
   }
 
   private func status(_ repositoryURL: URL, _ git: URL) throws {
-    _ = try command(
+    let result = try command(
       git,
       [
-        "-C", repositoryURL.path, "status", "--porcelain=v2", "-z",
+        "-C", repositoryURL.path, "status", "--porcelain=v2", "--branch", "-z",
         "--untracked-files=all",
       ]
     )
+    let parsed = try PorcelainV2Parser().parse(result.data)
+    _ = WorkingCopyChangeCatalog(changes: parsed.records.map(mapRecord))
+  }
+
+  private func mapRecord(_ record: PorcelainV2Record) -> FileChange {
+    switch record {
+    case .ordinary(let entry):
+      FileChange(
+        path: GitPath(rawBytes: entry.path),
+        indexStatus: entry.indexStatus,
+        worktreeStatus: entry.worktreeStatus,
+        kind: changeKind(index: entry.indexStatus, worktree: entry.worktreeStatus)
+      )
+    case .renamedOrCopied(let entry):
+      FileChange(
+        path: GitPath(rawBytes: entry.tracked.path),
+        originalPath: GitPath(rawBytes: entry.originalPath),
+        indexStatus: entry.tracked.indexStatus,
+        worktreeStatus: entry.tracked.worktreeStatus,
+        kind: entry.score.first == "C" ? .copied : .renamed
+      )
+    case .unmerged(let entry):
+      FileChange(
+        path: GitPath(rawBytes: entry.path),
+        indexStatus: entry.indexStatus,
+        worktreeStatus: entry.worktreeStatus,
+        kind: .unmerged
+      )
+    case .untracked(let path):
+      FileChange(
+        path: GitPath(rawBytes: path), indexStatus: 63, worktreeStatus: 63, kind: .untracked
+      )
+    case .ignored(let path):
+      FileChange(
+        path: GitPath(rawBytes: path), indexStatus: 33, worktreeStatus: 33, kind: .ignored
+      )
+    }
+  }
+
+  private func changeKind(index: UInt8, worktree: UInt8) -> FileChangeKind {
+    for byte in [index, worktree] where byte != 46 {
+      switch byte {
+      case 65: return .added
+      case 77: return .modified
+      case 68: return .deleted
+      case 82: return .renamed
+      case 67: return .copied
+      case 84: return .typeChanged
+      case 85: return .unmerged
+      default: continue
+      }
+    }
+    return .unknown
+  }
+
+  private func syntheticWorkingCopyChanges(count: Int) -> [FileChange] {
+    (0..<count).map { index in
+      FileChange(
+        path: GitPath(
+          String(format: "Sources/Module%02d/File%05d.swift", index % 100, index)
+        ),
+        indexStatus: index.isMultiple(of: 3) ? 77 : 46,
+        worktreeStatus: index.isMultiple(of: 3) ? 46 : 77,
+        kind: .modified
+      )
+    }
   }
 
   private func diff() throws {

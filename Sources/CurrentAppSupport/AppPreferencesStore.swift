@@ -11,6 +11,8 @@ import GraphKit
 public struct AppPreferencesStore {
   private enum Key {
     static let recentRepositories = "Current.recentRepositories.v1"
+    static let repositoryScanRoots = "Current.repositoryScanRoots.v1"
+    static let scannedRepositories = "Current.scannedRepositories.v1"
     static let maximumLoadedCommitCount = "Current.maximumLoadedCommitCount.v1"
     static let useCustomGit = "Current.useCustomGit.v1"
     static let customGitPath = "Current.customGitPath.v1"
@@ -58,6 +60,41 @@ public struct AppPreferencesStore {
     nonmutating set {
       guard let data = try? JSONEncoder().encode(Array(newValue.prefix(100))) else { return }
       defaults.set(data, forKey: Key.recentRepositories)
+    }
+  }
+
+  public var repositoryScanRoots: [RepositoryScanRoot] {
+    get {
+      guard
+        let data = defaults.data(forKey: Key.repositoryScanRoots),
+        let roots = try? JSONDecoder().decode([RepositoryScanRoot].self, from: data)
+      else {
+        return []
+      }
+      var seen = Set<String>()
+      return roots.filter { seen.insert($0.path).inserted }
+    }
+    nonmutating set {
+      var seen = Set<String>()
+      let roots = newValue.filter { seen.insert($0.path).inserted }
+      guard let data = try? JSONEncoder().encode(roots) else { return }
+      defaults.set(data, forKey: Key.repositoryScanRoots)
+    }
+  }
+
+  public var scannedRepositories: [ScannedRepository] {
+    get {
+      guard
+        let data = defaults.data(forKey: Key.scannedRepositories),
+        let repositories = try? JSONDecoder().decode([ScannedRepository].self, from: data)
+      else {
+        return []
+      }
+      return repositories
+    }
+    nonmutating set {
+      guard let data = try? JSONEncoder().encode(newValue) else { return }
+      defaults.set(data, forKey: Key.scannedRepositories)
     }
   }
 

@@ -88,6 +88,55 @@ struct GraphLaneAllocatorTests {
     #expect(rows[1].layout.hasIncomingEdge)
   }
 
+  @Test("Graph row sessions emit only the appended page")
+  func incrementalRows() {
+    let commits = [
+      commit("m", parents: ["a", "b"]),
+      commit("a", parents: ["root"]),
+      commit("b", parents: ["root"]),
+      commit("root"),
+    ]
+    let generation = RepositoryGeneration(2)
+    let expected = GraphRowBuilder().build(
+      commits: commits,
+      references: [],
+      workingCopyChangeCount: 0,
+      generation: generation
+    )
+    var session = GraphRowBuildSession()
+    let firstPage = session.reset(
+      commits: Array(commits.prefix(2)),
+      references: [],
+      workingCopyChangeCount: 0,
+      generation: generation
+    )
+    let secondPage = session.append(commits: commits.dropFirst(2))
+
+    #expect(firstPage + secondPage == expected)
+    #expect(firstPage.count == 2)
+    #expect(secondPage.count == 2)
+    #expect(session.commitCount == 4)
+  }
+
+  @Test("Changing WIP count preserves its graph layout and identity")
+  func updatesWorkingCopyRow() {
+    var session = GraphRowBuildSession()
+    let rows = session.reset(
+      commits: [commit("head")],
+      references: [
+        reference("refs/heads/main", short: "main", oid: "head", kind: .localBranch, head: true)
+      ],
+      workingCopyChangeCount: 1,
+      generation: RepositoryGeneration(3)
+    )
+    let updated = session.updateWorkingCopy(changeCount: 9)
+
+    #expect(updated?.id == rows[0].id)
+    #expect(updated?.layout == rows[0].layout)
+    #expect(updated?.subject == "9 uncommitted changes")
+    #expect(session.updateWorkingCopy(changeCount: 0) == nil)
+  }
+
   @Test("Search matches multiple commit metadata fields")
   func searchMetadata() {
     let rows = GraphRowBuilder().build(

@@ -35,6 +35,27 @@ struct RepositoryFileWatcherTests {
     )
   }
 
+  @Test("Refresh scope keeps ordinary writes status-only and snapshot wins mixed batches")
+  func refreshScopes() {
+    let worktree = RepositoryWatchEvent(path: "/tmp/project/file", kind: .worktree, eventID: 1)
+    let objects = RepositoryWatchEvent(
+      path: "/tmp/project/.git/objects/aa/bb",
+      kind: .objectDatabase,
+      eventID: 2
+    )
+    let metadata = RepositoryWatchEvent(
+      path: "/tmp/project/.git/HEAD",
+      kind: .gitMetadata,
+      eventID: 3
+    )
+
+    #expect(RepositoryWatchRefreshScope.required(for: [objects]) == .none)
+    #expect(RepositoryWatchRefreshScope.required(for: [worktree]) == .status)
+    #expect(
+      RepositoryWatchRefreshScope.required(for: [worktree, metadata, objects]) == .snapshot
+    )
+  }
+
   @Test("Dropped and root-change flags require a full rescan")
   func classifiesRescanFlags() {
     let location = RepositoryLocation(

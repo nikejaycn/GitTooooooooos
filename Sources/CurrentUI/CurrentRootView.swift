@@ -105,6 +105,12 @@ public struct CurrentRootView: View {
   private var isRepositoryOperation: Bool { state.repository.isOperationRunning }
   private var errorMessage: String? { state.repository.errorMessage }
   private var aiAvailability: AIFeatureAvailability { state.repository.aiAvailability }
+  private var currentRepositoryPath: String? { state.repository.currentRepositoryPath }
+  private var repositoryScanRoots: [RepositoryScanRoot] { state.repository.repositoryScanRoots }
+  private var scannedRepositories: [ScannedRepository] { state.repository.scannedRepositories }
+  private var isScanningRepositoryDirectories: Bool {
+    state.repository.isScanningRepositoryDirectories
+  }
 
   private var commits: [CommitSummary] { state.history.commits }
   private var graphRows: [GraphRow] { state.history.graphRows }
@@ -147,7 +153,11 @@ public struct CurrentRootView: View {
       isLoading: isLoading,
       hasRemotes: !remotes.isEmpty,
       hasUpstream: upstreamTarget != nil,
-      hasCurrentBranch: currentBranchName != nil
+      hasCurrentBranch: currentBranchName != nil,
+      currentRepositoryPath: currentRepositoryPath,
+      repositoryScanRoots: repositoryScanRoots,
+      scannedRepositories: scannedRepositories,
+      isScanningRepositoryDirectories: isScanningRepositoryDirectories
     )
   }
 
@@ -163,6 +173,7 @@ public struct CurrentRootView: View {
   }
   private var cancelRepositoryOperation: () -> Void { actions.repository.cancelOperation }
   private var refresh: () -> Void { actions.repository.refresh }
+  private var openRepositoryPath: (String) -> Void { actions.repository.openRepositoryPath }
 
   private var exportPatch: (String) -> Void { actions.history.exportPatch }
   private var applyPatch: () -> Void { actions.history.applyPatch }
@@ -794,6 +805,8 @@ public struct CurrentRootView: View {
       openRepositoryInTerminal()
     case .settings:
       openSettings()
+    case .switchProject(let path):
+      openRepositoryPath(path)
     }
   }
 

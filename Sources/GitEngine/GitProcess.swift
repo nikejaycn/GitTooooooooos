@@ -8,6 +8,7 @@ public struct GitCommand: Hashable, Sendable {
   public let standardInput: [UInt8]?
   public let outputLimit: Int
   public let timeout: Duration
+  fileprivate let terminatedArguments: [[UInt8]]
 
   public init(
     arguments: [String],
@@ -36,6 +37,9 @@ public struct GitCommand: Hashable, Sendable {
     timeout: Duration = .seconds(60)
   ) {
     self.arguments = rawArguments
+    terminatedArguments = rawArguments.map { argument in
+      argument.last == 0 ? argument : argument + [0]
+    }
     self.workingDirectory = workingDirectory
     self.environmentOverrides = environmentOverrides
     self.standardInput = standardInput
@@ -121,7 +125,7 @@ public protocol GitProcessRunning: Sendable {
 
 public struct SwiftSubprocessRunner: GitProcessRunning {
   public let executableURL: URL
-  private let runtimeEnvironment: [String: String?]
+  private let baseEnvironment: [Environment.Key: String?]
 
   public init(
     executableURL: URL,
@@ -160,7 +164,17 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
         runtimeEnvironment["GIT_CONFIG_SYSTEM"] = systemConfigPath.path
       }
     }
-    self.runtimeEnvironment = runtimeEnvironment
+    let fixedEnvironment = ([
+      "LC_ALL": "C",
+      "LANG": "C",
+      "GIT_TERMINAL_PROMPT": "0",
+      "GIT_OPTIONAL_LOCKS": "0",
+    ] as [String: String?]).merging(runtimeEnvironment) { _, runtimeValue in runtimeValue }
+    baseEnvironment = Dictionary(
+      uniqueKeysWithValues: fixedEnvironment.map {
+        (Environment.Key(rawValue: $0.key)!, $0.value)
+      }
+    )
   }
 
   private static func executableSearchPath(
@@ -222,20 +236,13 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
           ),
         ]
 
+        let commandEnvironment = Dictionary(
+          uniqueKeysWithValues: command.environmentOverrides.map {
+            (Environment.Key(rawValue: $0.key)!, $0.value)
+          }
+        )
         let environment = Environment.inherit.updating(
-          Dictionary(
-            uniqueKeysWithValues: ([
-              "LC_ALL": "C",
-              "LANG": "C",
-              "GIT_TERMINAL_PROMPT": "0",
-              // Read commands must not refresh the index and feed the
-              // repository watcher an endless self-triggered refresh loop.
-              "GIT_OPTIONAL_LOCKS": "0",
-            ] as [String: String?])
-            .merging(self.runtimeEnvironment) { _, runtimeValue in runtimeValue }
-            .merging(command.environmentOverrides) { _, commandValue in commandValue }
-            .map { (Environment.Key(rawValue: $0.key)!, $0.value) }
-          )
+          self.baseEnvironment.merging(commandEnvironment) { _, commandValue in commandValue }
         )
 
         do {
@@ -243,12 +250,9 @@ public struct SwiftSubprocessRunner: GitProcessRunning {
           // `strdup`, so every backing buffer must be NUL terminated.
           // GitCommand intentionally stores payload bytes without that
           // terminator so non-UTF-8 pathspecs round-trip exactly.
-          let terminatedArguments = command.arguments.map { argument in
-            argument.last == 0 ? argument : argument + [0]
-          }
           let result = try await Subprocess.run(
             .path(.init(self.executableURL.path)),
-            arguments: Arguments(terminatedArguments),
+            arguments: Arguments(command.terminatedArguments),
             environment: environment,
             workingDirectory: command.workingDirectory.map { .init($0.path) },
             platformOptions: platformOptions,

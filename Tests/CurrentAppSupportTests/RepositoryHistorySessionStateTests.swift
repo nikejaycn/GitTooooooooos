@@ -45,6 +45,41 @@ struct RepositoryHistorySessionStateTests {
     #expect(!state.isPageLoading)
   }
 
+  @Test("OID index stays consistent across pages and trimming")
+  func maintainsOIDIndex() {
+    var state = RepositoryHistorySessionState()
+    state.reset(commits: commits(2), maximumCount: 4, pageSize: 2)
+
+    _ = state.beginNextPage(maximumCount: 4)
+    let firstAppend = state.append(
+      page: HistoryPage(
+        generation: RepositoryGeneration(1),
+        commits: [commit(2), commit(3), commit(3), commit(4)],
+        nextCursor: HistoryCursor(offset: 6)
+      ),
+      maximumCount: 4
+    )
+    state.finishPageLoading()
+
+    #expect(firstAppend)
+    #expect(state.commits.map(\.oid) == ["oid-1", "oid-2", "oid-3", "oid-4"])
+
+    _ = state.updateMaximumCount(from: 4, to: 2)
+    _ = state.updateMaximumCount(from: 2, to: 4)
+    _ = state.beginNextPage(maximumCount: 4)
+    let secondAppend = state.append(
+      page: HistoryPage(
+        generation: RepositoryGeneration(1),
+        commits: [commit(3), commit(4)],
+        nextCursor: nil
+      ),
+      maximumCount: 4
+    )
+
+    #expect(secondAppend)
+    #expect(state.commits.map(\.oid) == ["oid-1", "oid-2", "oid-3", "oid-4"])
+  }
+
   @Test("Limit changes trim commits or reopen pagination")
   func updatesLimit() {
     var state = RepositoryHistorySessionState()

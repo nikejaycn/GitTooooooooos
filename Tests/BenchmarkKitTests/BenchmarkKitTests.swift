@@ -48,7 +48,11 @@ struct BenchmarkKitTests {
 
     let report = try BenchmarkRunner().run(repositoryURL: root, iterations: 3)
     #expect(report.environment.fixtureID == profile.fixtureID)
-    #expect(report.metrics.count == 3)
+    #expect(report.metrics.count == 12)
+    #expect(report.metrics.map(\.name).contains("working-copy-status-cli-parse-map-sort"))
+    #expect(report.metrics.map(\.name).contains("graph-page-250-append-layout"))
+    #expect(report.metrics.map(\.name).contains("history-page-200-deep-cli-parse"))
+    #expect(report.metrics.map(\.name).contains("working-copy-5k-cached-search"))
     #expect(report.metrics.allSatisfy { $0.samples.count == 3 && $0.p95 >= $0.p50 })
   }
 
@@ -86,6 +90,17 @@ struct BenchmarkKitTests {
       metrics: baseline.metrics
     )
     #expect(!BenchmarkRunner().compare(baseline: baseline, candidate: incompatible).passed)
+
+    let incompatibleMetrics = BenchmarkReport(
+      environment: environment,
+      metrics: [BenchmarkMetric(name: "renamed-graph", samples: [100, 100, 100])]
+    )
+    let metricResult = BenchmarkRunner().compare(
+      baseline: baseline,
+      candidate: incompatibleMetrics
+    )
+    #expect(!metricResult.compatibleEnvironment)
+    #expect(!metricResult.passed)
   }
 
   @Test("Generator refuses to replace an unrelated directory")

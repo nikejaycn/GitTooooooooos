@@ -9,6 +9,27 @@ public enum RepositoryWatchEventKind: Hashable, Sendable {
   case fullRescan
 }
 
+public enum RepositoryWatchRefreshScope: Int, Comparable, Sendable {
+  case none
+  case status
+  case snapshot
+
+  public static func < (
+    lhs: RepositoryWatchRefreshScope,
+    rhs: RepositoryWatchRefreshScope
+  ) -> Bool {
+    lhs.rawValue < rhs.rawValue
+  }
+
+  public static func required(
+    for events: some Sequence<RepositoryWatchEvent>
+  ) -> RepositoryWatchRefreshScope {
+    events.reduce(.none) { scope, event in
+      max(scope, event.refreshScope)
+    }
+  }
+}
+
 public struct RepositoryWatchEvent: Hashable, Sendable {
   public let path: String
   public let kind: RepositoryWatchEventKind
@@ -25,7 +46,18 @@ public struct RepositoryWatchEvent: Hashable, Sendable {
   }
 
   public var requiresSnapshotRefresh: Bool {
-    kind != .objectDatabase
+    refreshScope != .none
+  }
+
+  public var refreshScope: RepositoryWatchRefreshScope {
+    switch kind {
+    case .objectDatabase:
+      .none
+    case .worktree:
+      .status
+    case .gitMetadata, .fullRescan:
+      .snapshot
+    }
   }
 }
 
